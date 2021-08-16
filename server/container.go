@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"github.com/coreos/etcd/clientv3"
-	"github.com/pkg/errors"
 	"time"
 
+	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
+	"github.com/pkg/errors"
 )
 
 type container struct {
