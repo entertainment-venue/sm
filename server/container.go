@@ -10,10 +10,6 @@ import (
 	"github.com/coreos/etcd/clientv3/concurrency"
 )
 
-type leader struct {
-	container
-}
-
 type container struct {
 	id          string
 	application string
@@ -60,11 +56,22 @@ func (c *container) campaignLeader(ctx context.Context) error {
 
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/borderland/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
-
 	}
 }
 
-func (c *leader) checkShardOwnerLoop(ctx context.Context) {
+type leader struct {
+	container
+
+	eq *eventQueue
+}
+
+func newLeader(ctx context.Context, cr *container) *leader {
+	return &leader{
+		eq: newEventQueue(ctx),
+	}
+}
+
+func (l *leader) checkShardOwnerLoop(ctx context.Context) {
 	ticker := time.Tick(3 * time.Second)
 	for {
 	checkLoop:
@@ -73,13 +80,13 @@ func (c *leader) checkShardOwnerLoop(ctx context.Context) {
 			Logger.Printf("campaignLeader exit")
 			return
 		case <-ticker:
-			containerIds, err := c.etcdWrapper.getKvs(ctx, c.etcdWrapper.heartbeatContainerNode())
+			containerIds, err := l.etcdWrapper.getKvs(ctx, l.etcdWrapper.heartbeatContainerNode())
 			if err != nil {
 				Logger.Printf("err %+v", err)
 				goto checkLoop
 			}
 
-			shardIds, err := c.etcdWrapper.getKvs(ctx, c.etcdWrapper.heartbeatShardNode())
+			shardIds, err := l.etcdWrapper.getKvs(ctx, l.etcdWrapper.heartbeatShardNode())
 			if err != nil {
 				Logger.Printf("err %+v", err)
 				goto checkLoop
@@ -92,23 +99,24 @@ func (c *leader) checkShardOwnerLoop(ctx context.Context) {
 					goto checkLoop
 				}
 				if _, ok := containerIds[shb.ContainerId]; !ok {
-					// TODO 触发一次任务分配
+
+					break
 				}
 			}
 		}
 	}
 }
 
-func (c *leader) watchShardLoadLoop(ctx context.Context) {
+func (l *leader) shardLoadLoop(ctx context.Context) {
 	var opts []clientv3.OpOption
 	opts = append(opts, clientv3.WithPrefix())
 
 watchLoop:
-	wch := c.etcdWrapper.etcdClientV3.Watch(ctx, c.etcdWrapper.heartbeatShardNode())
+	wch := l.etcdWrapper.etcdClientV3.Watch(ctx, l.etcdWrapper.heartbeatShardNode())
 	for {
 		select {
 		case <-ctx.Done():
-			Logger.Printf("watchShardLoadLoop exit")
+			Logger.Printf("shardLoadLoop exit")
 			return
 		case wr := <-wch:
 			if err := wr.Err(); err != nil {
@@ -121,26 +129,35 @@ watchLoop:
 					continue
 				}
 
-				if ev.IsModify() {
-					// TODO 利用prevkv和kv可以得到load是否改变，或者改变的阈值是否超出spec中定义的阈值，load变化很正常
-				} else {
-					// TODO 删除事件同上，会给到一个goroutine池子处理
+				start := time.Now()
+				qev := event{
+					start: start.Unix(),
+					load:  string(ev.Kv.Value),
 				}
+
+				if ev.IsModify() {
+					qev.typ = evTypeShardUpdate
+				} else {
+					qev.typ = evTypeShardDel
+					// 3s是给服务器container重启的事件
+					qev.expect = start.Add(3 * time.Second).Unix()
+				}
+				l.eq.push(&qev)
 			}
 		}
 	}
 }
 
-func (c *leader) watchContainerLoadLoop(ctx context.Context) {
+func (l *leader) containerLoadLoop(ctx context.Context) {
 	var opts []clientv3.OpOption
 	opts = append(opts, clientv3.WithPrefix())
 
 watchLoop:
-	wch := c.etcdWrapper.etcdClientV3.Watch(ctx, c.etcdWrapper.heartbeatContainerNode())
+	wch := l.etcdWrapper.etcdClientV3.Watch(ctx, l.etcdWrapper.heartbeatContainerNode())
 	for {
 		select {
 		case <-ctx.Done():
-			Logger.Printf("watchContainerLoadLoop exit")
+			Logger.Printf("containerLoadLoop exit")
 			return
 		case wr := <-wch:
 			if err := wr.Err(); err != nil {
@@ -153,10 +170,18 @@ watchLoop:
 					continue
 				}
 
+				start := time.Now()
+				qev := event{
+					start: start.Unix(),
+					load:  string(ev.Kv.Value),
+				}
+
 				if ev.IsModify() {
-					// TODO 利用prevkv和kv可以得到load是否改变，或者改变的阈值是否超出spec中定义的阈值，load变化很正常
+					qev.typ = evTypeContainerUpdate
 				} else {
-					// TODO 删除事件同上，会给到一个goroutine池子处理
+					qev.typ = evTypeContainerDel
+					// 3s是给服务器container重启的事件
+					qev.expect = start.Add(3 * time.Second).Unix()
 				}
 			}
 		}
