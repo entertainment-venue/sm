@@ -71,37 +71,37 @@ func newLeader(ctx context.Context, cr *container) *leader {
 	}
 }
 
-func (l *leader) checkShardOwnerLoop(ctx context.Context) {
+func (l *leader) shardOwnerLoop(ctx context.Context) {
 	ticker := time.Tick(3 * time.Second)
 	for {
 	checkLoop:
 		select {
+		case <-ticker:
 		case <-ctx.Done():
 			Logger.Printf("campaignLeader exit")
 			return
-		case <-ticker:
-			containerIds, err := l.etcdWrapper.getKvs(ctx, l.etcdWrapper.heartbeatContainerNode())
-			if err != nil {
+		}
+
+		containers, err := l.etcdWrapper.getKvs(ctx, l.etcdWrapper.heartbeatContainerNode())
+		if err != nil {
+			Logger.Printf("err %+v", err)
+			goto checkLoop
+		}
+
+		shards, err := l.etcdWrapper.getKvs(ctx, l.etcdWrapper.heartbeatShardNode())
+		if err != nil {
+			Logger.Printf("err %+v", err)
+			goto checkLoop
+		}
+
+		for _, v := range shards {
+			var shb ShardHeartbeat
+			if err := json.Unmarshal([]byte(v), &shb); err != nil {
 				Logger.Printf("err %+v", err)
 				goto checkLoop
 			}
-
-			shardIds, err := l.etcdWrapper.getKvs(ctx, l.etcdWrapper.heartbeatShardNode())
-			if err != nil {
-				Logger.Printf("err %+v", err)
-				goto checkLoop
-			}
-
-			for _, v := range shardIds {
-				var shb ShardHeartbeat
-				if err := json.Unmarshal([]byte(v), &shb); err != nil {
-					Logger.Printf("err %+v", err)
-					goto checkLoop
-				}
-				if _, ok := containerIds[shb.ContainerId]; !ok {
-
-					break
-				}
+			if _, ok := containers[shb.ContainerId]; !ok {
+				break
 			}
 		}
 	}
@@ -114,36 +114,37 @@ func (l *leader) shardLoadLoop(ctx context.Context) {
 watchLoop:
 	wch := l.etcdWrapper.etcdClientV3.Watch(ctx, l.etcdWrapper.heartbeatShardNode())
 	for {
+		var wr clientv3.WatchResponse
 		select {
+		case wr = <-wch:
 		case <-ctx.Done():
 			Logger.Printf("shardLoadLoop exit")
 			return
-		case wr := <-wch:
-			if err := wr.Err(); err != nil {
-				Logger.Printf("err: %v", err)
-				goto watchLoop
+		}
+		if err := wr.Err(); err != nil {
+			Logger.Printf("err: %v", err)
+			goto watchLoop
+		}
+
+		for _, ev := range wr.Events {
+			if ev.IsCreate() {
+				continue
 			}
 
-			for _, ev := range wr.Events {
-				if ev.IsCreate() {
-					continue
-				}
-
-				start := time.Now()
-				qev := event{
-					start: start.Unix(),
-					load:  string(ev.Kv.Value),
-				}
-
-				if ev.IsModify() {
-					qev.typ = evTypeShardUpdate
-				} else {
-					qev.typ = evTypeShardDel
-					// 3s是给服务器container重启的事件
-					qev.expect = start.Add(3 * time.Second).Unix()
-				}
-				l.eq.push(&qev)
+			start := time.Now()
+			qev := event{
+				start: start.Unix(),
+				load:  string(ev.Kv.Value),
 			}
+
+			if ev.IsModify() {
+				qev.typ = evTypeShardUpdate
+			} else {
+				qev.typ = evTypeShardDel
+				// 3s是给服务器container重启的事件
+				qev.expect = start.Add(3 * time.Second).Unix()
+			}
+			l.eq.push(&qev)
 		}
 	}
 }
@@ -155,34 +156,36 @@ func (l *leader) containerLoadLoop(ctx context.Context) {
 watchLoop:
 	wch := l.etcdWrapper.etcdClientV3.Watch(ctx, l.etcdWrapper.heartbeatContainerNode())
 	for {
+		var wr clientv3.WatchResponse
 		select {
+		case wr = <-wch:
 		case <-ctx.Done():
 			Logger.Printf("containerLoadLoop exit")
 			return
-		case wr := <-wch:
-			if err := wr.Err(); err != nil {
-				Logger.Printf("err: %v", err)
-				goto watchLoop
+		}
+
+		if err := wr.Err(); err != nil {
+			Logger.Printf("err: %v", err)
+			goto watchLoop
+		}
+
+		for _, ev := range wr.Events {
+			if ev.IsCreate() {
+				continue
 			}
 
-			for _, ev := range wr.Events {
-				if ev.IsCreate() {
-					continue
-				}
+			start := time.Now()
+			qev := event{
+				start: start.Unix(),
+				load:  string(ev.Kv.Value),
+			}
 
-				start := time.Now()
-				qev := event{
-					start: start.Unix(),
-					load:  string(ev.Kv.Value),
-				}
-
-				if ev.IsModify() {
-					qev.typ = evTypeContainerUpdate
-				} else {
-					qev.typ = evTypeContainerDel
-					// 3s是给服务器container重启的事件
-					qev.expect = start.Add(3 * time.Second).Unix()
-				}
+			if ev.IsModify() {
+				qev.typ = evTypeContainerUpdate
+			} else {
+				qev.typ = evTypeContainerDel
+				// 3s是给服务器container重启的事件
+				qev.expect = start.Add(3 * time.Second).Unix()
 			}
 		}
 	}
