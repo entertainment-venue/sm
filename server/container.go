@@ -71,7 +71,7 @@ func newLeader(ctx context.Context, cr *container) *leader {
 }
 
 func (l *leader) shardOwnerLoop(ctx context.Context) {
-	waitTickerLoop(
+	tickerLoop(
 		ctx,
 		defaultShardLoopInterval,
 		"shardOwnerLoop exit",
@@ -79,17 +79,17 @@ func (l *leader) shardOwnerLoop(ctx context.Context) {
 			return checkShardOwner(
 				ctx,
 				l.ew,
-				l.ew.heartbeatContainerNode(true),
-				l.ew.heartbeatShardNode(true))
+				l.ew.hbContainerNode(true),
+				l.ew.hbShardNode(true))
 		},
 	)
 }
 
 func (l *leader) shardLoadLoop(ctx context.Context) {
-	waitWatchLoop(
+	watchLoop(
 		ctx,
 		l.ew,
-		l.ew.heartbeatShardNode(true),
+		l.ew.hbShardNode(true),
 		"shardLoadLoop exit",
 		func(ctx context.Context, ev *clientv3.Event) error {
 			if ev.IsCreate() {
@@ -116,10 +116,10 @@ func (l *leader) shardLoadLoop(ctx context.Context) {
 }
 
 func (l *leader) containerLoadLoop(ctx context.Context) {
-	waitWatchLoop(
+	watchLoop(
 		ctx,
 		l.ew,
-		l.ew.heartbeatContainerNode(true),
+		l.ew.hbContainerNode(true),
 		"containerLoadLoop exit",
 		func(ctx context.Context, ev *clientv3.Event) error {
 			if ev.IsCreate() {

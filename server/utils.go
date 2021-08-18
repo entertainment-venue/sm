@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"time"
+
 	"github.com/coreos/etcd/clientv3"
 	"github.com/pkg/errors"
-	"time"
 )
 
-func waitTickerLoop(ctx context.Context, duration time.Duration, exitMsg string, fn func(ctx context.Context) error) {
+func tickerLoop(ctx context.Context, duration time.Duration, exitMsg string, fn func(ctx context.Context) error) {
 	ticker := time.Tick(duration)
 	for {
 		select {
@@ -23,7 +24,7 @@ func waitTickerLoop(ctx context.Context, duration time.Duration, exitMsg string,
 	}
 }
 
-func waitWatchLoop(ctx context.Context, ew *etcdWrapper, node string, exitMsg string, fn func(ctx context.Context, ev *clientv3.Event) error) {
+func watchLoop(ctx context.Context, ew *etcdWrapper, node string, exitMsg string, fn func(ctx context.Context, ev *clientv3.Event) error) {
 	var opts []clientv3.OpOption
 	opts = append(opts, clientv3.WithPrefix())
 

@@ -96,7 +96,7 @@ func (s *shard) heartbeat(ctx context.Context) error {
 		}
 		ld.NetIOCountersStat = &netIOCounters[0]
 
-		k := s.ew.heartbeatShardIdNode(s.id, false)
+		k := s.ew.hbShardIdNode(s.id, false)
 		if _, err := s.ew.etcdClientV3.Put(ctx, k, ld.String(), clientv3.WithLease(session.Lease())); err != nil {
 			Logger.Printf("err %+v", err)
 			time.Sleep(defaultSleepTimeout)
@@ -106,7 +106,7 @@ func (s *shard) heartbeat(ctx context.Context) error {
 }
 
 func (s *shard) shardOwnerLoop(ctx context.Context) {
-	waitTickerLoop(
+	tickerLoop(
 		ctx,
 		defaultShardLoopInterval,
 		"shardOwnerLoop exit",
@@ -114,17 +114,17 @@ func (s *shard) shardOwnerLoop(ctx context.Context) {
 			return checkShardOwner(
 				ctx,
 				s.ew,
-				s.ew.heartbeatContainerNode(false),
-				s.ew.heartbeatShardNode(false))
+				s.ew.hbContainerNode(false),
+				s.ew.hbShardNode(false))
 		},
 	)
 }
 
 func (s *shard) shardLoadLoop(ctx context.Context) {
-	waitWatchLoop(
+	watchLoop(
 		ctx,
 		s.ew,
-		s.ew.heartbeatShardNode(false),
+		s.ew.hbShardNode(false),
 		"shardLoadLoop exit",
 		func(ctx context.Context, ev *clientv3.Event) error {
 			if ev.IsCreate() {
@@ -151,10 +151,10 @@ func (s *shard) shardLoadLoop(ctx context.Context) {
 }
 
 func (s *shard) containerLoadLoop(ctx context.Context) {
-	waitWatchLoop(
+	watchLoop(
 		ctx,
 		s.ew,
-		s.ew.heartbeatContainerNode(false),
+		s.ew.hbContainerNode(false),
 		"containerLoadLoop exit",
 		func(ctx context.Context, ev *clientv3.Event) error {
 			if ev.IsCreate() {

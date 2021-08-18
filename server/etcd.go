@@ -57,22 +57,22 @@ func (w *etcdWrapper) leaderNode() string {
 }
 
 // /borderland/sfmq_proxy/admin/shardhb/uuid
-func (w *etcdWrapper) heartbeatShardIdNode(shardId string, admin bool) string {
+func (w *etcdWrapper) hbShardIdNode(shardId string, admin bool) string {
 	return fmt.Sprintf("%s/shardhb/%s", w.nodePrefix(admin), shardId)
 }
 
 // /borderland/sfmq_proxy/admin/shardhb/
-func (w *etcdWrapper) heartbeatShardNode(admin bool) string {
+func (w *etcdWrapper) hbShardNode(admin bool) string {
 	return fmt.Sprintf("%s/shardhb/", w.nodePrefix(admin))
 }
 
 // /borderland/sfmq_proxy/admin/containerhb/uuid
-func (w *etcdWrapper) heartbeatContainerIdNode(containerId string, admin bool) string {
+func (w *etcdWrapper) hbContainerIdNode(containerId string, admin bool) string {
 	return fmt.Sprintf("%s/containerhb/%s", w.nodePrefix(admin), containerId)
 }
 
 // /borderland/sfmq_proxy/admin/containerhb/
-func (w *etcdWrapper) heartbeatContainerNode(admin bool) string {
+func (w *etcdWrapper) hbContainerNode(admin bool) string {
 	return fmt.Sprintf("%s/containerhb/", w.nodePrefix(admin))
 }
 
@@ -80,7 +80,7 @@ func (w *etcdWrapper) appSpecNode() string {
 	return fmt.Sprintf("%s/spec", w.container.application)
 }
 
-func (w *etcdWrapper) get(ctx context.Context, node string, opts []clientv3.OpOption) (*clientv3.GetResponse, error) {
+func (w *etcdWrapper) get(_ context.Context, node string, opts []clientv3.OpOption) (*clientv3.GetResponse, error) {
 	timeoutCtx, cancel := context.WithTimeout(context.TODO(), defaultOpTimeout)
 	defer cancel()
 
