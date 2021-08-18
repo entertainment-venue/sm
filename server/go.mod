@@ -10,6 +10,7 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/pkg/errors v0.9.1
+	github.com/shirou/gopsutil/v3 v3.21.7
 	go.uber.org/zap v1.19.0 // indirect
 	google.golang.org/genproto v0.0.0-20210813162853-db860fec028c // indirect
 )

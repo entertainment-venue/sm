@@ -21,7 +21,6 @@ type ContainerHeartbeat struct {
 }
 
 type AppSpec struct {
-
 }
 
 type etcdWrapper struct {
@@ -44,33 +43,37 @@ func newEtcdWrapper(endpoints []string) (*etcdWrapper, error) {
 	return &etcdWrapper{etcdClientV3: client}, nil
 }
 
-func (w *etcdWrapper) nodePrefix() string {
-	return fmt.Sprintf("/borderland/%s/admin", w.container.application)
+func (w *etcdWrapper) nodePrefix(admin bool) string {
+	if admin {
+		return fmt.Sprintf("/borderland/admin")
+	} else {
+		return fmt.Sprintf("/borderland/app/%s", w.container.application)
+	}
 }
 
 // /borderland/sfmq_proxy/admin/leader
 func (w *etcdWrapper) leaderNode() string {
-	return fmt.Sprintf("%s/leader", w.nodePrefix())
+	return fmt.Sprintf("%s/leader", w.nodePrefix(true))
 }
 
 // /borderland/sfmq_proxy/admin/shardhb/uuid
-func (w *etcdWrapper) heartbeatShardIdNode(shardId string) string {
-	return fmt.Sprintf("%s/shardhb/%s", w.nodePrefix(), shardId)
+func (w *etcdWrapper) heartbeatShardIdNode(shardId string, admin bool) string {
+	return fmt.Sprintf("%s/shardhb/%s", w.nodePrefix(admin), shardId)
 }
 
 // /borderland/sfmq_proxy/admin/shardhb/
-func (w *etcdWrapper) heartbeatShardNode() string {
-	return fmt.Sprintf("%s/shardhb/", w.nodePrefix())
+func (w *etcdWrapper) heartbeatShardNode(admin bool) string {
+	return fmt.Sprintf("%s/shardhb/", w.nodePrefix(admin))
 }
 
 // /borderland/sfmq_proxy/admin/containerhb/uuid
-func (w *etcdWrapper) heartbeatContainerIdNode(containerId string) string {
-	return fmt.Sprintf("%s/containerhb/%s", w.nodePrefix(), containerId)
+func (w *etcdWrapper) heartbeatContainerIdNode(containerId string, admin bool) string {
+	return fmt.Sprintf("%s/containerhb/%s", w.nodePrefix(admin), containerId)
 }
 
 // /borderland/sfmq_proxy/admin/containerhb/
-func (w *etcdWrapper) heartbeatContainerNode() string {
-	return fmt.Sprintf("%s/containerhb/", w.nodePrefix())
+func (w *etcdWrapper) heartbeatContainerNode(admin bool) string {
+	return fmt.Sprintf("%s/containerhb/", w.nodePrefix(admin))
 }
 
 func (w *etcdWrapper) appSpecNode() string {

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
@@ -16,7 +15,7 @@ type container struct {
 
 	shards []*shard
 
-	etcdWrapper *etcdWrapper
+	ew *etcdWrapper
 }
 
 func (c *container) campaignLeader(ctx context.Context) error {
@@ -41,7 +40,7 @@ func (c *container) campaignLeader(ctx context.Context) error {
 			goto campaignLoop
 		}
 
-		election := concurrency.NewElection(session, c.etcdWrapper.leaderNode())
+		election := concurrency.NewElection(session, c.ew.leaderNode())
 		if err := election.Campaign(ctx, c.id); err != nil {
 			Logger.Printf("err %+v", err)
 			time.Sleep(defaultSleepTimeout)
@@ -72,63 +71,29 @@ func newLeader(ctx context.Context, cr *container) *leader {
 }
 
 func (l *leader) shardOwnerLoop(ctx context.Context) {
-	ticker := time.Tick(3 * time.Second)
-	for {
-	checkLoop:
-		select {
-		case <-ticker:
-		case <-ctx.Done():
-			Logger.Printf("campaignLeader exit")
-			return
-		}
-
-		containers, err := l.etcdWrapper.getKvs(ctx, l.etcdWrapper.heartbeatContainerNode())
-		if err != nil {
-			Logger.Printf("err %+v", err)
-			goto checkLoop
-		}
-
-		shards, err := l.etcdWrapper.getKvs(ctx, l.etcdWrapper.heartbeatShardNode())
-		if err != nil {
-			Logger.Printf("err %+v", err)
-			goto checkLoop
-		}
-
-		for _, v := range shards {
-			var shb ShardHeartbeat
-			if err := json.Unmarshal([]byte(v), &shb); err != nil {
-				Logger.Printf("err %+v", err)
-				goto checkLoop
-			}
-			if _, ok := containers[shb.ContainerId]; !ok {
-				break
-			}
-		}
-	}
+	waitTickerLoop(
+		ctx,
+		defaultShardLoopInterval,
+		"shardOwnerLoop exit",
+		func(ctx context.Context) error {
+			return checkShardOwner(
+				ctx,
+				l.ew,
+				l.ew.heartbeatContainerNode(true),
+				l.ew.heartbeatShardNode(true))
+		},
+	)
 }
 
 func (l *leader) shardLoadLoop(ctx context.Context) {
-	var opts []clientv3.OpOption
-	opts = append(opts, clientv3.WithPrefix())
-
-watchLoop:
-	wch := l.etcdWrapper.etcdClientV3.Watch(ctx, l.etcdWrapper.heartbeatShardNode())
-	for {
-		var wr clientv3.WatchResponse
-		select {
-		case wr = <-wch:
-		case <-ctx.Done():
-			Logger.Printf("shardLoadLoop exit")
-			return
-		}
-		if err := wr.Err(); err != nil {
-			Logger.Printf("err: %v", err)
-			goto watchLoop
-		}
-
-		for _, ev := range wr.Events {
+	waitWatchLoop(
+		ctx,
+		l.ew,
+		l.ew.heartbeatShardNode(true),
+		"shardLoadLoop exit",
+		func(ctx context.Context, ev *clientv3.Event) error {
 			if ev.IsCreate() {
-				continue
+				return nil
 			}
 
 			start := time.Now()
@@ -145,33 +110,20 @@ watchLoop:
 				qev.expect = start.Add(3 * time.Second).Unix()
 			}
 			l.eq.push(&qev)
-		}
-	}
+			return nil
+		},
+	)
 }
 
 func (l *leader) containerLoadLoop(ctx context.Context) {
-	var opts []clientv3.OpOption
-	opts = append(opts, clientv3.WithPrefix())
-
-watchLoop:
-	wch := l.etcdWrapper.etcdClientV3.Watch(ctx, l.etcdWrapper.heartbeatContainerNode())
-	for {
-		var wr clientv3.WatchResponse
-		select {
-		case wr = <-wch:
-		case <-ctx.Done():
-			Logger.Printf("containerLoadLoop exit")
-			return
-		}
-
-		if err := wr.Err(); err != nil {
-			Logger.Printf("err: %v", err)
-			goto watchLoop
-		}
-
-		for _, ev := range wr.Events {
+	waitWatchLoop(
+		ctx,
+		l.ew,
+		l.ew.heartbeatContainerNode(true),
+		"containerLoadLoop exit",
+		func(ctx context.Context, ev *clientv3.Event) error {
 			if ev.IsCreate() {
-				continue
+				return nil
 			}
 
 			start := time.Now()
@@ -187,6 +139,7 @@ watchLoop:
 				// 3s是给服务器container重启的事件
 				qev.expect = start.Add(3 * time.Second).Unix()
 			}
-		}
-	}
+			return nil
+		},
+	)
 }
