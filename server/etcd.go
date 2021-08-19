@@ -12,7 +12,7 @@ import (
 
 type ShardHeartbeat struct {
 	ContainerId string `json:"container_id"`
-	Load        string `json:"load"`
+	Load        string `json:"sysLoad"`
 	Timestamp   int64  `json:"timestamp"`
 }
 
@@ -51,37 +51,42 @@ func (w *etcdWrapper) nodePrefix(admin bool) string {
 	}
 }
 
-// /borderland/sfmq_proxy/admin/leader
+// /borderland/proxy/admin/leader
 func (w *etcdWrapper) leaderNode() string {
 	return fmt.Sprintf("%s/leader", w.nodePrefix(true))
 }
 
-// /borderland/sfmq_proxy/admin/shardhb/uuid
+// /borderland/proxy/admin/shardhb/uuid
 func (w *etcdWrapper) hbShardIdNode(id string, admin bool) string {
 	return fmt.Sprintf("%s/shardhb/%s", w.nodePrefix(admin), id)
 }
 
-// /borderland/sfmq_proxy/admin/shardhb/
+// /borderland/proxy/admin/shardhb/
 func (w *etcdWrapper) hbShardNode(admin bool) string {
 	return fmt.Sprintf("%s/shardhb/", w.nodePrefix(admin))
 }
 
-// /borderland/sfmq_proxy/admin/containerhb/uuid
+// /borderland/proxy/admin/containerhb/uuid
 func (w *etcdWrapper) hbContainerIdNode(id string, admin bool) string {
 	return fmt.Sprintf("%s/containerhb/%s", w.nodePrefix(admin), id)
 }
 
-// /borderland/sfmq_proxy/admin/containerhb/
+// /borderland/proxy/admin/containerhb/
 func (w *etcdWrapper) hbContainerNode(admin bool) string {
 	return fmt.Sprintf("%s/containerhb/", w.nodePrefix(admin))
 }
 
-func (w *etcdWrapper) appSpecNode() string {
-	return fmt.Sprintf("%s/spec", w.container.service)
-}
-
 func (w *etcdWrapper) shardIdNode(id string, admin bool) string {
 	return fmt.Sprintf("%s/shard/%s", w.nodePrefix(admin), id)
+}
+
+func (w *etcdWrapper) appSpecNode() string {
+	return fmt.Sprintf("%s/spec", w.nodePrefix(false))
+}
+
+// /borderland/proxy/task
+func (w *etcdWrapper) appTaskNode() string {
+	return fmt.Sprintf("%s/task", w.nodePrefix(false))
 }
 
 func (w *etcdWrapper) get(_ context.Context, node string, opts []clientv3.OpOption) (*clientv3.GetResponse, error) {

@@ -8,22 +8,25 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
-	"github.com/shirou/gopsutil/v3/cpu"
-	"github.com/shirou/gopsutil/v3/disk"
-	"github.com/shirou/gopsutil/v3/mem"
-	"github.com/shirou/gopsutil/v3/net"
 )
 
-type load struct {
-	VirtualMemoryStat  *mem.VirtualMemoryStat `json:"virtualMemoryStat"`
-	CPUUsedPercent     float64                `json:"cpuUsedPercent"`
-	DiskIOCountersStat []*disk.IOCountersStat `json:"diskIOCountersStat"`
-	NetIOCountersStat  *net.IOCountersStat    `json:"netIOCountersStat"`
+type shardLoad struct {
 }
 
-func (l *load) String() string {
+func (l *shardLoad) String() string {
 	b, _ := json.Marshal(l)
 	return string(b)
+}
+
+// shard需要实现该接口，帮助理解程序设计，不会有app实现多种doer
+type Slicer interface {
+	HeartbeatKeeper
+
+	// graceful，保证ShardMover能力被执行的关键点
+	Stop()
+
+	// 上报sm各shard的load信息，提供给leader用于做计算
+	Heartbeat()
 }
 
 type shard struct {
@@ -35,6 +38,13 @@ type shard struct {
 
 	// borderland特有的leader节点，负责管理shard manager内部的shard分配和load监控
 	leader bool
+
+	stat *shardStat
+}
+
+type shardStat struct {
+	RPS     int `json:"rps"`
+	AvgTime int `json:"avgTime"`
 }
 
 func newShard(id string, cr *container) *shard {
@@ -67,40 +77,10 @@ func (s *shard) Heartbeat() {
 			return errors.Wrap(err, "")
 		}
 
-		ld := load{}
-
-		// 内存使用比率
-		vm, err := mem.VirtualMemory()
-		if err != nil {
-			return errors.Wrap(err, "")
-		}
-		ld.VirtualMemoryStat = vm
-
-		// cpu使用比率
-		cp, err := cpu.Percent(0, false)
-		if err != nil {
-			return errors.Wrap(err, "")
-		}
-		ld.CPUUsedPercent = cp[0]
-
-		// 磁盘io使用比率
-		diskIOCounters, err := disk.IOCounters()
-		if err != nil {
-			return errors.Wrap(err, "")
-		}
-		for _, v := range diskIOCounters {
-			ld.DiskIOCountersStat = append(ld.DiskIOCountersStat, &v)
-		}
-
-		// 网路io使用比率
-		netIOCounters, err := net.IOCounters(false)
-		if err != nil {
-			return errors.Wrap(err, "")
-		}
-		ld.NetIOCountersStat = &netIOCounters[0]
+		sd := shardLoad{}
 
 		k := s.cr.ew.hbShardIdNode(s.id, false)
-		if _, err := s.cr.ew.etcdClientV3.Put(s.ctx, k, ld.String(), clientv3.WithLease(session.Lease())); err != nil {
+		if _, err := s.cr.ew.etcdClientV3.Put(s.ctx, k, sd.String(), clientv3.WithLease(session.Lease())); err != nil {
 			return errors.Wrap(err, "")
 		}
 		return nil
