@@ -86,18 +86,20 @@ func (c *container) campaignLeader(ctx context.Context) error {
 	}
 }
 
-func (c *container) Add(ctx context.Context, id string) error {
+func (c *container) Add(_ context.Context, id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if _, ok := c.shards[id]; ok {
-		return errAlreadyExist
+		Logger.Printf("shard %s already added", id)
+		// 允许重入，Add操作保证at least once
+		return nil
 	}
 	c.shards[id] = newShard(id, c)
 	return nil
 }
 
-func (c *container) Drop(ctx context.Context, id string) error {
+func (c *container) Drop(_ context.Context, id string) error {
 	sd, ok := c.shards[id]
 	if !ok {
 		return errNotExist

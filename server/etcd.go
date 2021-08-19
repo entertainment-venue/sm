@@ -85,6 +85,7 @@ func (w *etcdWrapper) appSpecNode() string {
 }
 
 // /borderland/proxy/task
+// 如果app的task节点存在任务，不能产生新的新的任务，必须等待ack完成
 func (w *etcdWrapper) appTaskNode() string {
 	return fmt.Sprintf("%s/task", w.nodePrefix(false))
 }
@@ -117,4 +118,50 @@ func (w *etcdWrapper) getKvs(ctx context.Context, prefix string) (map[string]str
 		r[file] = string(kv.Value)
 	}
 	return r, nil
+}
+
+func (w *etcdWrapper) compareAndSwap(_ context.Context, node string, curValue string, newValue string, ttl int64) (string, error) {
+	if curValue == "" || newValue == "" {
+		return "", errors.Errorf("FAILED node %s's curValue or newValue should not be empty", node)
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(context.TODO(), defaultOpTimeout)
+	defer cancel()
+
+	var put clientv3.Op
+	if ttl <= 0 {
+		put = clientv3.OpPut(node, newValue)
+	} else {
+		timeoutCtx, cancel := context.WithTimeout(context.Background(), defaultOpTimeout)
+		defer cancel()
+
+		resp, err := w.etcdClientV3.Grant(timeoutCtx, ttl)
+		if err != nil {
+			return "", errors.Wrap(err, "")
+		}
+
+		put = clientv3.OpPut(node, newValue, clientv3.WithLease(resp.ID))
+	}
+
+	// leader会尝试保持自己的状态
+	cmp := clientv3.Compare(clientv3.Value(node), "=", curValue)
+	get := clientv3.OpGet(node)
+	resp, err := w.etcdClientV3.Txn(timeoutCtx).If(cmp).Then(put).Else(get).Commit()
+	if err != nil {
+		return "", errors.Wrapf(err, "FAILED to swap node %s from %s to %s", node, curValue, newValue)
+	}
+	if resp.Succeeded {
+		Logger.Printf("Successfully swap node %s from %s to %s", node, curValue, newValue)
+		return "", nil
+	}
+	if resp.Responses[0].GetResponseRange().Count == 0 {
+		return "", errors.Errorf("FAILED to swap node %s, node not exist, but want change value from %s to %s", node, curValue, newValue)
+	}
+	realValue := string(resp.Responses[0].GetResponseRange().Kvs[0].Value)
+	if realValue == newValue {
+		Logger.Printf("FAILED to swap node %s, current value %s, but want change value from %s to %s", node, realValue, curValue, newValue)
+		return realValue, errEtcdAlreadyExist
+	}
+	Logger.Printf("FAILED to swap node %s, current value %s, but want change value from %s to %s", node, realValue, curValue, newValue)
+	return realValue, errEtcdValueNotMatch
 }

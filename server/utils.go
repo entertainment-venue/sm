@@ -15,7 +15,7 @@ type admin struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	id      string
+	id string
 
 	// https://callistaenterprise.se/blogg/teknik/2019/10/05/go-worker-cancellation/
 	wg sync.WaitGroup
