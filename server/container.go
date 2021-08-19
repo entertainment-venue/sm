@@ -2,20 +2,22 @@ package main
 
 import (
 	"context"
+	"sync"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/pkg/errors"
 )
 
 type container struct {
-	id          string
-	application string
+	admin
 
-	shards []*shard
+	service string
 
 	ew *etcdWrapper
+
+	mu     sync.Mutex
+	shards map[string]*shard
 }
 
 func (c *container) campaignLeader(ctx context.Context) error {
@@ -58,88 +60,22 @@ func (c *container) campaignLeader(ctx context.Context) error {
 	}
 }
 
-type leader struct {
-	container
+func (c *container) Add(ctx context.Context, id string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	eq *eventQueue
-}
-
-func newLeader(ctx context.Context, cr *container) *leader {
-	return &leader{
-		eq: newEventQueue(ctx),
+	if _, ok := c.shards[id]; ok {
+		return errAlreadyExist
 	}
+	c.shards[id] = newShard(id, c)
+	return nil
 }
 
-func (l *leader) shardOwnerLoop(ctx context.Context) {
-	tickerLoop(
-		ctx,
-		defaultShardLoopInterval,
-		"shardOwnerLoop exit",
-		func(ctx context.Context) error {
-			return checkShardOwner(
-				ctx,
-				l.ew,
-				l.ew.hbContainerNode(true),
-				l.ew.hbShardNode(true))
-		},
-	)
-}
-
-func (l *leader) shardLoadLoop(ctx context.Context) {
-	watchLoop(
-		ctx,
-		l.ew,
-		l.ew.hbShardNode(true),
-		"shardLoadLoop exit",
-		func(ctx context.Context, ev *clientv3.Event) error {
-			if ev.IsCreate() {
-				return nil
-			}
-
-			start := time.Now()
-			qev := event{
-				start: start.Unix(),
-				load:  string(ev.Kv.Value),
-			}
-
-			if ev.IsModify() {
-				qev.typ = evTypeShardUpdate
-			} else {
-				qev.typ = evTypeShardDel
-				// 3s是给服务器container重启的事件
-				qev.expect = start.Add(3 * time.Second).Unix()
-			}
-			l.eq.push(&qev)
-			return nil
-		},
-	)
-}
-
-func (l *leader) containerLoadLoop(ctx context.Context) {
-	watchLoop(
-		ctx,
-		l.ew,
-		l.ew.hbContainerNode(true),
-		"containerLoadLoop exit",
-		func(ctx context.Context, ev *clientv3.Event) error {
-			if ev.IsCreate() {
-				return nil
-			}
-
-			start := time.Now()
-			qev := event{
-				start: start.Unix(),
-				load:  string(ev.Kv.Value),
-			}
-
-			if ev.IsModify() {
-				qev.typ = evTypeContainerUpdate
-			} else {
-				qev.typ = evTypeContainerDel
-				// 3s是给服务器container重启的事件
-				qev.expect = start.Add(3 * time.Second).Unix()
-			}
-			return nil
-		},
-	)
+func (c *container) Drop(ctx context.Context, id string) error {
+	sd, ok := c.shards[id]
+	if !ok {
+		return errNotExist
+	}
+	sd.Stop()
+	return nil
 }

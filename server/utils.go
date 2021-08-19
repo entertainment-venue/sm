@@ -3,13 +3,27 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/pkg/errors"
 )
 
-func tickerLoop(ctx context.Context, duration time.Duration, exitMsg string, fn func(ctx context.Context) error) {
+// 提出container和shard的公共属性
+type admin struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	id      string
+
+	// https://callistaenterprise.se/blogg/teknik/2019/10/05/go-worker-cancellation/
+	wg sync.WaitGroup
+}
+
+func tickerLoop(ctx context.Context, duration time.Duration, exitMsg string, fn func(ctx context.Context) error, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	ticker := time.Tick(duration)
 	for {
 		select {
@@ -24,7 +38,9 @@ func tickerLoop(ctx context.Context, duration time.Duration, exitMsg string, fn 
 	}
 }
 
-func watchLoop(ctx context.Context, ew *etcdWrapper, node string, exitMsg string, fn func(ctx context.Context, ev *clientv3.Event) error) {
+func watchLoop(ctx context.Context, ew *etcdWrapper, node string, exitMsg string, fn func(ctx context.Context, ev *clientv3.Event) error, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	var opts []clientv3.OpOption
 	opts = append(opts, clientv3.WithPrefix())
 

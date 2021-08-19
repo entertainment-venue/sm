@@ -47,7 +47,7 @@ func (w *etcdWrapper) nodePrefix(admin bool) string {
 	if admin {
 		return fmt.Sprintf("/borderland/admin")
 	} else {
-		return fmt.Sprintf("/borderland/app/%s", w.container.application)
+		return fmt.Sprintf("/borderland/app/%s", w.container.service)
 	}
 }
 
@@ -57,8 +57,8 @@ func (w *etcdWrapper) leaderNode() string {
 }
 
 // /borderland/sfmq_proxy/admin/shardhb/uuid
-func (w *etcdWrapper) hbShardIdNode(shardId string, admin bool) string {
-	return fmt.Sprintf("%s/shardhb/%s", w.nodePrefix(admin), shardId)
+func (w *etcdWrapper) hbShardIdNode(id string, admin bool) string {
+	return fmt.Sprintf("%s/shardhb/%s", w.nodePrefix(admin), id)
 }
 
 // /borderland/sfmq_proxy/admin/shardhb/
@@ -67,8 +67,8 @@ func (w *etcdWrapper) hbShardNode(admin bool) string {
 }
 
 // /borderland/sfmq_proxy/admin/containerhb/uuid
-func (w *etcdWrapper) hbContainerIdNode(containerId string, admin bool) string {
-	return fmt.Sprintf("%s/containerhb/%s", w.nodePrefix(admin), containerId)
+func (w *etcdWrapper) hbContainerIdNode(id string, admin bool) string {
+	return fmt.Sprintf("%s/containerhb/%s", w.nodePrefix(admin), id)
 }
 
 // /borderland/sfmq_proxy/admin/containerhb/
@@ -77,7 +77,11 @@ func (w *etcdWrapper) hbContainerNode(admin bool) string {
 }
 
 func (w *etcdWrapper) appSpecNode() string {
-	return fmt.Sprintf("%s/spec", w.container.application)
+	return fmt.Sprintf("%s/spec", w.container.service)
+}
+
+func (w *etcdWrapper) shardIdNode(id string, admin bool) string {
+	return fmt.Sprintf("%s/shard/%s", w.nodePrefix(admin), id)
 }
 
 func (w *etcdWrapper) get(_ context.Context, node string, opts []clientv3.OpOption) (*clientv3.GetResponse, error) {

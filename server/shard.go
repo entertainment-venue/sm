@@ -13,15 +13,6 @@ import (
 	"github.com/shirou/gopsutil/v3/net"
 )
 
-type shard struct {
-	id      string
-	service string
-
-	ew *etcdWrapper
-
-	eq *eventQueue
-}
-
 type load struct {
 	VirtualMemoryStat  *mem.VirtualMemoryStat `json:"virtualMemoryStat"`
 	CPUUsedPercent     float64                `json:"cpuUsedPercent"`
@@ -34,7 +25,39 @@ func (l *load) String() string {
 	return string(b)
 }
 
-func (s *shard) heartbeat(ctx context.Context) error {
+type shard struct {
+	admin
+
+	cr *container
+
+	eq *eventQueue
+
+	// borderland特有的leader节点，负责管理shard manager内部的shard分配和load监控
+	leader bool
+}
+
+func newShard(id string, cr *container) *shard {
+	s := shard{cr: cr}
+	s.id = id
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+	s.eq = newEventQueue(s.ctx)
+
+	s.wg.Add(3)
+	go s.Heartbeat()
+	go s.allocateLoop()
+	go s.loadLoop()
+	return &s
+}
+
+func (s *shard) Stop() {
+	s.cancel()
+	s.wg.Wait()
+	Logger.Printf("shard %s for service %s stopped", s.id, s.cr.service)
+}
+
+func (s *shard) Heartbeat() {
+	defer s.wg.Done()
+
 	// load上报的间隔
 	ticker := time.Tick(3 * time.Second)
 
@@ -42,14 +65,14 @@ func (s *shard) heartbeat(ctx context.Context) error {
 	hbLoop:
 		select {
 		case <-ticker:
-		case <-ctx.Done():
+		case <-s.ctx.Done():
 			Logger.Printf("heartbeat exit")
-			return nil
+			return
 		}
 
 		// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
 
-		session, err := concurrency.NewSession(s.ew.etcdClientV3, concurrency.WithTTL(defaultSessionTimeout))
+		session, err := concurrency.NewSession(s.cr.ew.etcdClientV3, concurrency.WithTTL(defaultSessionTimeout))
 		if err != nil {
 			Logger.Printf("err %+v", err)
 			time.Sleep(defaultSleepTimeout)
@@ -96,8 +119,8 @@ func (s *shard) heartbeat(ctx context.Context) error {
 		}
 		ld.NetIOCountersStat = &netIOCounters[0]
 
-		k := s.ew.hbShardIdNode(s.id, false)
-		if _, err := s.ew.etcdClientV3.Put(ctx, k, ld.String(), clientv3.WithLease(session.Lease())); err != nil {
+		k := s.cr.ew.hbShardIdNode(s.id, false)
+		if _, err := s.cr.ew.etcdClientV3.Put(s.ctx, k, ld.String(), clientv3.WithLease(session.Lease())); err != nil {
 			Logger.Printf("err %+v", err)
 			time.Sleep(defaultSleepTimeout)
 			goto hbLoop
@@ -105,27 +128,28 @@ func (s *shard) heartbeat(ctx context.Context) error {
 	}
 }
 
-func (s *shard) shardOwnerLoop(ctx context.Context) {
+func (s *shard) allocateLoop() {
 	tickerLoop(
-		ctx,
+		s.ctx,
 		defaultShardLoopInterval,
-		"shardOwnerLoop exit",
+		"allocateLoop exit",
 		func(ctx context.Context) error {
 			return checkShardOwner(
 				ctx,
-				s.ew,
-				s.ew.hbContainerNode(false),
-				s.ew.hbShardNode(false))
+				s.cr.ew,
+				s.cr.ew.hbContainerNode(s.leader),
+				s.cr.ew.hbShardNode(s.leader))
 		},
+		&s.wg,
 	)
 }
 
-func (s *shard) shardLoadLoop(ctx context.Context) {
+func (s *shard) loadLoop() {
 	watchLoop(
-		ctx,
-		s.ew,
-		s.ew.hbShardNode(false),
-		"shardLoadLoop exit",
+		s.ctx,
+		s.cr.ew,
+		s.cr.ew.hbShardNode(s.leader),
+		"loadLoop exit",
 		func(ctx context.Context, ev *clientv3.Event) error {
 			if ev.IsCreate() {
 				return nil
@@ -147,34 +171,6 @@ func (s *shard) shardLoadLoop(ctx context.Context) {
 			s.eq.push(&qev)
 			return nil
 		},
-	)
-}
-
-func (s *shard) containerLoadLoop(ctx context.Context) {
-	watchLoop(
-		ctx,
-		s.ew,
-		s.ew.hbContainerNode(false),
-		"containerLoadLoop exit",
-		func(ctx context.Context, ev *clientv3.Event) error {
-			if ev.IsCreate() {
-				return nil
-			}
-
-			start := time.Now()
-			qev := event{
-				start: start.Unix(),
-				load:  string(ev.Kv.Value),
-			}
-
-			if ev.IsModify() {
-				qev.typ = evTypeContainerUpdate
-			} else {
-				qev.typ = evTypeContainerDel
-				// 3s是给服务器container重启的事件
-				qev.expect = start.Add(3 * time.Second).Unix()
-			}
-			return nil
-		},
+		&s.wg,
 	)
 }
