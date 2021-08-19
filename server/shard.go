@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"github.com/pkg/errors"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
@@ -58,25 +59,12 @@ func (s *shard) Stop() {
 func (s *shard) Heartbeat() {
 	defer s.wg.Done()
 
-	// load上报的间隔
-	ticker := time.Tick(3 * time.Second)
-
-	for {
-	hbLoop:
-		select {
-		case <-ticker:
-		case <-s.ctx.Done():
-			Logger.Printf("heartbeat exit")
-			return
-		}
-
+	fn := func(ctx context.Context) error {
 		// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
 
 		session, err := concurrency.NewSession(s.cr.ew.etcdClientV3, concurrency.WithTTL(defaultSessionTimeout))
 		if err != nil {
-			Logger.Printf("err %+v", err)
-			time.Sleep(defaultSleepTimeout)
-			goto hbLoop
+			return errors.Wrap(err, "")
 		}
 
 		ld := load{}
@@ -84,27 +72,21 @@ func (s *shard) Heartbeat() {
 		// 内存使用比率
 		vm, err := mem.VirtualMemory()
 		if err != nil {
-			Logger.Printf("err %+v", err)
-			time.Sleep(defaultSleepTimeout)
-			goto hbLoop
+			return errors.Wrap(err, "")
 		}
 		ld.VirtualMemoryStat = vm
 
 		// cpu使用比率
 		cp, err := cpu.Percent(0, false)
 		if err != nil {
-			Logger.Printf("err %+v", err)
-			time.Sleep(defaultSleepTimeout)
-			goto hbLoop
+			return errors.Wrap(err, "")
 		}
 		ld.CPUUsedPercent = cp[0]
 
 		// 磁盘io使用比率
 		diskIOCounters, err := disk.IOCounters()
 		if err != nil {
-			Logger.Printf("err %+v", err)
-			time.Sleep(defaultSleepTimeout)
-			goto hbLoop
+			return errors.Wrap(err, "")
 		}
 		for _, v := range diskIOCounters {
 			ld.DiskIOCountersStat = append(ld.DiskIOCountersStat, &v)
@@ -113,19 +95,24 @@ func (s *shard) Heartbeat() {
 		// 网路io使用比率
 		netIOCounters, err := net.IOCounters(false)
 		if err != nil {
-			Logger.Printf("err %+v", err)
-			time.Sleep(defaultSleepTimeout)
-			goto hbLoop
+			return errors.Wrap(err, "")
 		}
 		ld.NetIOCountersStat = &netIOCounters[0]
 
 		k := s.cr.ew.hbShardIdNode(s.id, false)
 		if _, err := s.cr.ew.etcdClientV3.Put(s.ctx, k, ld.String(), clientv3.WithLease(session.Lease())); err != nil {
-			Logger.Printf("err %+v", err)
-			time.Sleep(defaultSleepTimeout)
-			goto hbLoop
+			return errors.Wrap(err, "")
 		}
+		return nil
 	}
+
+	tickerLoop(
+		s.ctx,
+		defaultShardLoopInterval,
+		"heartbeat exit",
+		fn,
+		&s.wg,
+	)
 }
 
 func (s *shard) allocateLoop() {
