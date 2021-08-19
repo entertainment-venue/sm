@@ -158,11 +158,5 @@ func (c *container) Heartbeat() {
 		return nil
 	}
 
-	tickerLoop(
-		c.ctx,
-		defaultShardLoopInterval,
-		"heartbeat exit",
-		fn,
-		&c.wg,
-	)
+	tickerLoop(c.ctx, defaultShardLoopInterval, "heartbeat exit", fn, &c.wg)
 }

@@ -78,14 +78,7 @@ firstMove:
 		}
 	}
 
-	watchLoop(
-		o.ctx,
-		o.cr.ew,
-		o.cr.ew.appTaskNode(),
-		"Move exit",
-		fn,
-		&o.wg,
-	)
+	watchLoop(o.ctx, o.cr.ew, o.cr.ew.appTaskNode(), "Move exit", fn, &o.wg)
 	return nil
 }
 

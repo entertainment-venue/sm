@@ -86,13 +86,7 @@ func (s *shard) Heartbeat() {
 		return nil
 	}
 
-	tickerLoop(
-		s.ctx,
-		defaultShardLoopInterval,
-		"heartbeat exit",
-		fn,
-		&s.wg,
-	)
+	tickerLoop(s.ctx, defaultShardLoopInterval, "heartbeat exit", fn, &s.wg)
 }
 
 func (s *shard) allocateLoop() {
