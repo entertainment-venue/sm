@@ -47,6 +47,8 @@ type container struct {
 	shards map[string]Shard
 
 	op Operator
+
+	session *concurrency.Session
 }
 
 func newContainer(id, service string, endpoints []string) (*container, error) {
@@ -66,33 +68,32 @@ func newContainer(id, service string, endpoints []string) (*container, error) {
 		return nil, errors.Wrap(err, "")
 	}
 
+	// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
+loop:
+	cr.session, err = concurrency.NewSession(cr.ew.client, concurrency.WithTTL(defaultSessionTimeout))
+	if err != nil {
+		Logger.Printf("err %+v", err)
+		time.Sleep(defaultSleepTimeout)
+		goto loop
+	}
+
+	go cr.campaignLeader()
+
 	return &cr, nil
 }
 
-func (c *container) campaignLeader(ctx context.Context) error {
-	ew, err := newEtcdWrapper([]string{}, c)
-	if err != nil {
-		return errors.Wrap(err, "")
-	}
-
+func (c *container) campaignLeader() {
 	for {
 	campaignLoop:
 		select {
-		case <-ctx.Done():
+		case <-c.ctx.Done():
 			Logger.Printf("campaignLeader exit")
-			return nil
+			return
 		default:
 		}
 
-		session, err := concurrency.NewSession(ew.client, concurrency.WithTTL(defaultSessionTimeout))
-		if err != nil {
-			Logger.Printf("err %+v", err)
-			time.Sleep(defaultSleepTimeout)
-			goto campaignLoop
-		}
-
-		election := concurrency.NewElection(session, c.ew.leaderNode())
-		if err := election.Campaign(ctx, c.id); err != nil {
+		election := concurrency.NewElection(c.session, c.ew.leaderNode())
+		if err := election.Campaign(c.ctx, c.id); err != nil {
 			Logger.Printf("err %+v", err)
 			time.Sleep(defaultSleepTimeout)
 			goto campaignLoop
@@ -110,8 +111,15 @@ func (c *container) campaignLeader(ctx context.Context) error {
 }
 
 func (c *container) Close() {
+	c.op.Close()
+
+	for _, s := range c.shards {
+		s.Close()
+	}
+
 	c.cancel()
 	c.wg.Wait()
+
 	Logger.Printf("container %s for service %s stopped", c.id, c.service)
 }
 
@@ -119,13 +127,6 @@ func (c *container) Heartbeat() {
 	defer c.wg.Done()
 
 	fn := func(ctx context.Context) error {
-		// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
-
-		session, err := concurrency.NewSession(c.ew.client, concurrency.WithTTL(defaultSessionTimeout))
-		if err != nil {
-			return errors.Wrap(err, "")
-		}
-
 		ld := sysLoad{}
 
 		// 内存使用比率
@@ -159,9 +160,10 @@ func (c *container) Heartbeat() {
 		ld.NetIOCountersStat = &netIOCounters[0]
 
 		k := c.ew.hbContainerIdNode(c.id, false)
-		if _, err := c.ew.client.Put(c.ctx, k, ld.String(), clientv3.WithLease(session.Lease())); err != nil {
+		if _, err := c.ew.client.Put(c.ctx, k, ld.String(), clientv3.WithLease(c.session.Lease())); err != nil {
 			return errors.Wrap(err, "")
 		}
+
 		return nil
 	}
 
@@ -182,6 +184,9 @@ func (c *container) Add(id string) error {
 }
 
 func (c *container) Drop(id string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	sd, ok := c.shards[id]
 	if !ok {
 		return errNotExist

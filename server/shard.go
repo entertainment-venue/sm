@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"github.com/pkg/errors"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
+	"github.com/pkg/errors"
 )
 
 type shardLoad struct {
@@ -87,15 +87,17 @@ func (s *shard) Heartbeat() {
 func (s *shard) StayHealthy() {
 	s.wg.Add(3)
 	go s.Heartbeat()
-	go s.allocateLoop()
-	go s.loadLoop()
+
+	// 检查app的分配和app shard上传的负载是否健康
+	go s.appAllocateLoop()
+	go s.appLoadLoop()
 }
 
-func (s *shard) allocateLoop() {
+func (s *shard) appAllocateLoop() {
 	tickerLoop(
 		s.ctx,
 		defaultShardLoopInterval,
-		"allocateLoop exit",
+		"appAllocateLoop exit",
 		func(ctx context.Context) error {
 			return checkShardOwner(
 				ctx,
@@ -107,12 +109,12 @@ func (s *shard) allocateLoop() {
 	)
 }
 
-func (s *shard) loadLoop() {
+func (s *shard) appLoadLoop() {
 	watchLoop(
 		s.ctx,
 		s.cr.ew,
 		s.cr.ew.hbShardNode(s.leader),
-		"loadLoop exit",
+		"appLoadLoop exit",
 		func(ctx context.Context, ev *clientv3.Event) error {
 			if ev.IsCreate() {
 				return nil

@@ -69,7 +69,7 @@ func newOperator(cr *container) (Operator, error) {
 func (o *operator) Close() {
 	o.cancel()
 	o.wg.Wait()
-	Logger.Printf("operator exit for service %s stopped", c.cr.service)
+	Logger.Printf("operator exit for service %s stopped", o.cr.service)
 }
 
 // sm的shard需要能为接入app提供shard移动的能力，且保证每个任务被执行掉，所以任务会绑定在shard，防止sm的shard移动导致任务没人干
@@ -163,27 +163,27 @@ ack:
 }
 
 func (o *operator) sendMoveRequest(id string, endpoint string, action string) error {
-	dropParam := make(map[string]string)
-	dropParam["shard_id"] = id
-	b, err := json.Marshal(dropParam)
+	param := make(map[string]string)
+	param["shard_id"] = id
+	b, err := json.Marshal(param)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
 
 	urlStr := fmt.Sprintf("http://%s/borderland/shard/%s", endpoint, action)
-	dropReq, err := http.NewRequest(http.MethodPost, urlStr, bytes.NewBuffer(b))
+	req, err := http.NewRequest(http.MethodPost, urlStr, bytes.NewBuffer(b))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
 
-	dropResp, err := o.httpClient.Do(dropReq)
+	resp, err := o.httpClient.Do(req)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
-	defer dropResp.Body.Close()
-	ioutil.ReadAll(dropResp.Body)
+	defer resp.Body.Close()
+	ioutil.ReadAll(resp.Body)
 
-	if dropResp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK {
 		return errors.Errorf("Failed to %s shard %s, not 200", action, id)
 	}
 	return nil
