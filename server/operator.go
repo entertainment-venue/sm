@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"time"
 
@@ -15,25 +16,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// container和shard上报两个维度的load，leader(sm)或者shard(app)探测到异常，会发布任务出来，operator就是这个任务的执行者
-type Operator interface {
-	// sm的shard需要能为接入app提供shard移动的能力，且保证每个任务被执行掉，所以任务会绑定在shard，防止sm的shard移动导致任务没人干
-	Move() error
-
-	// TODO k8s相关
-	Scale() error
-}
-
-type operator struct {
-	admin
-
-	cr *container
-
-	httpClient *http.Client
-
-	prevValue string
-}
-
 type moveActionList []*moveAction
 
 type moveAction struct {
@@ -42,7 +24,56 @@ type moveAction struct {
 	AddEndpoint  string `json:"addEndpoint"`
 }
 
-func (o *operator) Move() error {
+type Operator interface {
+	Closer
+
+	Move()
+	Scale()
+}
+
+// container和shard上报两个维度的load，leader(sm)或者shard(app)探测到异常，会发布任务出来，operator就是这个任务的执行者
+type operator struct {
+	admin
+
+	cr         *container
+	httpClient *http.Client
+	prevValue  string
+}
+
+func newOperator(cr *container) (Operator, error) {
+	op := operator{cr: cr}
+	op.ctx, op.cancel = context.WithCancel(context.Background())
+
+	httpDialContextFunc := (&net.Dialer{Timeout: 1 * time.Second, DualStack: true}).DialContext
+	op.httpClient = &http.Client{
+		Transport: &http.Transport{
+			DialContext: httpDialContextFunc,
+
+			IdleConnTimeout:       30 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 0,
+
+			MaxIdleConns:        50,
+			MaxIdleConnsPerHost: 50,
+		},
+		Timeout: 3 * time.Second,
+	}
+
+	go op.Move()
+
+	// TODO scale
+
+	return &op, nil
+}
+
+func (o *operator) Close() {
+	o.cancel()
+	o.wg.Wait()
+	Logger.Printf("operator exit for service %s stopped", c.cr.service)
+}
+
+// sm的shard需要能为接入app提供shard移动的能力，且保证每个任务被执行掉，所以任务会绑定在shard，防止sm的shard移动导致任务没人干
+func (o *operator) Move() {
 	fn := func(ctx context.Context, ev *clientv3.Event) error {
 		if ev.Type == mvccpb.DELETE {
 			return nil
@@ -53,7 +84,7 @@ func (o *operator) Move() error {
 			return nil
 		}
 
-		if err := o.doMove(ev.Kv.Value); err != nil {
+		if err := o.move(ev.Kv.Value); err != nil {
 			return errors.Wrap(err, "")
 		}
 
@@ -72,18 +103,19 @@ firstMove:
 	if resp.Count > 0 {
 		s := string(resp.Kvs[0].Value)
 		if s != "" {
-			if err := o.doMove(resp.Kvs[0].Value); err != nil {
-				return errors.Wrap(err, "")
+			if err := o.move(resp.Kvs[0].Value); err != nil {
+				Logger.Printf("err: %v", err)
+				time.Sleep(defaultSleepTimeout)
+				goto firstMove
 			}
 		}
 	}
 
-	watchLoop(o.ctx, o.cr.ew, o.cr.ew.appTaskNode(), "Move exit", fn, &o.wg)
-	return nil
+	watchLoop(o.ctx, o.cr.ew, o.cr.ew.appTaskNode(), "moveLoop exit", fn, &o.wg)
 }
 
 // 保证at least once
-func (o *operator) doMove(value []byte) error {
+func (o *operator) move(value []byte) error {
 	var mal moveActionList
 	if err := json.Unmarshal(value, &mal); err != nil {
 		Logger.Printf("Unexpected err: %v", err)

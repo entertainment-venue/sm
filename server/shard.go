@@ -19,14 +19,11 @@ func (l *shardLoad) String() string {
 }
 
 // shard需要实现该接口，帮助理解程序设计，不会有app实现多种doer
-type Slicer interface {
+type Shard interface {
+	Closer
 	HeartbeatKeeper
 
-	// graceful，保证ShardMover能力被执行的关键点
-	Stop()
-
-	// 上报sm各shard的load信息，提供给leader用于做计算
-	Heartbeat()
+	StayHealthy()
 }
 
 type shard struct {
@@ -53,14 +50,12 @@ func newShard(id string, cr *container) *shard {
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.eq = newEventQueue(s.ctx)
 
-	s.wg.Add(3)
-	go s.Heartbeat()
-	go s.allocateLoop()
-	go s.loadLoop()
+	s.StayHealthy()
+
 	return &s
 }
 
-func (s *shard) Stop() {
+func (s *shard) Close() {
 	s.cancel()
 	s.wg.Wait()
 	Logger.Printf("shard %s for service %s stopped", s.id, s.cr.service)
@@ -87,6 +82,13 @@ func (s *shard) Heartbeat() {
 	}
 
 	tickerLoop(s.ctx, defaultShardLoopInterval, "heartbeat exit", fn, &s.wg)
+}
+
+func (s *shard) StayHealthy() {
+	s.wg.Add(3)
+	go s.Heartbeat()
+	go s.allocateLoop()
+	go s.loadLoop()
 }
 
 func (s *shard) allocateLoop() {

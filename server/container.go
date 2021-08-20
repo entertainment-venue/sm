@@ -28,11 +28,12 @@ func (l *sysLoad) String() string {
 }
 
 // container需要实现该接口，作为管理指令的接收点
-type Mover interface {
+type Container interface {
+	Closer
 	HeartbeatKeeper
 
-	Add(ctx context.Context, id string) error
-	Drop(ctx context.Context, id string) error
+	Add(id string) error
+	Drop(id string) error
 }
 
 type container struct {
@@ -43,19 +44,28 @@ type container struct {
 	ew *etcdWrapper
 
 	mu     sync.Mutex
-	shards map[string]*shard
+	shards map[string]Shard
+
+	op Operator
 }
 
 func newContainer(id, service string, endpoints []string) (*container, error) {
 	cr := container{}
-	cr.id = id
 	cr.service = service
+	cr.id = id
+	cr.ctx, cr.cancel = context.WithCancel(context.Background())
 
 	var err error
 	cr.ew, err = newEtcdWrapper(endpoints, &cr)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
+
+	cr.op, err = newOperator(&cr)
+	if err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+
 	return &cr, nil
 }
 
@@ -99,26 +109,10 @@ func (c *container) campaignLeader(ctx context.Context) error {
 	}
 }
 
-func (c *container) Add(_ context.Context, id string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if _, ok := c.shards[id]; ok {
-		Logger.Printf("shard %s already added", id)
-		// 允许重入，Add操作保证at least once
-		return nil
-	}
-	c.shards[id] = newShard(id, c)
-	return nil
-}
-
-func (c *container) Drop(_ context.Context, id string) error {
-	sd, ok := c.shards[id]
-	if !ok {
-		return errNotExist
-	}
-	sd.Stop()
-	return nil
+func (c *container) Close() {
+	c.cancel()
+	c.wg.Wait()
+	Logger.Printf("container %s for service %s stopped", c.id, c.service)
 }
 
 func (c *container) Heartbeat() {
@@ -172,4 +166,26 @@ func (c *container) Heartbeat() {
 	}
 
 	tickerLoop(c.ctx, defaultShardLoopInterval, "heartbeat exit", fn, &c.wg)
+}
+
+func (c *container) Add(id string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, ok := c.shards[id]; ok {
+		Logger.Printf("shard %s already added", id)
+		// 允许重入，Add操作保证at least once
+		return nil
+	}
+	c.shards[id] = newShard(id, c)
+	return nil
+}
+
+func (c *container) Drop(id string) error {
+	sd, ok := c.shards[id]
+	if !ok {
+		return errNotExist
+	}
+	sd.Close()
+	return nil
 }
