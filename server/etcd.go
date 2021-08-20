@@ -11,25 +11,18 @@ import (
 )
 
 type ShardHeartbeat struct {
-	ContainerId string `json:"container_id"`
+	ContainerId string `json:"containerId"`
 	Load        string `json:"sysLoad"`
 	Timestamp   int64  `json:"timestamp"`
 }
 
-type ContainerHeartbeat struct {
-	Timestamp int64 `json:"timestamp"`
-}
-
-type AppSpec struct {
-}
-
 type etcdWrapper struct {
-	etcdClientV3 *clientv3.Client
+	client *clientv3.Client
 
-	container *container
+	cr *container
 }
 
-func newEtcdWrapper(endpoints []string) (*etcdWrapper, error) {
+func newEtcdWrapper(endpoints []string, cr *container) (*etcdWrapper, error) {
 	if len(endpoints) < 1 {
 		return nil, errors.New("You must provide at least one etcd address")
 	}
@@ -40,14 +33,14 @@ func newEtcdWrapper(endpoints []string) (*etcdWrapper, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	return &etcdWrapper{etcdClientV3: client}, nil
+	return &etcdWrapper{client: client, cr: cr}, nil
 }
 
 func (w *etcdWrapper) nodePrefix(admin bool) string {
 	if admin {
 		return fmt.Sprintf("/borderland/admin")
 	} else {
-		return fmt.Sprintf("/borderland/app/%s", w.container.service)
+		return fmt.Sprintf("/borderland/app/%s", w.cr.service)
 	}
 }
 
@@ -94,7 +87,7 @@ func (w *etcdWrapper) get(_ context.Context, node string, opts []clientv3.OpOpti
 	timeoutCtx, cancel := context.WithTimeout(context.TODO(), defaultOpTimeout)
 	defer cancel()
 
-	resp, err := w.etcdClientV3.Get(timeoutCtx, node, opts...)
+	resp, err := w.client.Get(timeoutCtx, node, opts...)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -135,7 +128,7 @@ func (w *etcdWrapper) compareAndSwap(_ context.Context, node string, curValue st
 		timeoutCtx, cancel := context.WithTimeout(context.Background(), defaultOpTimeout)
 		defer cancel()
 
-		resp, err := w.etcdClientV3.Grant(timeoutCtx, ttl)
+		resp, err := w.client.Grant(timeoutCtx, ttl)
 		if err != nil {
 			return "", errors.Wrap(err, "")
 		}
@@ -146,7 +139,7 @@ func (w *etcdWrapper) compareAndSwap(_ context.Context, node string, curValue st
 	// leader会尝试保持自己的状态
 	cmp := clientv3.Compare(clientv3.Value(node), "=", curValue)
 	get := clientv3.OpGet(node)
-	resp, err := w.etcdClientV3.Txn(timeoutCtx).If(cmp).Then(put).Else(get).Commit()
+	resp, err := w.client.Txn(timeoutCtx).If(cmp).Then(put).Else(get).Commit()
 	if err != nil {
 		return "", errors.Wrapf(err, "FAILED to swap node %s from %s to %s", node, curValue, newValue)
 	}

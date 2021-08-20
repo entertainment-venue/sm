@@ -46,8 +46,21 @@ type container struct {
 	shards map[string]*shard
 }
 
+func newContainer(id, service string, endpoints []string) (*container, error) {
+	cr := container{}
+	cr.id = id
+	cr.service = service
+
+	var err error
+	cr.ew, err = newEtcdWrapper(endpoints, &cr)
+	if err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+	return &cr, nil
+}
+
 func (c *container) campaignLeader(ctx context.Context) error {
-	ew, err := newEtcdWrapper([]string{})
+	ew, err := newEtcdWrapper([]string{}, c)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -61,7 +74,7 @@ func (c *container) campaignLeader(ctx context.Context) error {
 		default:
 		}
 
-		session, err := concurrency.NewSession(ew.etcdClientV3, concurrency.WithTTL(defaultSessionTimeout))
+		session, err := concurrency.NewSession(ew.client, concurrency.WithTTL(defaultSessionTimeout))
 		if err != nil {
 			Logger.Printf("err %+v", err)
 			time.Sleep(defaultSleepTimeout)
@@ -75,7 +88,7 @@ func (c *container) campaignLeader(ctx context.Context) error {
 			goto campaignLoop
 		}
 
-		Logger.Printf("Successfully campaign for current container %s", c.id)
+		Logger.Printf("Successfully campaign for current cr %s", c.id)
 
 		// leader启动时，等待一个时间段，方便所有container做至少一次heartbeat，然后开始监测是否需要进行container和shard映射关系的变更。
 		// etcd sdk中keepalive的请求发送时间时500ms，3s>>500ms，认为这个时间段内，所有container都会发heartbeat，不存在的就认为没有任务。
@@ -114,7 +127,7 @@ func (c *container) Heartbeat() {
 	fn := func(ctx context.Context) error {
 		// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
 
-		session, err := concurrency.NewSession(c.ew.etcdClientV3, concurrency.WithTTL(defaultSessionTimeout))
+		session, err := concurrency.NewSession(c.ew.client, concurrency.WithTTL(defaultSessionTimeout))
 		if err != nil {
 			return errors.Wrap(err, "")
 		}
@@ -152,7 +165,7 @@ func (c *container) Heartbeat() {
 		ld.NetIOCountersStat = &netIOCounters[0]
 
 		k := c.ew.hbContainerIdNode(c.id, false)
-		if _, err := c.ew.etcdClientV3.Put(c.ctx, k, ld.String(), clientv3.WithLease(session.Lease())); err != nil {
+		if _, err := c.ew.client.Put(c.ctx, k, ld.String(), clientv3.WithLease(session.Lease())); err != nil {
 			return errors.Wrap(err, "")
 		}
 		return nil

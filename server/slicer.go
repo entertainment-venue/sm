@@ -72,7 +72,7 @@ func (s *shard) Heartbeat() {
 	fn := func(ctx context.Context) error {
 		// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
 
-		session, err := concurrency.NewSession(s.cr.ew.etcdClientV3, concurrency.WithTTL(defaultSessionTimeout))
+		session, err := concurrency.NewSession(s.cr.ew.client, concurrency.WithTTL(defaultSessionTimeout))
 		if err != nil {
 			return errors.Wrap(err, "")
 		}
@@ -80,7 +80,7 @@ func (s *shard) Heartbeat() {
 		sd := shardLoad{}
 
 		k := s.cr.ew.hbShardIdNode(s.id, false)
-		if _, err := s.cr.ew.etcdClientV3.Put(s.ctx, k, sd.String(), clientv3.WithLease(session.Lease())); err != nil {
+		if _, err := s.cr.ew.client.Put(s.ctx, k, sd.String(), clientv3.WithLease(session.Lease())); err != nil {
 			return errors.Wrap(err, "")
 		}
 		return nil
