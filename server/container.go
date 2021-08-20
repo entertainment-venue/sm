@@ -77,17 +77,19 @@ loop:
 		goto loop
 	}
 
-	go cr.campaignLeader()
+	go cr.campaign()
+
+	go cr.Heartbeat()
 
 	return &cr, nil
 }
 
-func (c *container) campaignLeader() {
+func (c *container) campaign() {
 	for {
 	campaignLoop:
 		select {
 		case <-c.ctx.Done():
-			Logger.Printf("campaignLeader exit")
+			Logger.Printf("campaign exit")
 			return
 		default:
 		}
