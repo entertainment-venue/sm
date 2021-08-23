@@ -69,10 +69,16 @@ func (w *etcdWrapper) hbContainerNode(admin bool) string {
 	return fmt.Sprintf("%s/containerhb/", w.nodePrefix(admin))
 }
 
-func (w *etcdWrapper) shardIdNode(id string, admin bool) string {
-	return fmt.Sprintf("%s/shard/%s", w.nodePrefix(admin), id)
+// /borderland/app/proxy/shard/业务自己定义的shard id
+func (w *etcdWrapper) appShardIdNode(id string) string {
+	return fmt.Sprintf("%s/shard/%s", w.nodePrefix(false), id)
 }
 
+func (w *etcdWrapper) appShardNode() string {
+	return fmt.Sprintf("%s/shard/", w.nodePrefix(false))
+}
+
+// /borderland/app/proxy/spec 存储app的基本信息
 func (w *etcdWrapper) appSpecNode() string {
 	return fmt.Sprintf("%s/spec", w.nodePrefix(false))
 }

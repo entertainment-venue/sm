@@ -21,7 +21,7 @@ func (l *shardLoad) String() string {
 // shard需要实现该接口，帮助理解程序设计，不会有app实现多种doer
 type Shard interface {
 	Closer
-	HeartbeatKeeper
+	LoadUploader
 
 	StayHealthy()
 }
@@ -37,6 +37,8 @@ type shard struct {
 	leader bool
 
 	stat *shardStat
+
+	session *concurrency.Session
 }
 
 type shardStat struct {
@@ -44,15 +46,30 @@ type shardStat struct {
 	AvgTime int `json:"avgTime"`
 }
 
-func newShard(id string, cr *container) *shard {
+func newShard(id string, cr *container) (*shard, error) {
 	s := shard{cr: cr}
 	s.id = id
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.eq = newEventQueue(s.ctx)
 
+	var err error
+	s.session, err = concurrency.NewSession(s.cr.ew.client, concurrency.WithTTL(defaultSessionTimeout))
+	if err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+
+	// 保持shard级别session的重试
+	go func() {
+		defer s.Close()
+		for range s.session.Done() {
+
+		}
+		Logger.Printf("shard %s session closed", s.id)
+	}()
+
 	s.StayHealthy()
 
-	return &s
+	return &s, nil
 }
 
 func (s *shard) Close() {
@@ -61,21 +78,15 @@ func (s *shard) Close() {
 	Logger.Printf("shard %s for service %s stopped", s.id, s.cr.service)
 }
 
-func (s *shard) Heartbeat() {
+func (s *shard) Upload() {
 	defer s.wg.Done()
 
 	fn := func(ctx context.Context) error {
-		// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
-
-		session, err := concurrency.NewSession(s.cr.ew.client, concurrency.WithTTL(defaultSessionTimeout))
-		if err != nil {
-			return errors.Wrap(err, "")
-		}
-
 		sd := shardLoad{}
 
+		// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
 		k := s.cr.ew.hbShardIdNode(s.id, false)
-		if _, err := s.cr.ew.client.Put(s.ctx, k, sd.String(), clientv3.WithLease(session.Lease())); err != nil {
+		if _, err := s.cr.ew.client.Put(s.ctx, k, sd.String(), clientv3.WithLease(s.session.Lease())); err != nil {
 			return errors.Wrap(err, "")
 		}
 		return nil
@@ -86,7 +97,7 @@ func (s *shard) Heartbeat() {
 
 func (s *shard) StayHealthy() {
 	s.wg.Add(3)
-	go s.Heartbeat()
+	go s.Upload()
 
 	// 检查app的分配和app shard上传的负载是否健康
 	go s.appAllocateLoop()

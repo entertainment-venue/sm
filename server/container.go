@@ -30,7 +30,7 @@ func (l *sysLoad) String() string {
 // container需要实现该接口，作为管理指令的接收点
 type Container interface {
 	Closer
-	HeartbeatKeeper
+	LoadUploader
 
 	Add(id string) error
 	Drop(id string) error
@@ -69,24 +69,38 @@ func newContainer(id, service string, endpoints []string) (*container, error) {
 	}
 
 	// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
-loop:
 	cr.session, err = concurrency.NewSession(cr.ew.client, concurrency.WithTTL(defaultSessionTimeout))
 	if err != nil {
-		Logger.Printf("err %+v", err)
-		time.Sleep(defaultSleepTimeout)
-		goto loop
+		return nil, errors.Wrap(err, "")
 	}
+
+	go func() {
+		defer cr.Close()
+		for range cr.session.Done() {
+
+		}
+		Logger.Printf("container %s session closed", cr.id)
+	}()
 
 	go cr.campaign()
 
-	go cr.Heartbeat()
+	go cr.Upload()
 
 	return &cr, nil
 }
 
+type appSpec struct {
+	// 如果存储在etcd中的是ip和端口列表，根据不同公司服务发现的机制，做内容更新
+	Endpoints []string `json:"endpoints"`
+}
+
+type shardSpec struct {
+	ContainerId string `json:"containerId"`
+}
+
 func (c *container) campaign() {
 	for {
-	campaignLoop:
+	loop:
 		select {
 		case <-c.ctx.Done():
 			Logger.Printf("campaign exit")
@@ -98,7 +112,7 @@ func (c *container) campaign() {
 		if err := election.Campaign(c.ctx, c.id); err != nil {
 			Logger.Printf("err %+v", err)
 			time.Sleep(defaultSleepTimeout)
-			goto campaignLoop
+			goto loop
 		}
 
 		Logger.Printf("Successfully campaign for current cr %s", c.id)
@@ -109,7 +123,84 @@ func (c *container) campaign() {
 
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/borderland/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
+		go c.shardAllocateLoop()
 	}
+}
+
+func (c *container) shardAllocateLoop() {
+	fn := func(ctx context.Context) error {
+		specResp, err := c.ew.get(c.ctx, c.ew.appSpecNode(), nil)
+		if err != nil {
+			return errors.Wrap(err, "")
+		}
+		if specResp.Count == 0 {
+			err := errors.Errorf("app %s do not have spec", c.ew.appSpecNode())
+			return errors.Wrap(err, "")
+		}
+		var spec appSpec
+		if err := json.Unmarshal(specResp.Kvs[0].Value, &spec); err != nil {
+			return errors.Wrap(err, "")
+		}
+
+		idAndValue, err := c.ew.getKvs(c.ctx, c.ew.appShardNode())
+		if err != nil {
+			return errors.Wrap(err, "")
+		}
+		var (
+			unassignedShards = make(map[string]struct{})
+			allShards        []string
+		)
+		for id, value := range idAndValue {
+			var s shardSpec
+			if err := json.Unmarshal([]byte(value), &s); err != nil {
+				return errors.Wrap(err, "")
+			}
+			allShards = append(allShards, id)
+
+			if s.ContainerId == "" {
+				unassignedShards[id] = struct{}{}
+			}
+
+			var exist bool
+			for _, endpoint := range spec.Endpoints {
+				if endpoint == s.ContainerId {
+					exist = true
+					break
+				}
+			}
+			if !exist {
+				unassignedShards[id] = struct{}{}
+			}
+		}
+
+		if len(unassignedShards) > 0 {
+			Logger.Printf("got unassigned shards %v", unassignedShards)
+
+			var actions moveActionList
+
+			// leader做下数量层面的分配，提交到任务节点，会有operator来处理。
+			// 此处是leader对于sm自己分片的监控，防止有shard(业务app)被漏掉。
+			// TODO 会导致shard的大范围移动，可以让策略考虑这个问题
+			containerIdAndShardIds := performAssignment(allShards, spec.Endpoints)
+			for containerId, shardIds := range containerIdAndShardIds {
+				for _, shardId := range shardIds {
+					if _, ok := unassignedShards[shardId]; ok {
+						actions = append(actions, &moveAction{
+							ShardId:     shardId,
+							AddEndpoint: containerId,
+						})
+					}
+				}
+			}
+
+			key := c.ew.appTaskNode()
+			if _, err := c.ew.compareAndSwap(c.ctx, key, "", actions.String(), -1); err != nil {
+				return errors.Wrap(err, "")
+			}
+		}
+		return nil
+	}
+	tickerLoop(c.ctx, defaultShardLoopInterval, "shardAllocateLoop exit", fn, &c.wg)
 }
 
 func (c *container) Close() {
@@ -125,7 +216,7 @@ func (c *container) Close() {
 	Logger.Printf("container %s for service %s stopped", c.id, c.service)
 }
 
-func (c *container) Heartbeat() {
+func (c *container) Upload() {
 	defer c.wg.Done()
 
 	fn := func(ctx context.Context) error {
@@ -181,7 +272,11 @@ func (c *container) Add(id string) error {
 		// 允许重入，Add操作保证at least once
 		return nil
 	}
-	c.shards[id] = newShard(id, c)
+	shard, err := newShard(id, c)
+	if err != nil {
+		return errors.Wrap(err, "")
+	}
+	c.shards[id] = shard
 	return nil
 }
 

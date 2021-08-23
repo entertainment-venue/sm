@@ -18,6 +18,11 @@ import (
 
 type moveActionList []*moveAction
 
+func (l *moveActionList) String() string {
+	b, _ := json.Marshal(l)
+	return string(b)
+}
+
 type moveAction struct {
 	ShardId      string `json:"shardId"`
 	DropEndpoint string `json:"dropEndpoint"`
@@ -130,15 +135,21 @@ move:
 	for _, ma := range mal {
 		ma := ma
 		g.Go(func() error {
-			if err := o.sendMoveRequest(ma.ShardId, ma.DropEndpoint, "drop"); err != nil {
-				return errors.Wrap(err, "")
+			// 存在新shard的情况
+			var directlyAdd bool
+			if ma.DropEndpoint != "" {
+				directlyAdd = true
+			} else {
+				if err := o.sendMoveRequest(ma.ShardId, ma.DropEndpoint, "drop"); err != nil {
+					return errors.Wrap(err, "")
+				}
 			}
 
 			if err := o.sendMoveRequest(ma.ShardId, ma.AddEndpoint, "add"); err != nil {
 				return errors.Wrap(err, "")
 			}
 
-			Logger.Printf("Successfully move shard %s from %s to %s", ma.ShardId, ma.DropEndpoint, ma.AddEndpoint)
+			Logger.Printf("Successfully move shard %s from %s to %s, directly: %b", ma.ShardId, ma.DropEndpoint, ma.AddEndpoint, directlyAdd)
 
 			return nil
 		})

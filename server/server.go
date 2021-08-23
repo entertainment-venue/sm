@@ -14,9 +14,9 @@ type StdLogger interface {
 
 var Logger StdLogger = log.New(os.Stdout, "[LRMF] ", log.LstdFlags|log.Lshortfile)
 
-type HeartbeatKeeper interface {
+type LoadUploader interface {
 	// 上报sm各shard的load信息，提供给leader用于做计算
-	Heartbeat()
+	Upload()
 }
 
 type Closer interface {
