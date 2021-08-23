@@ -10,12 +10,6 @@ import (
 	"github.com/pkg/errors"
 )
 
-type ShardHeartbeat struct {
-	ContainerId string `json:"containerId"`
-	Load        string `json:"sysLoad"`
-	Timestamp   int64  `json:"timestamp"`
-}
-
 type etcdWrapper struct {
 	client *clientv3.Client
 
@@ -49,44 +43,50 @@ func (w *etcdWrapper) leaderNode() string {
 	return fmt.Sprintf("%s/leader", w.nodePrefix(true))
 }
 
-// /borderland/proxy/admin/shardhb/uuid
-func (w *etcdWrapper) hbShardIdNode(id string, admin bool) string {
-	return fmt.Sprintf("%s/shardhb/%s", w.nodePrefix(admin), id)
+func (w *etcdWrapper) nodeAppPrefix(service string) string {
+	return fmt.Sprintf("/borderland/app/%s", service)
 }
 
-// /borderland/proxy/admin/shardhb/
-func (w *etcdWrapper) hbShardNode(admin bool) string {
-	return fmt.Sprintf("%s/shardhb/", w.nodePrefix(admin))
+func (w *etcdWrapper) nodeAppContainerHb(service string) string {
+	return fmt.Sprintf("%s/containerhb/", w.nodeAppPrefix(service))
 }
 
-// /borderland/proxy/admin/containerhb/uuid
-func (w *etcdWrapper) hbContainerIdNode(id string, admin bool) string {
-	return fmt.Sprintf("%s/containerhb/%s", w.nodePrefix(admin), id)
+func (w *etcdWrapper) nodeAppContainerIdHb(service, id string) string {
+	return fmt.Sprintf("%s/containerhb/%s", w.nodeAppPrefix(service), id)
 }
 
-// /borderland/proxy/admin/containerhb/
-func (w *etcdWrapper) hbContainerNode(admin bool) string {
-	return fmt.Sprintf("%s/containerhb/", w.nodePrefix(admin))
+// 存储分配当前关系
+func (w *etcdWrapper) nodeAppShard(service string) string {
+	return fmt.Sprintf("%s/shard/", w.nodeAppPrefix(service))
 }
 
 // /borderland/app/proxy/shard/业务自己定义的shard id
-func (w *etcdWrapper) appShardIdNode(id string) string {
-	return fmt.Sprintf("%s/shard/%s", w.nodePrefix(false), id)
+func (w *etcdWrapper) nodeAppShardId(service, id string) string {
+	return fmt.Sprintf("%s/shard/%s", w.nodeAppPrefix(service), id)
 }
 
-func (w *etcdWrapper) appShardNode() string {
-	return fmt.Sprintf("%s/shard/", w.nodePrefix(false))
+func (w *etcdWrapper) nodeAppShardHb(service string) string {
+	return fmt.Sprintf("%s/shardhb/", w.nodeAppPrefix(service))
 }
 
-// /borderland/app/proxy/spec 存储app的基本信息
-func (w *etcdWrapper) appSpecNode() string {
-	return fmt.Sprintf("%s/spec", w.nodePrefix(false))
+func (w *etcdWrapper) nodeAppShardHbId(service, id string) string {
+	return fmt.Sprintf("%s/shardhb/%s", w.nodeAppPrefix(service), id)
 }
 
 // /borderland/proxy/task
 // 如果app的task节点存在任务，不能产生新的新的任务，必须等待ack完成
-func (w *etcdWrapper) appTaskNode() string {
-	return fmt.Sprintf("%s/task", w.nodePrefix(false))
+func (w *etcdWrapper) nodeAppTask(service string) string {
+	return fmt.Sprintf("%s/task", w.nodeAppPrefix(service))
+}
+
+// /borderland/proxy/admin/containerhb/
+func (w *etcdWrapper) nodeAppHbContainer(service string) string {
+	return fmt.Sprintf("%s/containerhb/", w.nodeAppPrefix(service))
+}
+
+// /borderland/app/proxy/spec 存储app的基本信息
+func (w *etcdWrapper) nodeAppSpec(service string) string {
+	return fmt.Sprintf("%s/spec", w.nodeAppPrefix(service))
 }
 
 func (w *etcdWrapper) get(_ context.Context, node string, opts []clientv3.OpOption) (*clientv3.GetResponse, error) {

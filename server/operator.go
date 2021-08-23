@@ -96,10 +96,12 @@ func (o *operator) Move() {
 		return nil
 	}
 
+	key := o.cr.ew.nodeAppTask(o.cr.service)
+
 	// Move只有对特定app负责的operator
 	// 当前如果存在任务，直接开始执行
 firstMove:
-	resp, err := o.cr.ew.get(o.ctx, o.cr.ew.appTaskNode(), []clientv3.OpOption{})
+	resp, err := o.cr.ew.get(o.ctx, key, []clientv3.OpOption{})
 	if err != nil {
 		Logger.Printf("err: %v", err)
 		time.Sleep(defaultSleepTimeout)
@@ -116,7 +118,7 @@ firstMove:
 		}
 	}
 
-	watchLoop(o.ctx, o.cr.ew, o.cr.ew.appTaskNode(), "moveLoop exit", fn, &o.wg)
+	watchLoop(o.ctx, o.cr.ew, key, "moveLoop exit", fn, &o.wg)
 }
 
 // 保证at least once
@@ -162,7 +164,7 @@ move:
 
 	// 利用etcd tx清空任务节点，任务节点已经空就停止
 ack:
-	key := o.cr.ew.appTaskNode()
+	key := o.cr.ew.nodeAppTask(o.cr.service)
 	if _, err := o.cr.ew.compareAndSwap(o.ctx, key, string(value), "", -1); err != nil {
 		// 节点数据被破坏，需要人工介入
 		Logger.Printf("err: %v", err)

@@ -33,9 +33,6 @@ type shard struct {
 
 	eq *eventQueue
 
-	// borderland特有的leader节点，负责管理shard manager内部的shard分配和load监控
-	leader bool
-
 	stat *shardStat
 
 	session *concurrency.Session
@@ -67,6 +64,21 @@ func newShard(id string, cr *container) (*shard, error) {
 		Logger.Printf("shard %s session closed", s.id)
 	}()
 
+	// 获取shard的任务信息，在sm场景下，shard中包含所负责的app的service信息
+	resp, err := s.cr.ew.get(s.ctx, s.cr.ew.nodeAppShardId(s.cr.service, s.id), nil)
+	if err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+	if resp.Count == 0 {
+		err = errors.Errorf("Failed to get shard %s content", s.id)
+		return nil, errors.Wrap(err, "")
+	}
+	ss := shardSpec{}
+	if err := json.Unmarshal(resp.Kvs[0].Value, &ss); err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+	s.service = ss.Service
+
 	s.StayHealthy()
 
 	return &s, nil
@@ -85,7 +97,7 @@ func (s *shard) Upload() {
 		sd := shardLoad{}
 
 		// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
-		k := s.cr.ew.hbShardIdNode(s.id, false)
+		k := s.cr.ew.nodeAppShardHbId(s.cr.service, s.id)
 		if _, err := s.cr.ew.client.Put(s.ctx, k, sd.String(), clientv3.WithLease(s.session.Lease())); err != nil {
 			return errors.Wrap(err, "")
 		}
@@ -100,32 +112,33 @@ func (s *shard) StayHealthy() {
 	go s.Upload()
 
 	// 检查app的分配和app shard上传的负载是否健康
-	go s.appAllocateLoop()
-	go s.appLoadLoop()
+	go s.appShardAllocateLoop()
+	go s.appShardLoadLoop()
 }
 
-func (s *shard) appAllocateLoop() {
+func (s *shard) appShardAllocateLoop() {
 	tickerLoop(
 		s.ctx,
 		defaultShardLoopInterval,
-		"appAllocateLoop exit",
+		"appShardAllocateLoop exit",
 		func(ctx context.Context) error {
-			return checkShardOwner(
+			return shardAllocateChecker(
 				ctx,
 				s.cr.ew,
-				s.cr.ew.hbContainerNode(s.leader),
-				s.cr.ew.hbShardNode(s.leader))
+				s.cr.ew.nodeAppHbContainer(s.service),
+				s.cr.ew.nodeAppShard(s.service),
+				s.cr.ew.nodeAppTask(s.service))
 		},
 		&s.wg,
 	)
 }
 
-func (s *shard) appLoadLoop() {
+func (s *shard) appShardLoadLoop() {
 	watchLoop(
 		s.ctx,
 		s.cr.ew,
-		s.cr.ew.hbShardNode(s.leader),
-		"appLoadLoop exit",
+		s.cr.ew.nodeAppShardHb(s.service),
+		"appShardLoadLoop exit",
 		func(ctx context.Context, ev *clientv3.Event) error {
 			if ev.IsCreate() {
 				return nil

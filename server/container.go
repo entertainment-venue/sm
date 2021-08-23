@@ -39,8 +39,6 @@ type Container interface {
 type container struct {
 	admin
 
-	service string
-
 	ew *etcdWrapper
 
 	mu     sync.Mutex
@@ -95,7 +93,11 @@ type appSpec struct {
 }
 
 type shardSpec struct {
+	// 所属container
 	ContainerId string `json:"containerId"`
+
+	// TODO 说明分片在特定场景下的任务
+	Service string `json:"service"`
 }
 
 func (c *container) campaign() {
@@ -119,7 +121,7 @@ func (c *container) campaign() {
 
 		// leader启动时，等待一个时间段，方便所有container做至少一次heartbeat，然后开始监测是否需要进行container和shard映射关系的变更。
 		// etcd sdk中keepalive的请求发送时间时500ms，3s>>500ms，认为这个时间段内，所有container都会发heartbeat，不存在的就认为没有任务。
-		time.Sleep(3 * time.Second)
+		time.Sleep(15 * time.Second)
 
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/borderland/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
@@ -128,79 +130,20 @@ func (c *container) campaign() {
 }
 
 func (c *container) shardAllocateLoop() {
-	fn := func(ctx context.Context) error {
-		specResp, err := c.ew.get(c.ctx, c.ew.appSpecNode(), nil)
-		if err != nil {
-			return errors.Wrap(err, "")
-		}
-		if specResp.Count == 0 {
-			err := errors.Errorf("app %s do not have spec", c.ew.appSpecNode())
-			return errors.Wrap(err, "")
-		}
-		var spec appSpec
-		if err := json.Unmarshal(specResp.Kvs[0].Value, &spec); err != nil {
-			return errors.Wrap(err, "")
-		}
-
-		idAndValue, err := c.ew.getKvs(c.ctx, c.ew.appShardNode())
-		if err != nil {
-			return errors.Wrap(err, "")
-		}
-		var (
-			unassignedShards = make(map[string]struct{})
-			allShards        []string
-		)
-		for id, value := range idAndValue {
-			var s shardSpec
-			if err := json.Unmarshal([]byte(value), &s); err != nil {
-				return errors.Wrap(err, "")
-			}
-			allShards = append(allShards, id)
-
-			if s.ContainerId == "" {
-				unassignedShards[id] = struct{}{}
-			}
-
-			var exist bool
-			for _, endpoint := range spec.Endpoints {
-				if endpoint == s.ContainerId {
-					exist = true
-					break
-				}
-			}
-			if !exist {
-				unassignedShards[id] = struct{}{}
-			}
-		}
-
-		if len(unassignedShards) > 0 {
-			Logger.Printf("got unassigned shards %v", unassignedShards)
-
-			var actions moveActionList
-
-			// leader做下数量层面的分配，提交到任务节点，会有operator来处理。
-			// 此处是leader对于sm自己分片的监控，防止有shard(业务app)被漏掉。
-			// TODO 会导致shard的大范围移动，可以让策略考虑这个问题
-			containerIdAndShardIds := performAssignment(allShards, spec.Endpoints)
-			for containerId, shardIds := range containerIdAndShardIds {
-				for _, shardId := range shardIds {
-					if _, ok := unassignedShards[shardId]; ok {
-						actions = append(actions, &moveAction{
-							ShardId:     shardId,
-							AddEndpoint: containerId,
-						})
-					}
-				}
-			}
-
-			key := c.ew.appTaskNode()
-			if _, err := c.ew.compareAndSwap(c.ctx, key, "", actions.String(), -1); err != nil {
-				return errors.Wrap(err, "")
-			}
-		}
-		return nil
-	}
-	tickerLoop(c.ctx, defaultShardLoopInterval, "shardAllocateLoop exit", fn, &c.wg)
+	tickerLoop(
+		c.ctx,
+		defaultShardLoopInterval,
+		"shardAllocateLoop exit",
+		func(ctx context.Context) error {
+			return shardAllocateChecker(
+				ctx,
+				c.ew,
+				c.ew.nodeAppHbContainer(c.service),
+				c.ew.nodeAppShard(c.service),
+				c.ew.nodeAppTask(c.service))
+		},
+		&c.wg,
+	)
 }
 
 func (c *container) Close() {
@@ -252,7 +195,7 @@ func (c *container) Upload() {
 		}
 		ld.NetIOCountersStat = &netIOCounters[0]
 
-		k := c.ew.hbContainerIdNode(c.id, false)
+		k := c.ew.nodeAppContainerIdHb(c.service, c.id)
 		if _, err := c.ew.client.Put(c.ctx, k, ld.String(), clientv3.WithLease(c.session.Lease())); err != nil {
 			return errors.Wrap(err, "")
 		}

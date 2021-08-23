@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"github.com/pkg/errors"
 	"sync"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/pkg/errors"
 )
 
 // 提出container和shard的公共属性
@@ -16,6 +16,9 @@ type admin struct {
 	cancel context.CancelFunc
 
 	id string
+
+	// 在shard和container场景下是不通的含义
+	service string
 
 	// https://callistaenterprise.se/blogg/teknik/2019/10/05/go-worker-cancellation/
 	wg sync.WaitGroup
@@ -69,24 +72,71 @@ watchLoop:
 	}
 }
 
-func checkShardOwner(ctx context.Context, ew *etcdWrapper, hbContainerNode string, hbShardNode string) error {
-	containers, err := ew.getKvs(ctx, hbContainerNode)
+func shardAllocateChecker(ctx context.Context, ew *etcdWrapper, hbContainerNode string, shardNode string, taskNode string) error {
+	// 获取存活的container
+	containerIdAndValue, err := ew.getKvs(ctx, hbContainerNode)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
+	var endpoints []string
+	for containerId := range containerIdAndValue {
+		endpoints = append(endpoints, containerId)
+	}
 
-	shards, err := ew.getKvs(ctx, hbShardNode)
+	shardIdAndValue, err := ew.getKvs(ctx, shardNode)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
-
-	for _, v := range shards {
-		var shb ShardHeartbeat
-		if err := json.Unmarshal([]byte(v), &shb); err != nil {
+	var (
+		unassignedShards = make(map[string]struct{})
+		allShards        []string
+	)
+	for id, value := range shardIdAndValue {
+		var s shardSpec
+		if err := json.Unmarshal([]byte(value), &s); err != nil {
 			return errors.Wrap(err, "")
 		}
-		if _, ok := containers[shb.ContainerId]; !ok {
-			break
+		allShards = append(allShards, id)
+
+		if s.ContainerId == "" {
+			unassignedShards[id] = struct{}{}
+		}
+
+		var exist bool
+		for endpoint := range containerIdAndValue {
+			if endpoint == s.ContainerId {
+				exist = true
+				break
+			}
+		}
+		if !exist {
+			unassignedShards[id] = struct{}{}
+		}
+	}
+
+	if len(unassignedShards) > 0 {
+		Logger.Printf("got unassigned shards %v", unassignedShards)
+
+		var actions moveActionList
+
+		// leader做下数量层面的分配，提交到任务节点，会有operator来处理。
+		// 此处是leader对于sm自己分片的监控，防止有shard(业务app)被漏掉。
+		// TODO 会导致shard的大范围移动，可以让策略考虑这个问题
+		containerIdAndShardIds := performAssignment(allShards, endpoints)
+		for containerId, shardIds := range containerIdAndShardIds {
+			for _, shardId := range shardIds {
+				if _, ok := unassignedShards[shardId]; ok {
+					actions = append(actions, &moveAction{
+						ShardId:     shardId,
+						AddEndpoint: containerId,
+					})
+				}
+			}
+		}
+
+		// 向自己的app任务节点发任务
+		if _, err := ew.compareAndSwap(ctx, taskNode, "", actions.String(), -1); err != nil {
+			return errors.Wrap(err, "")
 		}
 	}
 	return nil
