@@ -31,8 +31,6 @@ type shard struct {
 
 	cr *container
 
-	eq *eventQueue
-
 	stat *shardStat
 
 	session *concurrency.Session
@@ -47,7 +45,7 @@ func newShard(id string, cr *container) (*shard, error) {
 	s := shard{cr: cr}
 	s.id = id
 	s.ctx, s.cancel = context.WithCancel(context.Background())
-	s.eq = newEventQueue(s.ctx)
+	s.cr.eq = newEventQueue(s.ctx)
 
 	var err error
 	s.session, err = concurrency.NewSession(s.cr.ew.client, concurrency.WithTTL(defaultSessionTimeout))
@@ -157,7 +155,7 @@ func (s *shard) appShardLoadLoop() {
 				// 3s是给服务器container重启的事件
 				qev.expect = start.Add(3 * time.Second).Unix()
 			}
-			s.eq.push(&qev)
+			s.cr.eq.push(&qev)
 			return nil
 		},
 		&s.wg,

@@ -47,6 +47,8 @@ type container struct {
 	op Operator
 
 	session *concurrency.Session
+
+	eq *eventQueue
 }
 
 func newContainer(id, service string, endpoints []string) (*container, error) {
@@ -126,6 +128,8 @@ func (c *container) campaign() {
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/borderland/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
 		go c.shardAllocateLoop()
+
+		go c.containerLoadLoop()
 	}
 }
 
@@ -141,6 +145,37 @@ func (c *container) shardAllocateLoop() {
 				c.ew.nodeAppHbContainer(c.service),
 				c.ew.nodeAppShard(c.service),
 				c.ew.nodeAppTask(c.service))
+		},
+		&c.wg,
+	)
+}
+
+func (c *container) containerLoadLoop() {
+	watchLoop(
+		c.ctx,
+		c.ew,
+		c.ew.nodeAppContainerHb(c.service),
+		"containerLoadLoop exit",
+		func(ctx context.Context, ev *clientv3.Event) error {
+			if ev.IsCreate() {
+				return nil
+			}
+
+			start := time.Now()
+			qev := event{
+				start: start.Unix(),
+				load:  string(ev.Kv.Value),
+			}
+
+			if ev.IsModify() {
+				qev.typ = evTypeContainerUpdate
+			} else {
+				qev.typ = evTypeContainerDel
+				// 3s是给服务器container重启的事件
+				qev.expect = start.Add(3 * time.Second).Unix()
+			}
+			c.eq.push(&qev)
+			return nil
 		},
 		&c.wg,
 	)
@@ -203,7 +238,7 @@ func (c *container) Upload() {
 		return nil
 	}
 
-	tickerLoop(c.ctx, defaultShardLoopInterval, "heartbeat exit", fn, &c.wg)
+	tickerLoop(c.ctx, defaultShardLoopInterval, "Container upload exit", fn, &c.wg)
 }
 
 func (c *container) Add(id string) error {
