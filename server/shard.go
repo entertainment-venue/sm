@@ -153,12 +153,7 @@ func (s *shard) appShardAllocateLoop() {
 		defaultShardLoopInterval,
 		"appShardAllocateLoop exit",
 		func(ctx context.Context) error {
-			return shardAllocateChecker(
-				ctx,
-				s.cr.ew,
-				s.cr.ew.nodeAppHbContainer(s.service),
-				s.cr.ew.nodeAppShard(s.service),
-				s.cr.ew.nodeAppTask(s.service))
+			return shardAllocateChecker(ctx, s.cr.ew, s.service)
 		},
 		&s.wg,
 	)

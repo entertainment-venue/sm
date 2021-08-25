@@ -24,6 +24,7 @@ func (l *moveActionList) String() string {
 }
 
 type moveAction struct {
+	Service      string `json:"service"`
 	ShardId      string `json:"shardId"`
 	DropEndpoint string `json:"dropEndpoint"`
 	AddEndpoint  string `json:"addEndpoint"`
@@ -137,21 +138,32 @@ move:
 	for _, ma := range mal {
 		ma := ma
 		g.Go(func() error {
-			// 存在新shard的情况
-			var directlyAdd bool
+			var (
+				directlyAdd  bool
+				directlyDrop bool
+			)
+
 			if ma.DropEndpoint != "" {
-				directlyAdd = true
-			} else {
 				if err := o.sendMoveRequest(ma.ShardId, ma.DropEndpoint, "drop"); err != nil {
+					return errors.Wrap(err, "")
+				}
+			} else {
+				directlyAdd = true
+			}
+
+			if ma.AddEndpoint != "" {
+				if err := o.sendMoveRequest(ma.ShardId, ma.AddEndpoint, "add"); err != nil {
+					return errors.Wrap(err, "")
+				}
+			} else {
+				directlyDrop = true
+
+				if err := o.cr.ew.del(o.ctx, o.cr.ew.nodeAppShardId(ma.Service, ma.ShardId)); err != nil {
 					return errors.Wrap(err, "")
 				}
 			}
 
-			if err := o.sendMoveRequest(ma.ShardId, ma.AddEndpoint, "add"); err != nil {
-				return errors.Wrap(err, "")
-			}
-
-			Logger.Printf("Successfully move shard %s from %s to %s, directly: %b", ma.ShardId, ma.DropEndpoint, ma.AddEndpoint, directlyAdd)
+			Logger.Printf("Successfully move shard %s from %s to %s, directlyAdd: %b directlyDrop: %b", ma.ShardId, ma.DropEndpoint, ma.AddEndpoint, directlyAdd, directlyDrop)
 
 			return nil
 		})
@@ -183,7 +195,7 @@ func (o *operator) sendMoveRequest(id string, endpoint string, action string) er
 		return errors.Wrap(err, "")
 	}
 
-	urlStr := fmt.Sprintf("http://%s/borderland/shard/%s", endpoint, action)
+	urlStr := fmt.Sprintf("http://%s/borderland/container/%s-shard", endpoint, action)
 	req, err := http.NewRequest(http.MethodPost, urlStr, bytes.NewBuffer(b))
 	if err != nil {
 		return errors.Wrap(err, "")

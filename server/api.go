@@ -64,7 +64,7 @@ type appAddShardRequest struct {
 	Service string `json:"service"`
 
 	// 业务app自己定义task内容
-	Task string `json:"task`
+	Task string `json:"task"`
 }
 
 func (r *appAddShardRequest) String() string {

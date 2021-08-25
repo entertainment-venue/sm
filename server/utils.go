@@ -74,9 +74,9 @@ watchLoop:
 	}
 }
 
-func shardAllocateChecker(ctx context.Context, ew *etcdWrapper, hbContainerNode string, shardNode string, taskNode string) error {
+func shardAllocateChecker(ctx context.Context, ew *etcdWrapper, service string) error {
 	// 获取存活的container
-	containerIdAndValue, err := ew.getKvs(ctx, hbContainerNode)
+	containerIdAndValue, err := ew.getKvs(ctx, ew.nodeAppHbContainer(service))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -85,13 +85,14 @@ func shardAllocateChecker(ctx context.Context, ew *etcdWrapper, hbContainerNode 
 		endpoints = append(endpoints, containerId)
 	}
 
-	shardIdAndValue, err := ew.getKvs(ctx, shardNode)
+	shardIdAndValue, err := ew.getKvs(ctx, ew.nodeAppShard(service))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
 	var (
 		unassignedShards = make(map[string]struct{})
 		allShards        []string
+		moveActions      moveActionList
 	)
 	for id, value := range shardIdAndValue {
 		var ss shardSpec
@@ -100,9 +101,12 @@ func shardAllocateChecker(ctx context.Context, ew *etcdWrapper, hbContainerNode 
 		}
 
 		if ss.Deleted {
-			if err := ew.del(ctx, ew.nodeAppShardId(ss.Service, id)); err != nil {
-				return errors.Wrap(err, "")
-			}
+			moveActions = append(moveActions, &moveAction{
+				Service:      service,
+				ShardId:      id,
+				DropEndpoint: ss.ContainerId,
+			})
+
 		}
 
 		allShards = append(allShards, id)
@@ -126,8 +130,6 @@ func shardAllocateChecker(ctx context.Context, ew *etcdWrapper, hbContainerNode 
 	if len(unassignedShards) > 0 {
 		Logger.Printf("got unassigned shards %v", unassignedShards)
 
-		var actions moveActionList
-
 		// leader做下数量层面的分配，提交到任务节点，会有operator来处理。
 		// 此处是leader对于sm自己分片的监控，防止有shard(业务app)被漏掉。
 		// TODO 会导致shard的大范围移动，可以让策略考虑这个问题
@@ -137,15 +139,18 @@ func shardAllocateChecker(ctx context.Context, ew *etcdWrapper, hbContainerNode 
 				if _, ok := unassignedShards[shardId]; !ok {
 					continue
 				}
-				actions = append(actions, &moveAction{
+				moveActions = append(moveActions, &moveAction{
+					Service:     service,
 					ShardId:     shardId,
 					AddEndpoint: containerId,
 				})
 			}
 		}
+	}
 
+	if len(moveActions) > 0 {
 		// 向自己的app任务节点发任务
-		if _, err := ew.compareAndSwap(ctx, taskNode, "", actions.String(), -1); err != nil {
+		if _, err := ew.compareAndSwap(ctx, ew.nodeAppTask(service), "", moveActions.String(), -1); err != nil {
 			return errors.Wrap(err, "")
 		}
 	}
