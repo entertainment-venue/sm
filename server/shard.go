@@ -18,6 +18,32 @@ func (l *shardLoad) String() string {
 	return string(b)
 }
 
+type shardSpec struct {
+	// 存储下，方便开发
+	Service string `json:"service"`
+
+	// 任务内容
+	Task string `json:"task"`
+
+	UpdateTime int64 `json:"updateTime"`
+
+	// 所属container，在任务分配场景设置
+	ContainerId string `json:"containerId"`
+
+	// 软删除：borderland的shard会检查shard是否都分配给了健康的container，已经存在goroutine，直接在这个goroutine中处理删除
+	Deleted bool `json:"deleted"`
+}
+
+// borderland的任务
+type shardTask struct {
+	GovernedService string `json:"governedService"`
+}
+
+func (s *shardSpec) String() string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
 // shard需要实现该接口，帮助理解程序设计，不会有app实现多种doer
 type Shard interface {
 	Closer
@@ -71,11 +97,18 @@ func newShard(id string, cr *container) (*shard, error) {
 		err = errors.Errorf("Failed to get shard %s content", s.id)
 		return nil, errors.Wrap(err, "")
 	}
+
 	ss := shardSpec{}
 	if err := json.Unmarshal(resp.Kvs[0].Value, &ss); err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	s.service = ss.Service
+
+	task := shardTask{}
+	if err := json.Unmarshal([]byte(ss.Task), &task); err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+
+	s.service = task.GovernedService
 
 	s.StayHealthy()
 

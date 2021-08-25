@@ -133,6 +133,17 @@ func (w *etcdWrapper) del(_ context.Context, prefix string) error {
 	return nil
 }
 
+func (w *etcdWrapper) update(_ context.Context, key string, value string) error {
+	timeoutCtx, cancel := context.WithTimeout(context.TODO(), defaultOpTimeout)
+	defer cancel()
+
+	_, err := w.client.Put(timeoutCtx, key, value)
+	if err != nil {
+		return errors.Wrap(err, "")
+	}
+	return nil
+}
+
 func (w *etcdWrapper) createAndGet(_ context.Context, node string, value string, leaseID clientv3.LeaseID) (string, error) {
 	// 创建的场景下，cmp只发生一次
 	cmp := clientv3.Compare(clientv3.CreateRevision(node), "=", 0)

@@ -94,19 +94,26 @@ func shardAllocateChecker(ctx context.Context, ew *etcdWrapper, hbContainerNode 
 		allShards        []string
 	)
 	for id, value := range shardIdAndValue {
-		var s shardSpec
-		if err := json.Unmarshal([]byte(value), &s); err != nil {
+		var ss shardSpec
+		if err := json.Unmarshal([]byte(value), &ss); err != nil {
 			return errors.Wrap(err, "")
 		}
+
+		if ss.Deleted {
+			if err := ew.del(ctx, ew.nodeAppShardId(ss.Service, id)); err != nil {
+				return errors.Wrap(err, "")
+			}
+		}
+
 		allShards = append(allShards, id)
 
-		if s.ContainerId == "" {
+		if ss.ContainerId == "" {
 			unassignedShards[id] = struct{}{}
 		}
 
 		var exist bool
 		for endpoint := range containerIdAndValue {
-			if endpoint == s.ContainerId {
+			if endpoint == ss.ContainerId {
 				exist = true
 				break
 			}

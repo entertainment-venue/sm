@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"time"
+
 	"github.com/coreos/etcd/clientv3"
 	"github.com/gin-gonic/gin"
-	"net/http"
+	"github.com/pkg/errors"
 )
 
 type containerApi struct {
@@ -56,7 +59,12 @@ func (g *containerApi) GinAppAddSpec(c *gin.Context) {
 
 type appAddShardRequest struct {
 	ShardId string `json:"shardId"`
+
+	// 为哪个业务app增加shard
 	Service string `json:"service"`
+
+	// 业务app自己定义task内容
+	Task string `json:"task`
 }
 
 func (r *appAddShardRequest) String() string {
@@ -73,10 +81,16 @@ func (g *containerApi) GinAppAddShard(c *gin.Context) {
 	}
 	Logger.Printf("req: %v", req)
 
+	spec := shardSpec{
+		Service:    req.Service,
+		Task:       req.Task,
+		UpdateTime: time.Now().Unix(),
+	}
+
 	// 区分更新和添加
 	// 如果是添加，等待负责该app的shard做探测即可
 	// 如果是更新，shard是不允许更新的，这种更新的相当于shard工作内容的调整
-	cur, err := g.cr.ew.createAndGet(context.Background(), g.cr.ew.nodeAppShardId(req.Service, req.ShardId), req.String(), clientv3.NoLease)
+	cur, err := g.cr.ew.createAndGet(context.Background(), g.cr.ew.nodeAppShardId(req.Service, req.ShardId), spec.String(), clientv3.NoLease)
 	if err != nil {
 		Logger.Printf("err: %v, cur: %s", err, cur)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -100,10 +114,33 @@ func (g *containerApi) GinAppDelShard(c *gin.Context) {
 	}
 	Logger.Printf("req: %v", req)
 
-	if err := g.cr.ew.del(context.Background(), g.cr.ew.nodeAppShardId(req.Service, req.ShardId)); err != nil {
+	resp, err := g.cr.ew.get(context.Background(), g.cr.ew.nodeAppShardId(req.Service, req.ShardId), nil)
+	if err != nil {
 		Logger.Printf("err: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if resp.Count == 0 {
+		err = errors.Errorf("Failed to get shard %s content in service %s", req.ShardId, req.Service)
+		Logger.Printf("err: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	var spec shardSpec
+	if err := json.Unmarshal(resp.Kvs[0].Value, &spec); err != nil {
+		Logger.Printf("err: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if !spec.Deleted {
+		spec.Deleted = true
+
+		if err := g.cr.ew.update(context.Background(), g.cr.ew.nodeAppShardId(req.Service, req.ShardId), spec.String()); err != nil {
+			Logger.Printf("err: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{})

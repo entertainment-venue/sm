@@ -94,14 +94,6 @@ type appSpec struct {
 	Endpoints []string `json:"endpoints"`
 }
 
-type shardSpec struct {
-	// 所属container，在任务分配场景设置
-	ContainerId string `json:"containerId"`
-
-	// TODO 说明分片在特定场景下的任务
-	Service string `json:"service"`
-}
-
 func (c *container) campaign() {
 	for {
 	loop:
