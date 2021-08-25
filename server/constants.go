@@ -5,17 +5,20 @@ import (
 	"time"
 )
 
-const defaultSleepTimeout = 3 * time.Second
+const (
+	defaultSleepTimeout = 3 * time.Second
 
-const defaultSessionTimeout = 15
+	defaultSessionTimeout = 15
 
-const defaultOpTimeout = 3 * time.Second
+	defaultOpTimeout = 3 * time.Second
 
-const defaultShardLoopInterval = 3 * time.Second
+	defaultShardLoopInterval = 3 * time.Second
+)
 
 var (
 	errNotExist = errors.New("not exist")
 
-	errEtcdAlreadyExist  = errors.New("etcd: value exist")
+	errEtcdNodeExist     = errors.New("etcd: node exist")
+	errEtcdValueExist    = errors.New("etcd: value exist")
 	errEtcdValueNotMatch = errors.New("etcd: value not match")
 )

@@ -95,7 +95,7 @@ type appSpec struct {
 }
 
 type shardSpec struct {
-	// 所属container
+	// 所属container，在任务分配场景设置
 	ContainerId string `json:"containerId"`
 
 	// TODO 说明分片在特定场景下的任务

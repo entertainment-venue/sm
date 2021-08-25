@@ -119,6 +119,49 @@ func (w *etcdWrapper) getKvs(ctx context.Context, prefix string) (map[string]str
 	return r, nil
 }
 
+func (w *etcdWrapper) del(_ context.Context, prefix string) error {
+	timeoutCtx, cancel := context.WithTimeout(context.TODO(), defaultOpTimeout)
+	defer cancel()
+
+	resp, err := w.client.Delete(timeoutCtx, prefix, clientv3.WithPrefix())
+	if err != nil {
+		return errors.Wrap(err, "")
+	}
+	if resp.Deleted == 0 {
+		Logger.Printf("FAILED to del %s no kv exist", prefix)
+	}
+	return nil
+}
+
+func (w *etcdWrapper) createAndGet(_ context.Context, node string, value string, leaseID clientv3.LeaseID) (string, error) {
+	// 创建的场景下，cmp只发生一次
+	cmp := clientv3.Compare(clientv3.CreateRevision(node), "=", 0)
+
+	var create clientv3.Op
+	if leaseID == clientv3.NoLease {
+		create = clientv3.OpPut(node, value)
+	} else {
+		create = clientv3.OpPut(node, value, clientv3.WithLease(leaseID))
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(context.TODO(), defaultOpTimeout)
+	defer cancel()
+
+	get := clientv3.OpGet(node)
+	resp, err := w.client.Txn(timeoutCtx).If(cmp).Then(create).Else(get).Commit()
+	if err != nil {
+		return "", errors.Wrap(err, "")
+	}
+	if resp.Succeeded {
+		Logger.Printf("Successfully create node %s with value %s", node, value)
+		return value, nil
+	}
+	// 创建失败，不需要再继续，业务认定自己是创建的场景，curValue不能走下面的compare and swap
+	curValue := string(resp.Responses[0].GetResponseRange().Kvs[0].Value)
+	Logger.Printf("FAILED to create node %s with value %s because node already exist", node, value)
+	return curValue, errEtcdNodeExist
+}
+
 func (w *etcdWrapper) compareAndSwap(_ context.Context, node string, curValue string, newValue string, ttl int64) (string, error) {
 	if curValue == "" || newValue == "" {
 		return "", errors.Errorf("FAILED node %s's curValue or newValue should not be empty", node)
@@ -159,7 +202,7 @@ func (w *etcdWrapper) compareAndSwap(_ context.Context, node string, curValue st
 	realValue := string(resp.Responses[0].GetResponseRange().Kvs[0].Value)
 	if realValue == newValue {
 		Logger.Printf("FAILED to swap node %s, current value %s, but want change value from %s to %s", node, realValue, curValue, newValue)
-		return realValue, errEtcdAlreadyExist
+		return realValue, errEtcdValueExist
 	}
 	Logger.Printf("FAILED to swap node %s, current value %s, but want change value from %s to %s", node, realValue, curValue, newValue)
 	return realValue, errEtcdValueNotMatch

@@ -1,19 +1,110 @@
 package main
 
-import "github.com/gin-gonic/gin"
+import (
+	"context"
+	"encoding/json"
+	"github.com/coreos/etcd/clientv3"
+	"github.com/gin-gonic/gin"
+	"net/http"
+)
 
-func GinShardDrop(c *gin.Context) {
+type containerApi struct {
+	cr *container
+}
+
+type shardOpReq struct {
+	ShardId string `json:"shardId"`
+}
+
+func (g *containerApi) GinContainerDropShard(c *gin.Context) {
+	var req shardOpReq
+	if err := c.ShouldBind(&req); err != nil {
+		Logger.Printf("err: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	Logger.Printf("req: %v", req)
+
+	if err := g.cr.Add(req.ShardId); err != nil {
+		Logger.Printf("err: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{})
+}
+
+func (g *containerApi) GinContainerAddShard(c *gin.Context) {
+	var req shardOpReq
+	if err := c.ShouldBind(&req); err != nil {
+		Logger.Printf("err: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	Logger.Printf("req: %v", req)
+
+	if err := g.cr.Drop(req.ShardId); err != nil {
+		Logger.Printf("err: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{})
+}
+
+func (g *containerApi) GinAppAddSpec(c *gin.Context) {
 
 }
 
-func GinShardAdd(c *gin.Context) {
-
+type appAddShardRequest struct {
+	ShardId string `json:"shardId"`
+	Service string `json:"service"`
 }
 
-func GinAppAddSpec(c *gin.Context) {
-
+func (r *appAddShardRequest) String() string {
+	b, _ := json.Marshal(r)
+	return string(b)
 }
 
-func GinAppAddShard(c *gin.Context) {
+func (g *containerApi) GinAppAddShard(c *gin.Context) {
+	var req appAddShardRequest
+	if err := c.ShouldBind(&req); err != nil {
+		Logger.Printf("err: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	Logger.Printf("req: %v", req)
 
+	// 区分更新和添加
+	// 如果是添加，等待负责该app的shard做探测即可
+	// 如果是更新，shard是不允许更新的，这种更新的相当于shard工作内容的调整
+	cur, err := g.cr.ew.createAndGet(context.Background(), g.cr.ew.nodeAppShardId(req.Service, req.ShardId), req.String(), clientv3.NoLease)
+	if err != nil {
+		Logger.Printf("err: %v, cur: %s", err, cur)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{})
+}
+
+type appDelShardRequest struct {
+	ShardId string `json:"shardId"`
+	Service string `json:"service"`
+}
+
+func (g *containerApi) GinAppDelShard(c *gin.Context) {
+	var req appDelShardRequest
+	if err := c.ShouldBind(&req); err != nil {
+		Logger.Printf("err: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	Logger.Printf("req: %v", req)
+
+	if err := g.cr.ew.del(context.Background(), g.cr.ew.nodeAppShardId(req.Service, req.ShardId)); err != nil {
+		Logger.Printf("err: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{})
 }

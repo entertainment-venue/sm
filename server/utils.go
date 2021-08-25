@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"github.com/pkg/errors"
+	"fmt"
+	"net"
 	"sync"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
+	"github.com/pkg/errors"
 )
 
 // 提出container和shard的公共属性
@@ -125,12 +127,13 @@ func shardAllocateChecker(ctx context.Context, ew *etcdWrapper, hbContainerNode 
 		containerIdAndShardIds := performAssignment(allShards, endpoints)
 		for containerId, shardIds := range containerIdAndShardIds {
 			for _, shardId := range shardIds {
-				if _, ok := unassignedShards[shardId]; ok {
-					actions = append(actions, &moveAction{
-						ShardId:     shardId,
-						AddEndpoint: containerId,
-					})
+				if _, ok := unassignedShards[shardId]; !ok {
+					continue
 				}
+				actions = append(actions, &moveAction{
+					ShardId:     shardId,
+					AddEndpoint: containerId,
+				})
 			}
 		}
 
@@ -140,4 +143,21 @@ func shardAllocateChecker(ctx context.Context, ew *etcdWrapper, hbContainerNode 
 		}
 	}
 	return nil
+}
+
+func getLocalIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		fmt.Printf("get local IP failed, error is %+v\n", err)
+		return ""
+	}
+	for _, address := range addrs {
+		// check the address type and if it is not a loopback the display it
+		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				return ipnet.IP.String()
+			}
+		}
+	}
+	return ""
 }
