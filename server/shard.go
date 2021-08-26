@@ -55,7 +55,7 @@ type Shard interface {
 type shard struct {
 	admin
 
-	cr *container
+	ctr *container
 
 	stat *shardStat
 
@@ -68,13 +68,13 @@ type shardStat struct {
 }
 
 func newShard(id string, cr *container) (*shard, error) {
-	s := shard{cr: cr}
+	s := shard{ctr: cr}
 	s.id = id
 	s.ctx, s.cancel = context.WithCancel(context.Background())
-	s.cr.eq = newEventQueue(s.ctx)
+	s.ctr.eq = newEventQueue(s.ctx)
 
 	var err error
-	s.session, err = concurrency.NewSession(s.cr.ew.client, concurrency.WithTTL(defaultSessionTimeout))
+	s.session, err = concurrency.NewSession(s.ctr.ew.client, concurrency.WithTTL(defaultSessionTimeout))
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -89,7 +89,7 @@ func newShard(id string, cr *container) (*shard, error) {
 	}()
 
 	// 获取shard的任务信息，在sm场景下，shard中包含所负责的app的service信息
-	resp, err := s.cr.ew.get(s.ctx, s.cr.ew.nodeAppShardId(s.cr.service, s.id), nil)
+	resp, err := s.ctr.ew.get(s.ctx, s.ctr.ew.nodeAppShardId(s.ctr.service, s.id), nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -118,7 +118,7 @@ func newShard(id string, cr *container) (*shard, error) {
 func (s *shard) Close() {
 	s.cancel()
 	s.wg.Wait()
-	Logger.Printf("shard %s for service %s stopped", s.id, s.cr.service)
+	Logger.Printf("shard %s for service %s stopped", s.id, s.ctr.service)
 }
 
 func (s *shard) Upload() {
@@ -128,8 +128,8 @@ func (s *shard) Upload() {
 		sd := shardLoad{}
 
 		// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
-		k := s.cr.ew.nodeAppShardHbId(s.cr.service, s.id)
-		if _, err := s.cr.ew.client.Put(s.ctx, k, sd.String(), clientv3.WithLease(s.session.Lease())); err != nil {
+		k := s.ctr.ew.nodeAppShardHbId(s.ctr.service, s.id)
+		if _, err := s.ctr.ew.client.Put(s.ctx, k, sd.String(), clientv3.WithLease(s.session.Lease())); err != nil {
 			return errors.Wrap(err, "")
 		}
 		return nil
@@ -153,7 +153,7 @@ func (s *shard) appShardAllocateLoop() {
 		defaultShardLoopInterval,
 		"appShardAllocateLoop exit",
 		func(ctx context.Context) error {
-			return shardAllocateChecker(ctx, s.cr.ew, s.service)
+			return shardAllocateChecker(ctx, s.ctr.ew, s.service)
 		},
 		&s.wg,
 	)
@@ -162,8 +162,8 @@ func (s *shard) appShardAllocateLoop() {
 func (s *shard) appShardLoadLoop() {
 	watchLoop(
 		s.ctx,
-		s.cr.ew,
-		s.cr.ew.nodeAppShardHb(s.service),
+		s.ctr.ew,
+		s.ctr.ew.nodeAppShardHb(s.service),
 		"appShardLoadLoop exit",
 		func(ctx context.Context, ev *clientv3.Event) error {
 			if ev.IsCreate() {
@@ -183,7 +183,7 @@ func (s *shard) appShardLoadLoop() {
 				// 3s是给服务器container重启的事件
 				qev.expect = start.Add(3 * time.Second).Unix()
 			}
-			s.cr.eq.push(&qev)
+			s.ctr.eq.push(&qev)
 			return nil
 		},
 		&s.wg,

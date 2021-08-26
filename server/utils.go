@@ -150,18 +150,16 @@ func shardAllocateChecker(ctx context.Context, ew *etcdWrapper, service string) 
 	}
 
 	if gotUnassignedShards || gotUnassignedContainers {
-		Logger.Printf("got unassigned shards %v", gotUnassignedShards)
-
 		// leader做下数量层面的分配，提交到任务节点，会有operator来处理。
 		// 此处是leader对于sm自己分片的监控，防止有shard(业务app)被漏掉。
 		// TODO 会导致shard的大范围移动，可以让策略考虑这个问题
-		containerIdAndShardIds := performAssignment(allShards, endpoints)
+		newContainerIdAndShardIds := performAssignment(allShards, endpoints)
 
-		for containerId, shardIds := range containerIdAndShardIds {
+		for newId, shardIds := range newContainerIdAndShardIds {
 			// 找出哪些shard是要变动的
 			for _, shardId := range shardIds {
 				curContainerId := curShardIdAndContainerId[shardId]
-				if curContainerId == containerId {
+				if curContainerId == newId {
 					continue
 				}
 
@@ -169,7 +167,7 @@ func shardAllocateChecker(ctx context.Context, ew *etcdWrapper, service string) 
 					Service:      service,
 					ShardId:      shardId,
 					DropEndpoint: curContainerId,
-					AddEndpoint:  containerId,
+					AddEndpoint:  newId,
 				})
 			}
 		}

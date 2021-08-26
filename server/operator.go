@@ -28,6 +28,9 @@ type moveAction struct {
 	ShardId      string `json:"shardId"`
 	DropEndpoint string `json:"dropEndpoint"`
 	AddEndpoint  string `json:"addEndpoint"`
+
+	// container场景下，leader的init操作可以放弃
+	AllowDrop    bool   `json:"allowDrop"`
 }
 
 type Operator interface {
@@ -41,13 +44,13 @@ type Operator interface {
 type operator struct {
 	admin
 
-	cr         *container
+	ctr        *container
 	httpClient *http.Client
 	prevValue  string
 }
 
 func newOperator(cr *container) (Operator, error) {
-	op := operator{cr: cr}
+	op := operator{ctr: cr}
 	op.ctx, op.cancel = context.WithCancel(context.Background())
 
 	httpDialContextFunc := (&net.Dialer{Timeout: 1 * time.Second, DualStack: true}).DialContext
@@ -75,7 +78,7 @@ func newOperator(cr *container) (Operator, error) {
 func (o *operator) Close() {
 	o.cancel()
 	o.wg.Wait()
-	Logger.Printf("operator exit for service %s stopped", o.cr.service)
+	Logger.Printf("operator exit for service %s stopped", o.ctr.service)
 }
 
 // sm的shard需要能为接入app提供shard移动的能力，且保证每个任务被执行掉，所以任务会绑定在shard，防止sm的shard移动导致任务没人干
@@ -97,12 +100,12 @@ func (o *operator) Move() {
 		return nil
 	}
 
-	key := o.cr.ew.nodeAppTask(o.cr.service)
+	key := o.ctr.ew.nodeAppTask(o.ctr.service)
 
 	// Move只有对特定app负责的operator
 	// 当前如果存在任务，直接开始执行
 firstMove:
-	resp, err := o.cr.ew.get(o.ctx, key, []clientv3.OpOption{})
+	resp, err := o.ctr.ew.get(o.ctx, key, []clientv3.OpOption{})
 	if err != nil {
 		Logger.Printf("err: %v", err)
 		time.Sleep(defaultSleepTimeout)
@@ -119,7 +122,7 @@ firstMove:
 		}
 	}
 
-	watchLoop(o.ctx, o.cr.ew, key, "moveLoop exit", fn, &o.wg)
+	watchLoop(o.ctx, o.ctr.ew, key, "moveLoop exit", fn, &o.wg)
 }
 
 // 保证at least once
@@ -158,7 +161,7 @@ move:
 			} else {
 				directlyDrop = true
 
-				if err := o.cr.ew.del(o.ctx, o.cr.ew.nodeAppShardId(ma.Service, ma.ShardId)); err != nil {
+				if err := o.ctr.ew.del(o.ctx, o.ctr.ew.nodeAppShardId(ma.Service, ma.ShardId)); err != nil {
 					return errors.Wrap(err, "")
 				}
 			}
@@ -176,8 +179,8 @@ move:
 
 	// 利用etcd tx清空任务节点，任务节点已经空就停止
 ack:
-	key := o.cr.ew.nodeAppTask(o.cr.service)
-	if _, err := o.cr.ew.compareAndSwap(o.ctx, key, string(value), "", -1); err != nil {
+	key := o.ctr.ew.nodeAppTask(o.ctr.service)
+	if _, err := o.ctr.ew.compareAndSwap(o.ctx, key, string(value), "", -1); err != nil {
 		// 节点数据被破坏，需要人工介入
 		Logger.Printf("err: %v", err)
 		time.Sleep(defaultSleepTimeout)
