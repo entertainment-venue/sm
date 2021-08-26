@@ -43,8 +43,6 @@ type borderlandOptions struct {
 
 var defaultOpts = borderlandOptions{}
 
-type ResolveServiceFunc func(ctx context.Context) ([]string, error)
-
 type BorderlandOptionsFunc func(options *borderlandOptions)
 
 func WithId(v string) BorderlandOptionsFunc {

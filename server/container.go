@@ -52,41 +52,44 @@ type container struct {
 }
 
 func newContainer(id, service string, endpoints []string) (*container, error) {
-	cr := container{}
-	cr.service = service
-	cr.id = id
-	cr.ctx, cr.cancel = context.WithCancel(context.Background())
+	var (
+		err error
+		ctr container
+	)
 
-	var err error
-	cr.ew, err = newEtcdWrapper(endpoints, &cr)
+	ctr.service = service
+	ctr.id = id
+	ctr.ctx, ctr.cancel = context.WithCancel(context.Background())
+
+	ctr.ew, err = newEtcdWrapper(endpoints, &ctr)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
 
-	cr.op, err = newOperator(&cr)
+	ctr.op, err = newOperator(&ctr)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
 
 	// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
-	cr.session, err = concurrency.NewSession(cr.ew.client, concurrency.WithTTL(defaultSessionTimeout))
+	ctr.session, err = concurrency.NewSession(ctr.ew.client, concurrency.WithTTL(defaultSessionTimeout))
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
 
 	go func() {
-		defer cr.Close()
-		for range cr.session.Done() {
+		defer ctr.Close()
+		for range ctr.session.Done() {
 
 		}
-		Logger.Printf("container %s session closed", cr.id)
+		Logger.Printf("container %s session closed", ctr.id)
 	}()
 
-	go cr.campaign()
+	go ctr.campaign()
 
-	go cr.Upload()
+	go ctr.Upload()
 
-	return &cr, nil
+	return &ctr, nil
 }
 
 func (c *container) campaign() {
