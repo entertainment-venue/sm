@@ -53,8 +53,35 @@ func (g *containerApi) GinContainerAddShard(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{})
 }
 
-func (g *containerApi) GinAppAddSpec(c *gin.Context) {
+type appSpec struct {
+	// 目前app的spec更多承担的是管理职能，shard配置的一个起点，先只配置上service，可以唯一标记一个app
+	Service string `json:"service"`
 
+	CreateTime int64 `json:"createTime"`
+}
+
+func (s *appSpec) String() string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+func (g *containerApi) GinAppAddSpec(c *gin.Context) {
+	var req appSpec
+	if err := c.ShouldBind(&req); err != nil {
+		Logger.Printf("err: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	Logger.Printf("req: %v", req)
+
+	cur, err := g.cr.ew.createAndGet(context.Background(), g.cr.ew.nodeAppShard(req.Service), req.String(), clientv3.NoLease)
+	if err != nil {
+		Logger.Printf("err: %v, cur: %s", err, cur)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{})
 }
 
 type appAddShardRequest struct {

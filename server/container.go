@@ -89,11 +89,6 @@ func newContainer(id, service string, endpoints []string) (*container, error) {
 	return &cr, nil
 }
 
-type appSpec struct {
-	// 如果存储在etcd中的是ip和端口列表，根据不同公司服务发现的机制，做内容更新
-	Endpoints []string `json:"endpoints"`
-}
-
 func (c *container) campaign() {
 	for {
 	loop:
