@@ -28,10 +28,17 @@ type Closer interface {
 }
 
 type borderlandOptions struct {
-	id      string
+	// id是当前容器/进程的唯一标记，不能变化，用于做container和shard的映射关系
+	id string
+
+	// 业务app所在的服务注册发现系统的唯一标记，是业务的别名
 	service string
 
+	// etcd集群的配置
 	etcdEndpoints []string
+
+	// 监听端口: 提供管理职能，add、drop
+	addr string
 }
 
 var defaultOpts = borderlandOptions{}
@@ -58,10 +65,20 @@ func WithEtcdEndpoints(v []string) BorderlandOptionsFunc {
 	}
 }
 
+func WithAddr(v string) BorderlandOptionsFunc {
+	return func(options *borderlandOptions) {
+		options.addr = v
+	}
+}
+
 func Run(ctx context.Context, fn ...BorderlandOptionsFunc) error {
 	opts := defaultOpts
 	for _, f := range fn {
 		f(&opts)
+	}
+
+	if opts.id == "" || opts.service == "" || opts.addr == "" || len(opts.etcdEndpoints) == 0 {
+		return errors.Wrap(errParam, "")
 	}
 
 	cr, err := newContainer(opts.id, opts.service, opts.etcdEndpoints)
@@ -93,7 +110,7 @@ func Run(ctx context.Context, fn ...BorderlandOptionsFunc) error {
 		appGroup.POST("/del-shard", api.GinAppDelShard)
 	}
 
-	if err := r.Run(); err != nil {
+	if err := r.Run(opts.addr); err != nil {
 		return errors.Wrap(err, "")
 	}
 	return nil

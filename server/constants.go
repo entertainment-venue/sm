@@ -18,6 +18,8 @@ const (
 var (
 	errNotExist = errors.New("not exist")
 
+	errParam = errors.New("param err")
+
 	errEtcdNodeExist     = errors.New("etcd: node exist")
 	errEtcdValueExist    = errors.New("etcd: value exist")
 	errEtcdValueNotMatch = errors.New("etcd: value not match")
