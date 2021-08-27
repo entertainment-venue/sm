@@ -43,11 +43,11 @@ func (s *shardSpec) String() string {
 }
 
 // shard需要实现该接口，帮助理解程序设计，不会有app实现多种doer
-type Shard interface {
+type AppShard interface {
 	Closer
-	LoadUploader
 
-	StayHealthy()
+	// 作为被管理的shard的角色，上传load
+	LoadUploader
 }
 
 type shard struct {
@@ -56,6 +56,8 @@ type shard struct {
 	ctr *container
 
 	stat *shardStat
+
+	mw MaintenanceWorker
 
 	session *concurrency.Session
 }
@@ -108,7 +110,14 @@ func newShard(id string, cr *container) (*shard, error) {
 
 	s.service = task.GovernedService
 
-	s.StayHealthy()
+	s.wg.Add(4)
+
+	go s.UploadLoad()
+
+	// 检查app的分配和app shard上传的负载是否健康
+	go s.mw.ShardAllocateLoop()
+	go s.mw.ShardLoadLoop()
+	go s.mw.ContainerLoadLoop()
 
 	return &s, nil
 }
@@ -119,7 +128,7 @@ func (s *shard) Close() {
 	Logger.Printf("shard %s for service %s stopped", s.id, s.ctr.service)
 }
 
-func (s *shard) Upload() {
+func (s *shard) UploadLoad() {
 	defer s.wg.Done()
 
 	fn := func(ctx context.Context) error {
@@ -134,38 +143,4 @@ func (s *shard) Upload() {
 	}
 
 	tickerLoop(s.ctx, defaultShardLoopInterval, "heartbeat exit", fn, &s.wg)
-}
-
-func (s *shard) StayHealthy() {
-	s.wg.Add(3)
-	go s.Upload()
-
-	// 检查app的分配和app shard上传的负载是否健康
-	go s.appShardAllocateLoop()
-	go s.appShardLoadLoop()
-}
-
-func (s *shard) appShardAllocateLoop() {
-	tickerLoop(
-		s.ctx,
-		defaultShardLoopInterval,
-		"appShardAllocateLoop exit",
-		func(ctx context.Context) error {
-			return shardAllocateChecker(ctx, s.ctr.ew, s.service)
-		},
-		&s.wg,
-	)
-}
-
-func (s *shard) appShardLoadLoop() {
-	watchLoop(
-		s.ctx,
-		s.ctr.ew,
-		s.ctr.ew.nodeAppShardHb(s.service),
-		"appShardLoadLoop exit",
-		func(ctx context.Context, ev *clientv3.Event) error {
-			return shardLoadChecker(ctx, s.ctr.eq, ev)
-		},
-		&s.wg,
-	)
 }

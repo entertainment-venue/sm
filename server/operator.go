@@ -30,7 +30,7 @@ type moveAction struct {
 	AddEndpoint  string `json:"addEndpoint"`
 
 	// container场景下，leader的init操作可以放弃
-	AllowDrop    bool   `json:"allowDrop"`
+	AllowDrop bool `json:"allowDrop"`
 }
 
 type Operator interface {
@@ -156,7 +156,18 @@ move:
 
 			if ma.AddEndpoint != "" {
 				if err := o.sendMoveRequest(ma.ShardId, ma.AddEndpoint, "add"); err != nil {
-					return errors.Wrap(err, "")
+					if !ma.AllowDrop {
+						return errors.Wrap(err, "")
+					}
+
+					Logger.Printf("Failed to send move request %v, err: %v", *ma, err)
+
+					// 只在leader竞选成功场景下会下发分配指令，没有Drop动作，这里允许放弃当前动作，后续有shardAllocateLoop和shardLoadLoop兜底
+					// 如果下发失败，就必须去掉分配关系，以便shardAllocateLoop拿到的分配关系是比较真实的（这块即便下发都成功，shard可能因为异常停止工作）
+					if err := o.removeShardAllocate(ma.ShardId, ma.Service); err != nil {
+						return errors.Wrap(err, "")
+					}
+					return nil
 				}
 			} else {
 				directlyDrop = true
@@ -213,6 +224,28 @@ func (o *operator) sendMoveRequest(id string, endpoint string, action string) er
 
 	if resp.StatusCode != http.StatusOK {
 		return errors.Errorf("Failed to %s shard %s, not 200", action, id)
+	}
+	return nil
+}
+
+func (o *operator) removeShardAllocate(id, service string) error {
+	key := o.ctr.ew.nodeAppShardId(service, id)
+	resp, err := o.ctr.ew.get(o.ctx, key, nil)
+	if err != nil {
+		return errors.Wrap(err, "")
+	}
+	if resp.Count == 0 {
+		Logger.Printf("Unexpected err, key %s not exist", key)
+		return nil
+	}
+
+	var ss shardSpec
+	if err := json.Unmarshal(resp.Kvs[0].Value, &ss); err != nil {
+		return errors.Wrap(err, "")
+	}
+	ss.ContainerId = ""
+	if _, err := o.ctr.ew.compareAndSwap(o.ctx, key, string(resp.Kvs[0].Value), ss.String(), -1); err != nil {
+		return errors.Wrap(err, "")
 	}
 	return nil
 }

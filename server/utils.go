@@ -75,6 +75,8 @@ watchLoop:
 }
 
 func shardAllocateChecker(ctx context.Context, ew *etcdWrapper, service string) error {
+	// TODO 需要做shard存活的校验，
+
 	// 获取存活的container
 	containerIdAndValue, err := ew.getKvs(ctx, ew.nodeAppHbContainer(service))
 	if err != nil {
@@ -182,7 +184,7 @@ func shardAllocateChecker(ctx context.Context, ew *etcdWrapper, service string) 
 	return nil
 }
 
-func shardLoadChecker(ctx context.Context, eq *eventQueue, ev *clientv3.Event) error {
+func shardLoadChecker(_ context.Context, eq *eventQueue, ev *clientv3.Event) error {
 	if ev.IsCreate() {
 		return nil
 	}
