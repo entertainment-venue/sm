@@ -40,7 +40,7 @@ type container struct {
 	ew *etcdWrapper
 
 	mu     sync.Mutex
-	shards map[string]AppShard
+	shards map[string]Sharder
 
 	op Operator
 
