@@ -14,16 +14,18 @@ import (
 
 // 提出container和shard的公共属性
 type admin struct {
+	// https://callistaenterprise.se/blogg/teknik/2019/10/05/go-worker-cancellation/
+	// graceful close
 	ctx    context.Context
 	cancel context.CancelFunc
+	wg     sync.WaitGroup
 
 	id string
 
-	// 在shard和container场景下是不通的含义
+	// shard: 管理接入sm的业务app的shard，是被管理app的service的名称
+	// borderlandLeader: 管理sm集群内部的各shard，是sm集群的service的名称
+	// container: 是所属app的service的名称
 	service string
-
-	// https://callistaenterprise.se/blogg/teknik/2019/10/05/go-worker-cancellation/
-	wg sync.WaitGroup
 }
 
 func tickerLoop(ctx context.Context, duration time.Duration, exitMsg string, fn func(ctx context.Context) error, wg *sync.WaitGroup) {
@@ -75,7 +77,7 @@ watchLoop:
 }
 
 func shardAllocateChecker(ctx context.Context, ew *etcdWrapper, service string) error {
-	// TODO 需要做shard存活的校验，
+	// TODO 需要做shard存活的校验证明sharded application内部的goroutine是否在正常工作，load的检测有别的goroutine负责
 
 	// 获取存活的container
 	containerIdAndValue, err := ew.getKvs(ctx, ew.nodeAppHbContainer(service))

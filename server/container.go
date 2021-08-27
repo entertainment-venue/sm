@@ -100,7 +100,7 @@ func (c *container) Close() {
 		s.Close()
 	}
 
-	c.leader.Close()
+	c.leader.close()
 
 	c.cancel()
 	c.wg.Wait()

@@ -85,7 +85,7 @@ func (leader *borderlandLeader) campaign() {
 	}
 }
 
-func (leader *borderlandLeader) Close() {
+func (leader *borderlandLeader) close() {
 	leader.cancel()
 	leader.wg.Wait()
 	Logger.Printf("leader for service %s stopped", leader.ctr.service)
