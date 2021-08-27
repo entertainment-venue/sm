@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"time"
-
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/pkg/errors"
@@ -166,25 +164,7 @@ func (s *shard) appShardLoadLoop() {
 		s.ctr.ew.nodeAppShardHb(s.service),
 		"appShardLoadLoop exit",
 		func(ctx context.Context, ev *clientv3.Event) error {
-			if ev.IsCreate() {
-				return nil
-			}
-
-			start := time.Now()
-			qev := event{
-				start: start.Unix(),
-				load:  string(ev.Kv.Value),
-			}
-
-			if ev.IsModify() {
-				qev.typ = evTypeShardUpdate
-			} else {
-				qev.typ = evTypeShardDel
-				// 3s是给服务器container重启的事件
-				qev.expect = start.Add(3 * time.Second).Unix()
-			}
-			s.ctr.eq.push(&qev)
-			return nil
+			return shardLoadChecker(ctx, s.ctr.eq, ev)
 		},
 		&s.wg,
 	)

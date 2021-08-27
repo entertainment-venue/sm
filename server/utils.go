@@ -182,6 +182,28 @@ func shardAllocateChecker(ctx context.Context, ew *etcdWrapper, service string) 
 	return nil
 }
 
+func shardLoadChecker(ctx context.Context, eq *eventQueue, ev *clientv3.Event) error {
+	if ev.IsCreate() {
+		return nil
+	}
+
+	start := time.Now()
+	qev := event{
+		start: start.Unix(),
+		load:  string(ev.Kv.Value),
+	}
+
+	if ev.IsModify() {
+		qev.typ = evTypeShardUpdate
+	} else {
+		qev.typ = evTypeShardDel
+		// 3s是给服务器container重启的事件
+		qev.expect = start.Add(3 * time.Second).Unix()
+	}
+	eq.push(&qev)
+	return nil
+}
+
 func getLocalIP() string {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {

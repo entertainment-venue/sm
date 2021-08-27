@@ -169,7 +169,16 @@ func (c *container) shardAllocateLoop() {
 }
 
 func (c *container) shardLoadLoop() {
-	// TODO 监测sm本身的shard load
+	watchLoop(
+		c.ctx,
+		c.ew,
+		c.ew.nodeAppShardHb(c.service),
+		"shardLoadLoop exit",
+		func(ctx context.Context, ev *clientv3.Event) error {
+			return shardLoadChecker(ctx, c.eq, ev)
+		},
+		&c.wg,
+	)
 }
 
 func (c *container) containerLoadLoop() {
