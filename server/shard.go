@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/pkg/errors"
@@ -107,22 +108,22 @@ func newShard(id string, cr *container) (*shard, error) {
 	if err := json.Unmarshal([]byte(ss.Task), &task); err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-
 	s.service = task.GovernedService
 
-	s.wg.Add(4)
+	s.mw = newMaintenanceWorker(s.ctr, s.service)
 
+	s.wg.Add(1)
 	go s.UploadLoad()
 
 	// 检查app的分配和app shard上传的负载是否健康
-	go s.mw.ShardAllocateLoop()
-	go s.mw.ShardLoadLoop()
-	go s.mw.ContainerLoadLoop()
+	s.mw.Start()
 
 	return &s, nil
 }
 
 func (s *shard) Close() {
+	s.mw.Close()
+
 	s.cancel()
 	s.wg.Wait()
 	Logger.Printf("shard %s for service %s stopped", s.id, s.ctr.service)

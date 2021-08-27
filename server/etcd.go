@@ -13,7 +13,7 @@ import (
 type etcdWrapper struct {
 	client *clientv3.Client
 
-	cr *container
+	ctr *container
 }
 
 func newEtcdWrapper(endpoints []string, cr *container) (*etcdWrapper, error) {
@@ -27,14 +27,14 @@ func newEtcdWrapper(endpoints []string, cr *container) (*etcdWrapper, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	return &etcdWrapper{client: client, cr: cr}, nil
+	return &etcdWrapper{client: client, ctr: cr}, nil
 }
 
 func (w *etcdWrapper) nodePrefix(admin bool) string {
 	if admin {
 		return fmt.Sprintf("/borderland/admin")
 	} else {
-		return fmt.Sprintf("/borderland/app/%s", w.cr.service)
+		return fmt.Sprintf("/borderland/app/%s", w.ctr.service)
 	}
 }
 

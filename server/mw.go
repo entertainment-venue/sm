@@ -8,6 +8,7 @@ import (
 
 // 抽离出的目的是发现leader和普通的sm shard都具备相似的能力，代码基本一致
 type MaintenanceWorker interface {
+	Starter
 	Closer
 
 	// 监控sm集群本身以及各接入业务app的shard负载
@@ -27,10 +28,11 @@ type maintenanceWorker struct {
 	ctr *container
 }
 
-func newMaintenanceWorker(ctr *container) MaintenanceWorker {
+func newMaintenanceWorker(ctr *container, service string) MaintenanceWorker {
 	var mw maintenanceWorker
 	mw.ctx, mw.cancel = context.WithCancel(context.Background())
 	mw.ctr = ctr
+	mw.service = service
 	return &mw
 }
 

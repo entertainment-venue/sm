@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 )
 
@@ -21,7 +20,7 @@ func newBorderlandLeader(ctr *container) *borderlandLeader {
 	var leader borderlandLeader
 	leader.ctx, leader.cancel = context.WithCancel(context.Background())
 	leader.ctr = ctr
-	leader.mw = newMaintenanceWorker(ctr)
+	leader.mw = newMaintenanceWorker(ctr, ctr.service)
 
 	leader.wg.Add(1)
 	go leader.campaign()
@@ -82,7 +81,7 @@ func (leader *borderlandLeader) campaign() {
 
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/borderland/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
-		go leader.mw.ContainerLoadLoop()
+		go leader.mw.Start()
 	}
 }
 
@@ -90,60 +89,4 @@ func (leader *borderlandLeader) Close() {
 	leader.cancel()
 	leader.wg.Wait()
 	Logger.Printf("leader for service %s stopped", leader.ctr.service)
-}
-
-func (leader *borderlandLeader) ShardAllocateLoop() {
-	tickerLoop(
-		leader.ctx,
-		defaultShardLoopInterval,
-		"shardAllocateLoop exit",
-		func(ctx context.Context) error {
-			return shardAllocateChecker(ctx, leader.ctr.ew, leader.service)
-		},
-		&leader.wg,
-	)
-}
-
-func (leader *borderlandLeader) ShardLoadLoop() {
-	watchLoop(
-		leader.ctx,
-		leader.ctr.ew,
-		leader.ctr.ew.nodeAppShardHb(leader.service),
-		"shardLoadLoop exit",
-		func(ctx context.Context, ev *clientv3.Event) error {
-			return shardLoadChecker(ctx, leader.ctr.eq, ev)
-		},
-		&leader.wg,
-	)
-}
-
-func (leader *borderlandLeader) ContainerLoadLoop() {
-	watchLoop(
-		leader.ctx,
-		leader.ctr.ew,
-		leader.ctr.ew.nodeAppContainerHb(leader.service),
-		"containerLoadLoop exit",
-		func(ctx context.Context, ev *clientv3.Event) error {
-			if ev.IsCreate() {
-				return nil
-			}
-
-			start := time.Now()
-			qev := event{
-				start: start.Unix(),
-				load:  string(ev.Kv.Value),
-			}
-
-			if ev.IsModify() {
-				qev.typ = evTypeContainerUpdate
-			} else {
-				qev.typ = evTypeContainerDel
-				// 3s是给服务器container重启的事件
-				qev.expect = start.Add(3 * time.Second).Unix()
-			}
-			leader.ctr.eq.push(&qev)
-			return nil
-		},
-		&leader.wg,
-	)
 }

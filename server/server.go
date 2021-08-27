@@ -23,6 +23,10 @@ type LoadUploader interface {
 	UploadLoad()
 }
 
+type Starter interface {
+	Start()
+}
+
 type Closer interface {
 	Close()
 }
