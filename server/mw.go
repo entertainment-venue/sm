@@ -55,7 +55,7 @@ func (w *maintenanceWorker) ShardAllocateLoop() {
 		defaultShardLoopInterval,
 		"ShardAllocateLoop exit",
 		func(ctx context.Context) error {
-			return shardAllocateChecker(ctx, w.ctr.ew, w.service)
+			return allocateChecker(ctx, w.ctr.ew, w.service)
 		},
 		&w.wg,
 	)

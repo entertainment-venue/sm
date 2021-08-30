@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"reflect"
+	"sort"
 	"sync"
 	"time"
 
@@ -76,114 +78,115 @@ watchLoop:
 	}
 }
 
-func shardAllocateChecker(ctx context.Context, ew *etcdWrapper, service string) error {
-	// TODO 需要做shard存活的校验证明sharded application内部的goroutine是否在正常工作，load的检测有别的goroutine负责
-
-	// 获取存活的container
-	containerIdAndValue, err := ew.getKvs(ctx, ew.nodeAppHbContainer(service))
-	if err != nil {
-		return errors.Wrap(err, "")
-	}
-	var endpoints []string
-	for containerId := range containerIdAndValue {
-		endpoints = append(endpoints, containerId)
-	}
-
-	shardIdAndValue, err := ew.getKvs(ctx, ew.nodeAppShard(service))
+// 1 container 的增加/减少是优先级最高，目前可能涉及大量shard move
+// 2 shard 被漏掉作为container检测的补充，最后校验，这种情况只涉及到漏掉的shard任务下发下去
+func allocateChecker(ctx context.Context, ew *etcdWrapper, service string) error {
+	// 获取当前的shard分配关系
+	fixShardIdAndValue, err := ew.getKvs(ctx, ew.nodeAppShard(service))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
 
 	// 检查是否有shard没有在健康的container上
 	var (
-		gotUnassignedShards bool
+		// 与survive的container做比较，不一样需要做整体shard move
+		// 1 多
+		// 2 少
+		// 3 不一样
+		usingContainerIds          []string
+		usingContainerIdMap        = make(map[string]struct{})
+		usingShardIdAndContainerId = make(map[string]string)
 
-		allShards   []string
-		moveActions moveActionList
+		fixShardIds []string
 
-		// 方便下面对哪些shard有移动做判断
-		curShardIdAndContainerId = make(map[string]string)
-
-		// 用于下面针对container的判断
-		shardContainerIds = make(map[string]struct{})
+		actions moveActionList
 	)
-	for id, value := range shardIdAndValue {
+	for id, value := range fixShardIdAndValue {
+		fixShardIds = append(fixShardIds, id)
+
 		var ss shardSpec
 		if err := json.Unmarshal([]byte(value), &ss); err != nil {
 			return errors.Wrap(err, "")
 		}
-
-		shardContainerIds[ss.ContainerId] = struct{}{}
-		curShardIdAndContainerId[id] = ss.ContainerId
-
+		// 推迟需要删除的shard(在api接受指令)，如果是要删除的shard，所占资源不考虑
 		if ss.Deleted {
-			moveActions = append(moveActions, &moveAction{
-				Service:      service,
-				ShardId:      id,
-				DropEndpoint: ss.ContainerId,
-			})
+			actions = append(actions, &moveAction{Service: service, ShardId: id, DropEndpoint: ss.ContainerId})
 		}
 
-		allShards = append(allShards, id)
+		usingContainerIds = append(usingContainerIds, ss.ContainerId)
+		usingContainerIdMap[ss.ContainerId] = struct{}{}
+		usingShardIdAndContainerId[id] = ss.ContainerId
+	}
 
-		if ss.ContainerId == "" {
-			gotUnassignedShards = true
-			break
-		}
+	// 现有存活containers
+	surviveContainerIdAndValue, err := ew.getKvs(ctx, ew.nodeAppHbContainer(service))
+	if err != nil {
+		return errors.Wrap(err, "")
+	}
+	var surviveContainerIds []string
+	for containerId := range surviveContainerIdAndValue {
+		surviveContainerIds = append(surviveContainerIds, containerId)
+	}
 
-		var exist bool
-		for endpoint := range containerIdAndValue {
-			if endpoint == ss.ContainerId {
-				exist = true
-				break
-			}
-		}
-		if !exist {
-			gotUnassignedShards = true
+	var (
+		containerChanged bool
+		shardChanged     bool
+	)
+	sort.Strings(usingContainerIds)
+	sort.Strings(surviveContainerIds)
+	if !reflect.DeepEqual(usingContainerIds, surviveContainerIds) {
+		containerChanged = true
+	}
+
+	// container hb和固定分配关系一致，下面检查shard存活
+	surviveShardIdAndValue, err := ew.getKvs(ctx, ew.nodeAppShardHb(service))
+	if err != nil {
+		return errors.Wrap(err, "")
+	}
+	surviveShardIdMap := make(map[string]struct{})
+	for id := range surviveShardIdAndValue {
+		surviveShardIdMap[id] = struct{}{}
+	}
+	for _, fixShardId := range fixShardIds {
+		if _, ok := surviveShardIdMap[fixShardId]; !ok {
+			shardChanged = true
 			break
 		}
 	}
 
-	// 检查是否有健康的container，没有被分配shard，也需要触发下面的performAssignment
-	var gotUnassignedContainers bool
-	for id := range containerIdAndValue {
-		if _, ok := shardContainerIds[id]; !ok {
-			gotUnassignedContainers = true
-			break
-		}
+	if containerChanged || shardChanged {
+		r := computeAndReallocate(service, fixShardIds, surviveContainerIds, usingShardIdAndContainerId)
+		actions = append(actions, r...)
 	}
 
-	if gotUnassignedShards || gotUnassignedContainers {
-		// leader做下数量层面的分配，提交到任务节点，会有operator来处理。
-		// 此处是leader对于sm自己分片的监控，防止有shard(业务app)被漏掉。
-		// TODO 会导致shard的大范围移动，可以让策略考虑这个问题
-		newContainerIdAndShardIds := performAssignment(allShards, endpoints)
-
-		for newId, shardIds := range newContainerIdAndShardIds {
-			// 找出哪些shard是要变动的
-			for _, shardId := range shardIds {
-				curContainerId := curShardIdAndContainerId[shardId]
-				if curContainerId == newId {
-					continue
-				}
-
-				moveActions = append(moveActions, &moveAction{
-					Service:      service,
-					ShardId:      shardId,
-					DropEndpoint: curContainerId,
-					AddEndpoint:  newId,
-				})
-			}
-		}
-	}
-
-	if len(moveActions) > 0 {
+	if len(actions) > 0 {
 		// 向自己的app任务节点发任务
-		if _, err := ew.compareAndSwap(ctx, ew.nodeAppTask(service), "", moveActions.String(), -1); err != nil {
+		if _, err := ew.compareAndSwap(ctx, ew.nodeAppTask(service), "", actions.String(), -1); err != nil {
 			return errors.Wrap(err, "")
 		}
+		Logger.Printf("Container changed for service %s, result %v", service, actions)
 	}
+
 	return nil
+}
+
+func computeAndReallocate(service string, shards []string, containers []string, curShardIdAndContainerId map[string]string) moveActionList {
+	var result moveActionList
+	newContainerIdAndShardIds := performAssignment(shards, containers)
+	for newId, shardIds := range newContainerIdAndShardIds {
+		// 找出哪些shard是要变动的
+		for _, shardId := range shardIds {
+			curContainerId := curShardIdAndContainerId[shardId]
+			if curContainerId == newId {
+				continue
+			}
+
+			// FIXME curContainerId 可能不存在与containerIdAndValue，你给他发drop，可能也无法处理
+
+			result = append(result, &moveAction{Service: service, ShardId: shardId, DropEndpoint: curContainerId, AddEndpoint: newId})
+		}
+	}
+	return result
 }
 
 func shardLoadChecker(_ context.Context, eq *eventQueue, ev *clientv3.Event) error {
