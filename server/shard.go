@@ -9,14 +9,6 @@ import (
 	"github.com/pkg/errors"
 )
 
-type shardLoad struct {
-}
-
-func (l *shardLoad) String() string {
-	b, _ := json.Marshal(l)
-	return string(b)
-}
-
 type shardSpec struct {
 	// 存储下，方便开发
 	Service string `json:"service"`
@@ -44,7 +36,7 @@ func (s *shardSpec) String() string {
 }
 
 // shard需要实现该接口，帮助理解程序设计，不会有app实现多种doer
-type AppShard interface {
+type Sharder interface {
 	Closer
 
 	// 作为被管理的shard的角色，上传load
@@ -54,22 +46,21 @@ type AppShard interface {
 type shard struct {
 	admin
 
+	// container 是真实的资源，etcd client、http client
 	ctr *container
 
-	stat *shardStat
+	// shard 保活手段和 container 分开，把load的上传和lease绑定起来，两方面
+	// 1 自己周期hb，机制没有session中的keepalive健全
+	// 2 shard 掉线后，load数据自动清理
+	session *concurrency.Session
 
 	mw MaintenanceWorker
 
-	session *concurrency.Session
+	stat *shardStat
 }
 
-type shardStat struct {
-	RPS     int `json:"rps"`
-	AvgTime int `json:"avgTime"`
-}
-
-func newShard(id string, cr *container) (*shard, error) {
-	s := shard{ctr: cr}
+func newShard(id string, ctr *container) (*shard, error) {
+	s := shard{ctr: ctr}
 	s.id = id
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.ctr.eq = newEventQueue(s.ctx)
@@ -99,17 +90,17 @@ func newShard(id string, cr *container) (*shard, error) {
 		return nil, errors.Wrap(err, "")
 	}
 
-	ss := shardSpec{}
+	var (
+		ss shardSpec
+		st shardTask
+	)
 	if err := json.Unmarshal(resp.Kvs[0].Value, &ss); err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-
-	task := shardTask{}
-	if err := json.Unmarshal([]byte(ss.Task), &task); err != nil {
+	if err := json.Unmarshal([]byte(ss.Task), &st); err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	s.service = task.GovernedService
-
+	s.service = st.GovernedService
 	s.mw = newMaintenanceWorker(s.ctr, s.service)
 
 	s.wg.Add(1)
@@ -129,15 +120,25 @@ func (s *shard) Close() {
 	Logger.Printf("shard %s for service %s stopped", s.id, s.ctr.service)
 }
 
+type shardStat struct {
+	RPS     int `json:"rps"`
+	AvgTime int `json:"avgTime"`
+}
+
+func (s *shardStat) String() string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
 func (s *shard) UploadLoad() {
 	defer s.wg.Done()
 
 	fn := func(ctx context.Context) error {
-		sd := shardLoad{}
+		ss := shardStat{}
 
 		// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
 		k := s.ctr.ew.nodeAppShardHbId(s.ctr.service, s.id)
-		if _, err := s.ctr.ew.client.Put(s.ctx, k, sd.String(), clientv3.WithLease(s.session.Lease())); err != nil {
+		if _, err := s.ctr.ew.client.Put(s.ctx, k, ss.String(), clientv3.WithLease(s.session.Lease())); err != nil {
 			return errors.Wrap(err, "")
 		}
 		return nil
