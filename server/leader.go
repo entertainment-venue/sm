@@ -13,7 +13,11 @@ type borderlandLeader struct {
 
 	ctr *container
 
+	// 保证borderland运行健康的goroutine，通过task节点下发任务给op
 	mw MaintenanceWorker
+
+	// op需要监听特定app的task在etcd中的节点，保证app级别只有一个，borderland放在leader中
+	op Operator
 }
 
 func newBorderlandLeader(ctr *container) *borderlandLeader {
@@ -79,6 +83,14 @@ func (leader *borderlandLeader) campaign() {
 			goto loop
 		}
 
+		// leader需要处理shard move的任务
+		leader.op, err = newOperator(leader.ctr)
+		if err != nil {
+			Logger.Printf("err %+v", err)
+			time.Sleep(defaultSleepTimeout)
+			goto loop
+		}
+
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/borderland/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
 		go leader.mw.Start()
@@ -86,6 +98,8 @@ func (leader *borderlandLeader) campaign() {
 }
 
 func (leader *borderlandLeader) close() {
+	leader.op.Close()
+
 	leader.cancel()
 	leader.wg.Wait()
 	Logger.Printf("leader for service %s stopped", leader.ctr.service)

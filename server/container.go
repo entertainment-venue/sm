@@ -42,7 +42,8 @@ type container struct {
 	mu     sync.Mutex
 	shards map[string]Sharder
 
-	op Operator
+	// shard borderland管理很多业务app，不同业务app有不同的task节点，这块做个map，可能出现单container负责多个app的场景
+	srvOps map[string]Operator
 
 	eq *eventQueue
 
@@ -63,11 +64,6 @@ func newContainer(id, service string, endpoints []string) (*container, error) {
 	ctr.ctx, ctr.cancel = context.WithCancel(context.Background())
 
 	ctr.ew, err = newEtcdWrapper(endpoints, &ctr)
-	if err != nil {
-		return nil, errors.Wrap(err, "")
-	}
-
-	ctr.op, err = newOperator(&ctr)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -94,8 +90,6 @@ func newContainer(id, service string, endpoints []string) (*container, error) {
 }
 
 func (c *container) Close() {
-	c.op.Close()
-
 	for _, s := range c.shards {
 		s.Close()
 	}
@@ -181,5 +175,19 @@ func (c *container) Drop(id string) error {
 		return errNotExist
 	}
 	sd.Close()
+	return nil
+}
+
+func (c *container) TryStartOp(service string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, ok := c.srvOps[service]; !ok {
+		op, err := newOperator(c)
+		if err != nil {
+			return errors.Wrap(err, "")
+		}
+		c.srvOps[service] = op
+	}
 	return nil
 }

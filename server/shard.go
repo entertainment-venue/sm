@@ -90,6 +90,7 @@ func newShard(id string, ctr *container) (*shard, error) {
 		return nil, errors.Wrap(err, "")
 	}
 
+	// 取出任务详情
 	var (
 		ss shardSpec
 		st shardTask
@@ -101,6 +102,12 @@ func newShard(id string, ctr *container) (*shard, error) {
 		return nil, errors.Wrap(err, "")
 	}
 	s.service = st.GovernedService
+
+	// shard和op的数量相关
+	if err := s.ctr.TryStartOp(s.service); err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+
 	s.mw = newMaintenanceWorker(s.ctr, s.service)
 
 	s.wg.Add(1)
