@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"context"
@@ -47,7 +47,7 @@ type container struct {
 
 	eq *eventQueue
 
-	leader *borderlandLeader
+	leader *leader
 
 	// 可以被leader或者follower占用
 	session *concurrency.Session

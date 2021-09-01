@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"context"
@@ -26,7 +26,7 @@ type admin struct {
 	id string
 
 	// shard: 管理接入sm的业务app的shard，是被管理app的service的名称
-	// borderlandLeader: 管理sm集群内部的各shard，是sm集群的service的名称
+	// leader: 管理sm集群内部的各shard，是sm集群的service的名称
 	// container: 是所属app的service的名称
 	service string
 }

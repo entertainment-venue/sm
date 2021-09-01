@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"context"
@@ -73,7 +73,7 @@ func WithAddr(v string) BorderlandOptionsFunc {
 	}
 }
 
-func Run(ctx context.Context, fn ...BorderlandOptionsFunc) error {
+func Run(_ context.Context, fn ...BorderlandOptionsFunc) error {
 	opts := defaultOpts
 	for _, f := range fn {
 		f(&opts)
