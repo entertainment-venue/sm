@@ -32,9 +32,9 @@ func newEtcdWrapper(endpoints []string, cr *container) (*etcdWrapper, error) {
 
 func (w *etcdWrapper) nodePrefix(admin bool) string {
 	if admin {
-		return fmt.Sprintf("/borderland/admin")
+		return fmt.Sprintf("/bd/admin")
 	} else {
-		return fmt.Sprintf("/borderland/app/%s", w.ctr.service)
+		return fmt.Sprintf("/bd/app/%s", w.ctr.service)
 	}
 }
 
@@ -44,7 +44,7 @@ func (w *etcdWrapper) leaderNode() string {
 }
 
 func (w *etcdWrapper) nodeAppPrefix(service string) string {
-	return fmt.Sprintf("/borderland/app/%s", service)
+	return fmt.Sprintf("/bd/app/%s", service)
 }
 
 func (w *etcdWrapper) nodeAppContainerHb(service string) string {

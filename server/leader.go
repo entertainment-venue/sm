@@ -9,6 +9,16 @@ import (
 	"github.com/coreos/etcd/clientv3/concurrency"
 )
 
+type leaderEtcdValue struct {
+	ContainerId string `json:"containerId"`
+	CreateTime  string `json:"createTime"`
+}
+
+func (v *leaderEtcdValue) String() string {
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
 type leader struct {
 	admin
 
@@ -21,7 +31,7 @@ type leader struct {
 	op Operator
 }
 
-func newBorderlandLeader(ctr *container) *leader {
+func newLeader(ctr *container) *leader {
 	var l leader
 	l.ctx, l.cancel = context.WithCancel(context.Background())
 	l.ctr = ctr
@@ -47,8 +57,9 @@ func (l *leader) campaign() {
 		}
 
 		leaderNodePrefix := l.ctr.ew.leaderNode()
+		lvalue := leaderEtcdValue{ContainerId: l.ctr.id, CreateTime: time.Now().String()}
 		election := concurrency.NewElection(l.ctr.session, leaderNodePrefix)
-		if err := election.Campaign(l.ctx, time.Now().String()); err != nil {
+		if err := election.Campaign(l.ctx, lvalue.String()); err != nil {
 			Logger.Printf("err %+v", err)
 			time.Sleep(defaultSleepTimeout)
 			goto loop

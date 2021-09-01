@@ -84,7 +84,7 @@ func newContainer(id, service string, endpoints []string) (*container, error) {
 
 	go ctr.UploadLoad()
 
-	ctr.leader = newBorderlandLeader(&ctr)
+	ctr.leader = newLeader(&ctr)
 
 	return &ctr, nil
 }
