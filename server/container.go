@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"sync"
+
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/pkg/errors"
@@ -10,7 +12,6 @@ import (
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
-	"sync"
 )
 
 type sysLoad struct {
@@ -94,7 +95,9 @@ func (c *container) Close() {
 		s.Close()
 	}
 
-	c.leader.close()
+	if c.leader != nil {
+		c.leader.close()
+	}
 
 	c.cancel()
 	c.wg.Wait()

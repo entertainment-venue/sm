@@ -129,17 +129,27 @@ func allocateChecker(ctx context.Context, ew *etcdWrapper, service string) error
 		surviveContainerIds = append(surviveContainerIds, containerId)
 	}
 
-	var (
-		containerChanged bool
-		shardChanged     bool
-	)
+	var containerChanged bool
 	sort.Strings(usingContainerIds)
 	sort.Strings(surviveContainerIds)
 	if !reflect.DeepEqual(usingContainerIds, surviveContainerIds) {
 		containerChanged = true
 	}
+	if containerChanged {
+		r := computeAndReallocate(service, fixShardIds, surviveContainerIds, usingShardIdAndContainerId)
+		actions = append(actions, r...)
+		if len(actions) > 0 {
+			// 向自己的app任务节点发任务
+			if _, err := ew.compareAndSwap(ctx, ew.nodeAppTask(service), "", actions.String(), -1); err != nil {
+				return errors.Wrap(err, "")
+			}
+			Logger.Printf("Container changed for service %s, result %s", service, actions.String())
+			return nil
+		}
+	}
 
 	// container hb和固定分配关系一致，下面检查shard存活
+	var shardChanged bool
 	surviveShardIdAndValue, err := ew.getKvs(ctx, ew.nodeAppShardHb(service))
 	if err != nil {
 		return errors.Wrap(err, "")
@@ -155,17 +165,16 @@ func allocateChecker(ctx context.Context, ew *etcdWrapper, service string) error
 		}
 	}
 
-	if containerChanged || shardChanged {
+	if shardChanged {
 		r := computeAndReallocate(service, fixShardIds, surviveContainerIds, usingShardIdAndContainerId)
 		actions = append(actions, r...)
-	}
-
-	if len(actions) > 0 {
-		// 向自己的app任务节点发任务
-		if _, err := ew.compareAndSwap(ctx, ew.nodeAppTask(service), "", actions.String(), -1); err != nil {
-			return errors.Wrap(err, "")
+		if len(actions) > 0 {
+			// 向自己的app任务节点发任务
+			if _, err := ew.compareAndSwap(ctx, ew.nodeAppTask(service), "", actions.String(), -1); err != nil {
+				return errors.Wrap(err, "")
+			}
+			Logger.Printf("Container changed for service %s, result %v", service, actions)
 		}
-		Logger.Printf("Container changed for service %s, result %v", service, actions)
 	}
 
 	return nil

@@ -28,7 +28,7 @@ func (g *containerApi) GinContainerDropShard(c *gin.Context) {
 	}
 	Logger.Printf("req: %v", req)
 
-	if err := g.cr.Add(req.ShardId); err != nil {
+	if err := g.cr.Drop(req.ShardId); err != nil {
 		Logger.Printf("err: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -45,7 +45,7 @@ func (g *containerApi) GinContainerAddShard(c *gin.Context) {
 	}
 	Logger.Printf("req: %v", req)
 
-	if err := g.cr.Drop(req.ShardId); err != nil {
+	if err := g.cr.Add(req.ShardId); err != nil {
 		Logger.Printf("err: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -74,9 +74,17 @@ func (g *containerApi) GinAppAddSpec(c *gin.Context) {
 	}
 	Logger.Printf("req: %v", req)
 
-	cur, err := g.cr.ew.createAndGet(context.Background(), g.cr.ew.nodeAppShard(req.Service), req.String(), clientv3.NoLease)
-	if err != nil {
-		Logger.Printf("err: %v, cur: %s", err, cur)
+	//  写入app spec和app task节点在一个tx
+	var (
+		nodes  []string
+		values []string
+	)
+	nodes = append(nodes, g.cr.ew.nodeAppSpec(req.Service))
+	nodes = append(nodes, g.cr.ew.nodeAppTask(req.Service))
+	values = append(values, req.String())
+	values = append(values, "")
+	if err := g.cr.ew.createAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
+		Logger.Printf("err: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -117,9 +125,8 @@ func (g *containerApi) GinAppAddShard(c *gin.Context) {
 	// 区分更新和添加
 	// 如果是添加，等待负责该app的shard做探测即可
 	// 如果是更新，shard是不允许更新的，这种更新的相当于shard工作内容的调整
-	cur, err := g.cr.ew.createAndGet(context.Background(), g.cr.ew.nodeAppShardId(req.Service, req.ShardId), spec.String(), clientv3.NoLease)
-	if err != nil {
-		Logger.Printf("err: %v, cur: %s", err, cur)
+	if err := g.cr.ew.createAndGet(context.Background(), []string{g.cr.ew.nodeAppShardId(req.Service, req.ShardId)}, []string{spec.String()}, clientv3.NoLease); err != nil {
+		Logger.Printf("err: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

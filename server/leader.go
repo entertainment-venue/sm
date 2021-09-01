@@ -3,10 +3,10 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"github.com/pkg/errors"
 	"time"
 
 	"github.com/coreos/etcd/clientv3/concurrency"
+	"github.com/pkg/errors"
 )
 
 type leaderEtcdValue struct {
@@ -117,11 +117,13 @@ func (l *leader) init() error {
 			return errors.Wrap(err, "")
 		}
 
-		// 下发指令，接受不了的直接干掉当前的分配关系
-		ma := moveAction{Service: l.service, ShardId: shardId, AddEndpoint: ss.ContainerId, AllowDrop: true}
-		moveActions = append(moveActions, &ma)
-
-		Logger.Printf("Init move action %v", ma)
+		// 未分配container的shard，不需要move指令下发
+		if ss.ContainerId != "" {
+			// 下发指令，接受不了的直接干掉当前的分配关系
+			ma := moveAction{Service: l.service, ShardId: shardId, AddEndpoint: ss.ContainerId, AllowDrop: true}
+			moveActions = append(moveActions, &ma)
+			Logger.Printf("Init move action %+v", ma)
+		}
 	}
 	// 向自己的app任务节点发任务
 	if len(moveActions) == 0 {
@@ -136,9 +138,11 @@ func (l *leader) init() error {
 }
 
 func (l *leader) close() {
-	l.op.Close()
+	if l.op != nil {
+		l.op.Close()
+	}
 
 	l.cancel()
 	l.wg.Wait()
-	Logger.Printf("l for service %s stopped", l.ctr.service)
+	Logger.Printf("leader for service %s stopped", l.ctr.service)
 }
