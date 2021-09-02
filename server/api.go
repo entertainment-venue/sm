@@ -43,7 +43,7 @@ func (g *containerApi) GinContainerAddShard(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	Logger.Printf("req: %v", req)
+	Logger.Printf("req: %+v", req)
 
 	if err := g.cr.Add(req.ShardId); err != nil {
 		Logger.Printf("err: %v", err)

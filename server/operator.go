@@ -78,7 +78,7 @@ func newOperator(cr *container) (Operator, error) {
 func (o *operator) Close() {
 	o.cancel()
 	o.wg.Wait()
-	Logger.Printf("operator exit for service %s stopped", o.ctr.service)
+	Logger.Printf("[operator] stopped for service %s", o.ctr.service)
 }
 
 // sm的shard需要能为接入app提供shard移动的能力，且保证每个任务被执行掉，所以任务会绑定在shard，防止sm的shard移动导致任务没人干
@@ -89,7 +89,7 @@ func (o *operator) Move() {
 		}
 
 		if string(ev.Kv.Value) == o.prevValue {
-			Logger.Printf("Duplicate event: %s", string(o.prevValue))
+			Logger.Printf("[operator] Duplicate event: %s", o.prevValue)
 			return nil
 		}
 
@@ -122,14 +122,14 @@ firstMove:
 		}
 	}
 
-	watchLoop(o.ctx, o.ctr.ew, key, "moveLoop exit", fn, &o.wg)
+	watchLoop(o.ctx, o.ctr.ew, key, "[operator] moveLoop exit", fn, &o.wg)
 }
 
 // 保证at least once
 func (o *operator) move(value []byte) error {
 	var mal moveActionList
 	if err := json.Unmarshal(value, &mal); err != nil {
-		Logger.Printf("Unexpected err: %v", err)
+		Logger.Printf("[operator] Unexpected err: %v", err)
 		// return ASAP unmarshal失败重试没意义，需要人工接入进行数据修正
 		return errors.Wrap(err, "")
 	}
@@ -160,7 +160,7 @@ move:
 						return errors.Wrap(err, "")
 					}
 
-					Logger.Printf("Failed to send move request %v, err: %v", *ma, err)
+					Logger.Printf("[operator] FAILED to send move request %v, err: %v", *ma, err)
 
 					// 只在leader竞选成功场景下会下发分配指令，没有Drop动作，这里允许放弃当前动作，后续有shardAllocateLoop和shardLoadLoop兜底
 					// 如果下发失败，就必须去掉分配关系，以便shardAllocateLoop拿到的分配关系是比较真实的（这块即便下发都成功，shard可能因为异常停止工作）
@@ -177,7 +177,7 @@ move:
 				}
 			}
 
-			Logger.Printf("Successfully move shard %s from %s to %s, directlyAdd: %b directlyDrop: %b", ma.ShardId, ma.DropEndpoint, ma.AddEndpoint, directlyAdd, directlyDrop)
+			Logger.Printf("[operator] Successfully move shard %s from %s to %s, directlyAdd: %b directlyDrop: %b", ma.ShardId, ma.DropEndpoint, ma.AddEndpoint, directlyAdd, directlyDrop)
 
 			return nil
 		})
@@ -203,7 +203,7 @@ ack:
 
 func (o *operator) sendMoveRequest(id string, endpoint string, action string) error {
 	param := make(map[string]string)
-	param["shard_id"] = id
+	param["shardId"] = id
 	b, err := json.Marshal(param)
 	if err != nil {
 		return errors.Wrap(err, "")
@@ -223,7 +223,7 @@ func (o *operator) sendMoveRequest(id string, endpoint string, action string) er
 	ioutil.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return errors.Errorf("Failed to %s shard %s, not 200", action, id)
+		return errors.Errorf("[operator] FAILED to %s shard %s, not 200", action, id)
 	}
 	return nil
 }
@@ -235,7 +235,7 @@ func (o *operator) removeShardAllocate(id, service string) error {
 		return errors.Wrap(err, "")
 	}
 	if resp.Count == 0 {
-		Logger.Printf("Unexpected err, key %s not exist", key)
+		Logger.Printf("[operator] Unexpected err, key %s not exist", key)
 		return nil
 	}
 
