@@ -85,6 +85,8 @@ func newContainer(id, service string, endpoints []string) (*container, error) {
 
 	go ctr.UploadLoad()
 
+	ctr.eq = newEventQueue(ctr.ctx)
+
 	ctr.leader = newLeader(&ctr)
 
 	return &ctr, nil
@@ -181,7 +183,7 @@ func (c *container) Drop(id string) error {
 	return nil
 }
 
-func (c *container) TryStartOp(service string) error {
+func (c *container) TryNewOp(service string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

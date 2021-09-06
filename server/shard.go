@@ -30,6 +30,14 @@ type shardTask struct {
 	GovernedService string `json:"governedService"`
 }
 
+func (s *shardSpec) parseTask() (*shardTask, error) {
+	var st shardTask
+	if err := json.Unmarshal([]byte(s.Task), &st); err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+	return &st, nil
+}
+
 func (s *shardSpec) String() string {
 	b, _ := json.Marshal(s)
 	return string(b)
@@ -63,7 +71,6 @@ func newShard(id string, ctr *container) (*shard, error) {
 	s := shard{ctr: ctr}
 	s.id = id
 	s.ctx, s.cancel = context.WithCancel(context.Background())
-	s.ctr.eq = newEventQueue(s.ctx)
 
 	var err error
 	s.session, err = concurrency.NewSession(s.ctr.ew.client, concurrency.WithTTL(defaultSessionTimeout))
@@ -91,20 +98,18 @@ func newShard(id string, ctr *container) (*shard, error) {
 	}
 
 	// 取出任务详情
-	var (
-		ss shardSpec
-		st shardTask
-	)
+	var ss shardSpec
 	if err := json.Unmarshal(resp.Kvs[0].Value, &ss); err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	if err := json.Unmarshal([]byte(ss.Task), &st); err != nil {
+	task, err := ss.parseTask()
+	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	s.service = st.GovernedService
+	s.service = task.GovernedService
 
 	// shard和op的数量相关
-	if err := s.ctr.TryStartOp(s.service); err != nil {
+	if err := s.ctr.TryNewOp(s.service); err != nil {
 		return nil, errors.Wrap(err, "")
 	}
 

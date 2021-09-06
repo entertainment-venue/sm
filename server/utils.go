@@ -3,8 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"net"
 	"reflect"
 	"sort"
 	"sync"
@@ -199,63 +197,47 @@ func computeAndReallocate(service string, shards []string, containers []string, 
 	return result
 }
 
-func shardLoadChecker(_ context.Context, eq *eventQueue, ev *clientv3.Event) error {
+func shardLoadChecker(_ context.Context, service string, eq *eventQueue, ev *clientv3.Event) error {
 	if ev.IsCreate() {
 		return nil
 	}
 
 	start := time.Now()
-	qev := event{
-		start: start.Unix(),
-		load:  string(ev.Kv.Value),
-	}
+	qev := loadEvent{Service: service, EnqueueTime: start.Unix(), Load: string(ev.Kv.Value)}
 
+	var item Item
 	if ev.IsModify() {
-		qev.typ = evTypeShardUpdate
+		qev.Type = evTypeShardUpdate
 	} else {
-		qev.typ = evTypeShardDel
+		qev.Type = evTypeShardDel
+
 		// 3s是给服务器container重启的事件
-		qev.expect = start.Add(3 * time.Second).Unix()
+		item.Priority = start.Add(3 * time.Second).Unix()
 	}
-	eq.push(&qev)
+	item.Value = qev.String()
+
+	eq.push(&item, true)
 	return nil
 }
 
-func containerLoadChecker(_ context.Context, eq *eventQueue, ev *clientv3.Event) error {
+func containerLoadChecker(_ context.Context, service string, eq *eventQueue, ev *clientv3.Event) error {
 	if ev.IsCreate() {
 		return nil
 	}
 
 	start := time.Now()
-	qev := event{
-		start: start.Unix(),
-		load:  string(ev.Kv.Value),
-	}
+	qev := loadEvent{Service: service, EnqueueTime: start.Unix(), Load: string(ev.Kv.Value)}
 
+	var item Item
 	if ev.IsModify() {
-		qev.typ = evTypeContainerUpdate
+		qev.Type = evTypeContainerUpdate
 	} else {
-		qev.typ = evTypeContainerDel
+		qev.Type = evTypeContainerDel
 		// 3s是给服务器container重启的事件
-		qev.expect = start.Add(3 * time.Second).Unix()
+		item.Priority = start.Add(3 * time.Second).Unix()
 	}
-	eq.push(&qev)
-	return nil
-}
+	item.Value = qev.String()
 
-func getLocalIP() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		fmt.Printf("get local IP failed, error is %+v\n", err)
-		return ""
-	}
-	for _, address := range addrs {
-		// check the address type and if it is not a loopback the display it
-		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil {
-				return ipnet.IP.String()
-			}
-		}
-	}
-	return ""
+	eq.push(&item, true)
+	return nil
 }

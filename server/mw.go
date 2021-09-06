@@ -68,7 +68,7 @@ func (w *maintenanceWorker) ShardLoadLoop() {
 		w.ctr.ew.nodeAppShardHb(w.service),
 		"ShardLoadLoop exit",
 		func(ctx context.Context, ev *clientv3.Event) error {
-			return shardLoadChecker(ctx, w.ctr.eq, ev)
+			return shardLoadChecker(ctx, w.service, w.ctr.eq, ev)
 		},
 		&w.wg,
 	)
@@ -84,7 +84,7 @@ func (w *maintenanceWorker) ContainerLoadLoop() {
 		w.ctr.ew.nodeAppContainerHb(w.service),
 		"ContainerLoadLoop exit",
 		func(ctx context.Context, ev *clientv3.Event) error {
-			return containerLoadChecker(ctx, w.ctr.eq, ev)
+			return containerLoadChecker(ctx, w.service, w.ctr.eq, ev)
 		},
 		&w.wg,
 	)
