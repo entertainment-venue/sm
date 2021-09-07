@@ -35,7 +35,7 @@ type eventQueue struct {
 	ctx context.Context
 
 	// 延迟队列: 不能立即处理的先放这里，启动单独的goroutine把event根据时间拿出来，再放到异步队列中
-	pq *PriorityQueue
+	pq PriorityQueue
 
 	mu        sync.Mutex
 	evChan    map[string]chan *loadEvent // 区分service给chan，每个worker给一个goroutine
@@ -47,13 +47,8 @@ func newEventQueue(ctx context.Context) *eventQueue {
 		ctx:    ctx,
 		evChan: make(map[string]chan *loadEvent),
 	}
-
-	pq := PriorityQueue{}
-	heap.Init(&pq)
-	eq.pq = &pq
-
+	heap.Init(&eq.pq)
 	go eq.pqLoop()
-
 	return &eq
 }
 
@@ -90,7 +85,7 @@ func (eq *eventQueue) push(item *Item, checkDup bool) {
 			ch <- &ev
 			return
 		}
-		heap.Push(eq.pq, item)
+		heap.Push(&eq.pq, item)
 	}
 }
 
@@ -102,7 +97,7 @@ func (eq *eventQueue) pqLoop() {
 			Logger.Println("pqLoop exit")
 		case <-ticker:
 		popASAP:
-			v := heap.Pop(eq.pq)
+			v := heap.Pop(&eq.pq)
 			if v == nil {
 				continue
 			}
@@ -110,7 +105,7 @@ func (eq *eventQueue) pqLoop() {
 
 			if time.Now().Unix() < item.Priority {
 				// TODO 重复入队的代价在heap场景比较大，需要优化掉
-				heap.Push(eq.pq, item)
+				heap.Push(&eq.pq, item)
 				continue
 			}
 			eq.push(item, false)
@@ -133,7 +128,7 @@ func (eq *eventQueue) evLoop(ch chan *loadEvent) {
 			case ev = <-ch:
 			}
 
-			Logger.Printf("[eq] Got ev %s", eq)
+			Logger.Printf("[eq] Got ev %s", ev)
 
 			// TODO 同一service需要保证只有一个goroutine在计算，否则没有意义
 			switch ev.Type {

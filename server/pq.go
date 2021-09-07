@@ -19,6 +19,11 @@ func (pq PriorityQueue) Less(i, j int) bool {
 }
 
 func (pq PriorityQueue) Swap(i, j int) {
+	// 长度不够，不需要swap
+	if len(pq) <= 1 {
+		return
+	}
+
 	pq[i], pq[j] = pq[j], pq[i]
 	pq[i].Index = i
 	pq[j].Index = j
@@ -34,6 +39,11 @@ func (pq *PriorityQueue) Push(x interface{}) {
 func (pq *PriorityQueue) Pop() interface{} {
 	old := *pq
 	n := len(old)
+
+	if n == 0 {
+		return nil
+	}
+
 	item := old[n-1]
 	item.Index = -1 // for safety
 	*pq = old[0 : n-1]
