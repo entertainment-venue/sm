@@ -42,7 +42,7 @@ type Operator interface {
 
 // container和shard上报两个维度的load，leader(sm)或者shard(app)探测到异常，会发布任务出来，operator就是这个任务的执行者
 type operator struct {
-	admin
+	goroutineStopper
 
 	ctr        *container
 	httpClient *http.Client

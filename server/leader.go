@@ -20,7 +20,10 @@ func (v *leaderEtcdValue) String() string {
 }
 
 type leader struct {
-	admin
+	goroutineStopper
+
+	// sm集群的service name
+	service string
 
 	ctr *container
 

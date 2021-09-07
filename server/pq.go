@@ -1,11 +1,20 @@
 package server
 
+import (
+	"encoding/json"
+)
+
 // An Item is something we manage in a priority queue.
 type Item struct {
 	Value    string // The value of the item; arbitrary.
 	Priority int64  // The priority of the item in the queue.
 	// The index is needed by update and is maintained by the heap.Interface methods.
 	Index int // The index of the item in the heap.
+}
+
+func (i *Item) String() string {
+	b, _ := json.Marshal(i)
+	return string(b)
 }
 
 // A PriorityQueue implements heap.Interface and holds Items.

@@ -14,19 +14,12 @@ import (
 
 // 提出container和shard的公共属性
 // 抽象数据结构，也会引入数据结构之间的耦合
-type admin struct {
+type goroutineStopper struct {
 	// https://callistaenterprise.se/blogg/teknik/2019/10/05/go-worker-cancellation/
-	// graceful close
+	// goroutineStopper close
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
-
-	id string
-
-	// shard: 管理接入sm的业务app的shard，是被管理app的service的名称
-	// leader: 管理sm集群内部的各shard，是sm集群的service的名称
-	// container: 是所属app的service的名称
-	service string
 }
 
 func tickerLoop(ctx context.Context, duration time.Duration, exitMsg string, fn func(ctx context.Context) error, wg *sync.WaitGroup) {
@@ -211,7 +204,7 @@ func shardLoadChecker(_ context.Context, service string, eq *eventQueue, ev *cli
 	} else {
 		qev.Type = evTypeShardDel
 
-		// 3s是给服务器container重启的事件
+		// 3s是给服务器container重启的时间buffer
 		item.Priority = start.Add(3 * time.Second).Unix()
 	}
 	item.Value = qev.String()

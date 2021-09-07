@@ -23,7 +23,9 @@ type MaintenanceWorker interface {
 
 // 管理某个sm app的shard
 type maintenanceWorker struct {
-	admin
+	goroutineStopper
+
+	service string
 
 	ctr *container
 }

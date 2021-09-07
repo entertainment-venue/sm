@@ -52,7 +52,12 @@ type Sharder interface {
 }
 
 type shard struct {
-	admin
+	goroutineStopper
+
+	id string
+
+	// 被管理app的service name
+	service string
 
 	// container 是真实的资源，etcd client、http client
 	ctr *container

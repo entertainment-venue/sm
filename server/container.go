@@ -36,7 +36,12 @@ type Container interface {
 }
 
 type container struct {
-	admin
+	goroutineStopper
+
+	id string
+
+	// 所属app的service name
+	service string
 
 	ew *etcdWrapper
 
