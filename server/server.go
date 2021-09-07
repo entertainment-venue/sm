@@ -109,7 +109,7 @@ func Run(_ context.Context, fn ...BorderlandOptionsFunc) error {
 		// 业务场景下的分片拆分后，通过该接口录入borderland
 		appGroup.POST("/add-shard", api.GinAppAddShard)
 
-		appGroup.POST("/del-shard", api.GinAppDelShard)
+		// appGroup.POST("/del-shard", api.GinAppDelShard)
 	}
 
 	if err := r.Run(opts.addr); err != nil {

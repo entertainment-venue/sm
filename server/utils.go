@@ -81,15 +81,10 @@ func allocateChecker(ctx context.Context, ew *etcdWrapper, service string) error
 
 	// 检查是否有shard没有在健康的container上
 	var (
-		// 与survive的container做比较，不一样需要做整体shard move
-		// 1 多
-		// 2 少
-		// 3 不一样
-		usingContainerIds          []string
-		usingContainerIdMap        = make(map[string]struct{})
-		usingShardIdAndContainerId = make(map[string]string)
-
-		fixShardIds []string
+		fixShardIds              []string
+		fixContainerIds          []string
+		fixContainerIdMap        = make(map[string]struct{})
+		fixShardIdAndContainerId = make(map[string]string)
 
 		actions moveActionList
 	)
@@ -100,14 +95,10 @@ func allocateChecker(ctx context.Context, ew *etcdWrapper, service string) error
 		if err := json.Unmarshal([]byte(value), &ss); err != nil {
 			return errors.Wrap(err, "")
 		}
-		// 推迟需要删除的shard(在api接受指令)，如果是要删除的shard，所占资源不考虑
-		if ss.Deleted {
-			actions = append(actions, &moveAction{Service: service, ShardId: id, DropEndpoint: ss.ContainerId})
-		}
 
-		usingContainerIds = append(usingContainerIds, ss.ContainerId)
-		usingContainerIdMap[ss.ContainerId] = struct{}{}
-		usingShardIdAndContainerId[id] = ss.ContainerId
+		fixContainerIds = append(fixContainerIds, ss.ContainerId)
+		fixContainerIdMap[ss.ContainerId] = struct{}{}
+		fixShardIdAndContainerId[id] = ss.ContainerId
 	}
 
 	// 现有存活containers
@@ -121,13 +112,13 @@ func allocateChecker(ctx context.Context, ew *etcdWrapper, service string) error
 	}
 
 	var containerChanged bool
-	sort.Strings(usingContainerIds)
+	sort.Strings(fixContainerIds)
 	sort.Strings(surviveContainerIds)
-	if !reflect.DeepEqual(usingContainerIds, surviveContainerIds) {
+	if !reflect.DeepEqual(fixContainerIds, surviveContainerIds) {
 		containerChanged = true
 	}
 	if containerChanged {
-		r := computeAndReallocate(service, fixShardIds, surviveContainerIds, usingShardIdAndContainerId)
+		r := reallocate(service, surviveContainerIdAndValue, fixShardIdAndContainerId)
 		actions = append(actions, r...)
 		if len(actions) > 0 {
 			// 向自己的app任务节点发任务
@@ -157,7 +148,7 @@ func allocateChecker(ctx context.Context, ew *etcdWrapper, service string) error
 	}
 
 	if shardChanged {
-		r := computeAndReallocate(service, fixShardIds, surviveContainerIds, usingShardIdAndContainerId)
+		r := reallocate(service, surviveContainerIdAndValue, fixShardIdAndContainerId)
 		actions = append(actions, r...)
 		if len(actions) > 0 {
 			// 向自己的app任务节点发任务
@@ -171,20 +162,44 @@ func allocateChecker(ctx context.Context, ew *etcdWrapper, service string) error
 	return nil
 }
 
-func computeAndReallocate(service string, shards []string, containers []string, curShardIdAndContainerId map[string]string) moveActionList {
+func reallocate(service string, surviveContainerIdAndValue map[string]string, fixShardIdAndContainerId map[string]string) moveActionList {
+	var shardIds []string
+	for shardId := range fixShardIdAndContainerId {
+		shardIds = append(shardIds, shardId)
+	}
+
+	// survive的map有两个作用：
+	// 1. 为分配方法performAssignment提供基础数据
+	// 2. 非存活状态的container如果
+	var surviveContainerIds []string
+	for containerId := range surviveContainerIdAndValue {
+		surviveContainerIds = append(surviveContainerIds, containerId)
+	}
+	newContainerIdAndShardIds := performAssignment(shardIds, surviveContainerIds)
+
 	var result moveActionList
-	newContainerIdAndShardIds := performAssignment(shards, containers)
 	for newId, shardIds := range newContainerIdAndShardIds {
-		// 找出哪些shard是要变动的
 		for _, shardId := range shardIds {
-			curContainerId := curShardIdAndContainerId[shardId]
+			curContainerId := fixShardIdAndContainerId[shardId]
+
+			// shardId没有被分配到container，可以直接增加moveAction
+			if curContainerId == "" {
+				result = append(result, &moveAction{Service: service, ShardId: shardId, AddEndpoint: newId})
+				continue
+			}
+
+			// shardId当前的container符合最新的分配结果，不需要shard move
 			if curContainerId == newId {
 				continue
 			}
 
-			// FIXME curContainerId 可能不存在与containerIdAndValue，你给他发drop，可能也无法处理
+			// curContainerId 可能不存在与containerIdAndValue，你给他发drop，可能也无法处理，判断是否是survive的container，不是，允许drop
+			var allowDrop bool
+			if _, ok := surviveContainerIdAndValue[curContainerId]; !ok {
+				allowDrop = true
+			}
 
-			result = append(result, &moveAction{Service: service, ShardId: shardId, DropEndpoint: curContainerId, AddEndpoint: newId})
+			result = append(result, &moveAction{Service: service, ShardId: shardId, DropEndpoint: curContainerId, AddEndpoint: newId, AllowDrop: allowDrop})
 		}
 	}
 	return result

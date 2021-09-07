@@ -8,7 +8,6 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/gin-gonic/gin"
-	"github.com/pkg/errors"
 )
 
 type containerApi struct {
@@ -134,6 +133,7 @@ func (g *containerApi) GinAppAddShard(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{})
 }
 
+/*
 type appDelShardRequest struct {
 	ShardId string `json:"shardId"`
 	Service string `json:"service"`
@@ -179,3 +179,4 @@ func (g *containerApi) GinAppDelShard(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{})
 }
+*/
