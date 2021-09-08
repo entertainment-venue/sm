@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/coreos/etcd/clientv3"
 )
@@ -30,7 +31,7 @@ type maintenanceWorker struct {
 	ctr *container
 }
 
-func newMaintenanceWorker(ctr *container, service string) MaintenanceWorker {
+func newMaintenanceWorker(ctr *container, service string) *maintenanceWorker {
 	var mw maintenanceWorker
 	mw.ctx, mw.cancel = context.WithCancel(context.Background())
 	mw.ctr = ctr
@@ -55,7 +56,7 @@ func (w *maintenanceWorker) ShardAllocateLoop() {
 	tickerLoop(
 		w.ctx,
 		defaultShardLoopInterval,
-		"ShardAllocateLoop exit",
+		fmt.Sprintf("[mw] service %s ShardAllocateLoop exit", w.service),
 		func(ctx context.Context) error {
 			return allocateChecker(ctx, w.ctr.ew, w.service)
 		},
@@ -68,7 +69,7 @@ func (w *maintenanceWorker) ShardLoadLoop() {
 		w.ctx,
 		w.ctr.ew,
 		w.ctr.ew.nodeAppShardHb(w.service),
-		"ShardLoadLoop exit",
+		fmt.Sprintf("[mw] service %s ShardLoadLoop exit", w.service),
 		func(ctx context.Context, ev *clientv3.Event) error {
 			return shardLoadChecker(ctx, w.service, w.ctr.eq, ev)
 		},
@@ -77,14 +78,11 @@ func (w *maintenanceWorker) ShardLoadLoop() {
 }
 
 func (w *maintenanceWorker) ContainerLoadLoop() {
-	defer w.wg.Done()
-	// TODO 监控业务app机器container负载
-
 	watchLoop(
 		w.ctx,
 		w.ctr.ew,
 		w.ctr.ew.nodeAppContainerHb(w.service),
-		"ContainerLoadLoop exit",
+		fmt.Sprintf("[mw] service %s ContainerLoadLoop exit", w.service),
 		func(ctx context.Context, ev *clientv3.Event) error {
 			return containerLoadChecker(ctx, w.service, w.ctr.eq, ev)
 		},

@@ -36,12 +36,15 @@ type leader struct {
 
 func newLeader(ctr *container) *leader {
 	var l leader
+
 	l.ctx, l.cancel = context.WithCancel(context.Background())
-	l.ctr = ctr
-	l.mw = newMaintenanceWorker(ctr, ctr.service)
 
 	// leader的service和container相同
 	l.service = ctr.service
+
+	l.ctr = ctr
+
+	l.mw = newMaintenanceWorker(ctr, ctr.service)
 
 	l.wg.Add(1)
 	go l.campaign()
@@ -54,7 +57,7 @@ func (l *leader) campaign() {
 	loop:
 		select {
 		case <-l.ctx.Done():
-			Logger.Printf("campaign exit")
+			Logger.Printf("[leader] service %s campaign exit", l.service)
 			return
 		default:
 		}
@@ -67,11 +70,11 @@ func (l *leader) campaign() {
 			time.Sleep(defaultSleepTimeout)
 			goto loop
 		}
-		Logger.Printf("[leader] Successfully campaign for current container %s with leader %s/%d", l.ctr.id, leaderNodePrefix, l.ctr.session.Lease())
+		Logger.Printf("[leader] service %s Successfully campaign for current container %s with leader %s/%d", l.service, l.ctr.id, leaderNodePrefix, l.ctr.session.Lease())
 
 		// leader启动时，等待一个时间段，方便所有container做至少一次heartbeat，然后开始监测是否需要进行container和shard映射关系的变更。
 		// etcd sdk中keepalive的请求发送时间时500ms，3s>>500ms，认为这个时间段内，所有container都会发heartbeat，不存在的就认为没有任务。
-		time.Sleep(15 * time.Second)
+		// time.Sleep(5 * time.Second)
 
 		if err := l.init(); err != nil {
 			Logger.Printf("err %+v", err)
@@ -92,16 +95,15 @@ func (l *leader) campaign() {
 		// https://github.com/entertainment-venue/borderland/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
 		go l.mw.Start()
 
-		Logger.Printf("[leader] completed start operator and mw, block until exit")
-
 		// block until出现需要放弃leader职权的事件
+		Logger.Printf("[leader] service %s completed start operator and mw, block until exit", l.service)
 		select {
 		case <-l.ctx.Done():
-			Logger.Printf("[leader] campaign exit")
+			Logger.Printf("[leader] service %s campaign exit", l.service)
 			return
 		case <-l.ctr.session.Done():
 			// 循环继续竞争
-			Logger.Printf("[leader] campaign exit, because session done")
+			Logger.Printf("[leader] service %s campaign exit, because session done", l.service)
 		}
 	}
 }
@@ -127,12 +129,12 @@ func (l *leader) init() error {
 			// 下发指令，接受不了的直接干掉当前的分配关系
 			ma := moveAction{Service: l.service, ShardId: shardId, AddEndpoint: ss.ContainerId, AllowDrop: true}
 			moveActions = append(moveActions, &ma)
-			Logger.Printf("[leader] Init move action %+v", ma)
+			Logger.Printf("[leader] service %s Init move action %+v", ma, l.service)
 		}
 	}
 	// 向自己的app任务节点发任务
 	if len(moveActions) == 0 {
-		Logger.Printf("[leader] No move action created")
+		Logger.Printf("[leader] service %s No move action created", l.service)
 		return nil
 	}
 	bdTaskNode := l.ctr.ew.nodeAppTask(l.service)
