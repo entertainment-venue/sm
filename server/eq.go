@@ -77,6 +77,7 @@ func (eq *eventQueue) push(item *Item, checkDup bool) {
 			eq.mu.Unlock()
 			return
 		}
+		eq.curEvList[ev.Service] = struct{}{}
 	}
 
 	ch, ok := eq.evChan[ev.Service]
