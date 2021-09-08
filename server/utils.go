@@ -70,6 +70,35 @@ watchLoop:
 	}
 }
 
+type ArmorMap map[string]string
+
+func (m ArmorMap) KeyList() []string {
+	var r []string
+	for k := range m {
+		r = append(r, k)
+	}
+	return r
+}
+
+func (m ArmorMap) KeyMap() map[string]struct{} {
+	r := make(map[string]struct{})
+	for k := range m {
+		r[k] = struct{}{}
+	}
+	return r
+}
+
+func (m ArmorMap) ValueList() []string {
+	var r []string
+	for _, v := range m {
+		if v == "" {
+			continue
+		}
+		r = append(r, v)
+	}
+	return r
+}
+
 // 1 container 的增加/减少是优先级最高，目前可能涉及大量shard move
 // 2 shard 被漏掉作为container检测的补充，最后校验，这种情况只涉及到漏掉的shard任务下发下去
 func allocateChecker(ctx context.Context, ew *etcdWrapper, service string) error {
@@ -80,101 +109,73 @@ func allocateChecker(ctx context.Context, ew *etcdWrapper, service string) error
 	}
 
 	// 检查是否有shard没有在健康的container上
-	var (
-		fixShardIds              []string
-		fixContainerIds          []string
-		fixContainerIdMap        = make(map[string]struct{})
-		fixShardIdAndContainerId = make(map[string]string)
-
-		actions moveActionList
-	)
+	fixShardIdAndContainerId := make(ArmorMap)
 	for id, value := range fixShardIdAndValue {
-		fixShardIds = append(fixShardIds, id)
-
 		var ss shardSpec
 		if err := json.Unmarshal([]byte(value), &ss); err != nil {
 			return errors.Wrap(err, "")
 		}
-
-		fixContainerIds = append(fixContainerIds, ss.ContainerId)
-		fixContainerIdMap[ss.ContainerId] = struct{}{}
 		fixShardIdAndContainerId[id] = ss.ContainerId
 	}
 
 	// 现有存活containers
-	surviveContainerIdAndValue, err := ew.getKvs(ctx, ew.nodeAppHbContainer(service))
+	var surviveContainerIdAndValue ArmorMap
+	surviveContainerIdAndValue, err = ew.getKvs(ctx, ew.nodeAppHbContainer(service))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
-	var surviveContainerIds []string
-	for containerId := range surviveContainerIdAndValue {
-		surviveContainerIds = append(surviveContainerIds, containerId)
-	}
 
-	var containerChanged bool
-	sort.Strings(fixContainerIds)
-	sort.Strings(surviveContainerIds)
-	if !reflect.DeepEqual(fixContainerIds, surviveContainerIds) {
-		containerChanged = true
-	}
-	if containerChanged {
+	if containerChanged(fixShardIdAndContainerId.ValueList(), surviveContainerIdAndValue.KeyList()) {
 		r := reallocate(service, surviveContainerIdAndValue, fixShardIdAndContainerId)
-		actions = append(actions, r...)
-		if len(actions) > 0 {
+		if len(r) > 0 {
 			// 向自己的app任务节点发任务
-			if _, err := ew.compareAndSwap(ctx, ew.nodeAppTask(service), "", actions.String(), -1); err != nil {
+			if _, err := ew.compareAndSwap(ctx, ew.nodeAppTask(service), "", r.String(), -1); err != nil {
 				return errors.Wrap(err, "")
 			}
-			Logger.Printf("Container changed for service %s, result %s", service, actions.String())
+			Logger.Printf("Container changed for service %s, result %s", service, r.String())
 			return nil
 		}
 	}
 
 	// container hb和固定分配关系一致，下面检查shard存活
-	var shardChanged bool
-	surviveShardIdAndValue, err := ew.getKvs(ctx, ew.nodeAppShardHb(service))
+	var surviveShardIdAndValue ArmorMap
+	surviveShardIdAndValue, err = ew.getKvs(ctx, ew.nodeAppShardHb(service))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
-	surviveShardIdMap := make(map[string]struct{})
-	for id := range surviveShardIdAndValue {
-		surviveShardIdMap[id] = struct{}{}
-	}
-	for _, fixShardId := range fixShardIds {
-		if _, ok := surviveShardIdMap[fixShardId]; !ok {
-			shardChanged = true
-			break
-		}
-	}
 
-	if shardChanged {
+	if shardChanged(fixShardIdAndContainerId.KeyList(), surviveShardIdAndValue.KeyMap()) {
 		r := reallocate(service, surviveContainerIdAndValue, fixShardIdAndContainerId)
-		actions = append(actions, r...)
-		if len(actions) > 0 {
+		if len(r) > 0 {
 			// 向自己的app任务节点发任务
-			if _, err := ew.compareAndSwap(ctx, ew.nodeAppTask(service), "", actions.String(), -1); err != nil {
+			if _, err := ew.compareAndSwap(ctx, ew.nodeAppTask(service), "", r.String(), -1); err != nil {
 				return errors.Wrap(err, "")
 			}
-			Logger.Printf("Container changed for service %s, result %v", service, actions)
+			Logger.Printf("Container changed for service %s, result %v", service, r)
 		}
 	}
 
 	return nil
 }
 
-func reallocate(service string, surviveContainerIdAndValue map[string]string, fixShardIdAndContainerId map[string]string) moveActionList {
-	var shardIds []string
-	for shardId := range fixShardIdAndContainerId {
-		shardIds = append(shardIds, shardId)
-	}
+func containerChanged(fixContainerIds []string, surviveContainerIds []string) bool {
+	sort.Strings(fixContainerIds)
+	sort.Strings(surviveContainerIds)
+	return !reflect.DeepEqual(fixContainerIds, surviveContainerIds)
+}
 
-	// survive的map有两个作用：
-	// 1. 为分配方法performAssignment提供基础数据
-	// 2. 非存活状态的container如果
-	var surviveContainerIds []string
-	for containerId := range surviveContainerIdAndValue {
-		surviveContainerIds = append(surviveContainerIds, containerId)
+func shardChanged(fixShardIds []string, surviveShardIdMap map[string]struct{}) bool {
+	for _, fixShardId := range fixShardIds {
+		if _, ok := surviveShardIdMap[fixShardId]; !ok {
+			return true
+		}
 	}
+	return false
+}
+
+func reallocate(service string, surviveContainerIdAndValue ArmorMap, fixShardIdAndContainerId ArmorMap) moveActionList {
+	shardIds := fixShardIdAndContainerId.KeyList()
+	surviveContainerIds := surviveContainerIdAndValue.KeyList()
 	newContainerIdAndShardIds := performAssignment(shardIds, surviveContainerIds)
 
 	var result moveActionList

@@ -23,6 +23,15 @@ func (l *moveActionList) String() string {
 	return string(b)
 }
 
+// 4 unit test
+func (l moveActionList) Len() int { return len(l) }
+func (l moveActionList) Less(i, j int) bool {
+	return l[i].ShardId > l[j].ShardId
+}
+func (l moveActionList) Swap(i, j int) {
+	l[i], l[j] = l[j], l[i]
+}
+
 type moveAction struct {
 	Service      string `json:"service"`
 	ShardId      string `json:"shardId"`

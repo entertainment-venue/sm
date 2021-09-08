@@ -3,12 +3,14 @@ package server
 import (
 	"context"
 	"fmt"
-	"github.com/coreos/etcd/clientv3"
-	"github.com/coreos/etcd/mvcc/mvccpb"
 	"reflect"
+	"sort"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/coreos/etcd/clientv3"
+	"github.com/coreos/etcd/mvcc/mvccpb"
 )
 
 func Test_tickerLoop(t *testing.T) {
@@ -80,6 +82,82 @@ func Test_watchLoop(t *testing.T) {
 	fmt.Println("TestWatchLoop exit")
 }
 
+func Test_containerChanged(t *testing.T) {
+	var tests = []struct {
+		fixContainerIds     []string
+		surviveContainerIds []string
+		expect              bool
+	}{
+		{
+			fixContainerIds:     []string{},
+			surviveContainerIds: []string{},
+			expect:              false,
+		},
+		{
+			fixContainerIds:     []string{"1", "2"},
+			surviveContainerIds: []string{"1", ""},
+			expect:              true,
+		},
+		{
+			fixContainerIds:     []string{"1", "2"},
+			surviveContainerIds: []string{"2", "1"},
+			expect:              false,
+		},
+		{
+			fixContainerIds:     []string{"1", "2"},
+			surviveContainerIds: []string{"1", "2", "3"},
+			expect:              true,
+		},
+	}
+
+	for idx, tt := range tests {
+		if tt.expect != containerChanged(tt.fixContainerIds, tt.surviveContainerIds) {
+			t.Errorf("idx %d expect %t", idx, tt.expect)
+			t.SkipNow()
+		}
+	}
+}
+
+func Test_shardChanged(t *testing.T) {
+	var tests = []struct {
+		fixShardIds       []string
+		surviveShardIdMap map[string]struct{}
+		expect            bool
+	}{
+		{
+			fixShardIds:       []string{},
+			surviveShardIdMap: map[string]struct{}{},
+			expect:            false,
+		},
+		{
+			fixShardIds: []string{"1"},
+			surviveShardIdMap: map[string]struct{}{
+				"1": {},
+			},
+			expect: false,
+		},
+		{
+			fixShardIds:       []string{"1"},
+			surviveShardIdMap: map[string]struct{}{},
+			expect:            true,
+		},
+		{
+			fixShardIds: []string{"1", "2"},
+			surviveShardIdMap: map[string]struct{}{
+				"1": {},
+				"2": {},
+			},
+			expect: false,
+		},
+	}
+	for idx, tt := range tests {
+		if tt.expect != shardChanged(tt.fixShardIds, tt.surviveShardIdMap) {
+			t.Errorf("idx %d expect %t", idx, tt.expect)
+			t.SkipNow()
+		}
+	}
+}
+
 func Test_reallocate(t *testing.T) {
 	service := "foo.bar"
 	var tests = []struct {
@@ -148,6 +226,8 @@ func Test_reallocate(t *testing.T) {
 
 	for idx, tt := range tests {
 		r := reallocate(service, tt.surviveContainerIdAndValue, tt.fixShardIdAndContainerId)
+		sort.Sort(r)
+		sort.Sort(tt.expect)
 		if !reflect.DeepEqual(r, tt.expect) {
 			t.Errorf("idx: %d actual: %s, expect: %s", idx, r.String(), tt.expect.String())
 			t.SkipNow()
