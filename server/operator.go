@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"net"
 	"net/http"
 	"time"
 
@@ -45,7 +44,7 @@ type moveAction struct {
 type Operator interface {
 	Closer
 
-	Move()
+	MoveLoop()
 	Scale()
 }
 
@@ -53,31 +52,21 @@ type Operator interface {
 type operator struct {
 	goroutineStopper
 
+	service string
+
 	ctr        *container
 	httpClient *http.Client
 	prevValue  string
 }
 
-func newOperator(cr *container) (Operator, error) {
+func newOperator(cr *container, service string) (*operator, error) {
 	op := operator{ctr: cr}
 	op.ctx, op.cancel = context.WithCancel(context.Background())
+	op.service = service
 
-	httpDialContextFunc := (&net.Dialer{Timeout: 1 * time.Second, DualStack: true}).DialContext
-	op.httpClient = &http.Client{
-		Transport: &http.Transport{
-			DialContext: httpDialContextFunc,
+	op.httpClient = newHttpClient()
 
-			IdleConnTimeout:       30 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 0,
-
-			MaxIdleConns:        50,
-			MaxIdleConnsPerHost: 50,
-		},
-		Timeout: 3 * time.Second,
-	}
-
-	go op.Move()
+	go op.MoveLoop()
 
 	// TODO scale
 
@@ -91,7 +80,7 @@ func (o *operator) Close() {
 }
 
 // sm的shard需要能为接入app提供shard移动的能力，且保证每个任务被执行掉，所以任务会绑定在shard，防止sm的shard移动导致任务没人干
-func (o *operator) Move() {
+func (o *operator) MoveLoop() {
 	fn := func(ctx context.Context, ev *clientv3.Event) error {
 		if ev.Type == mvccpb.DELETE {
 			return nil
@@ -131,7 +120,7 @@ firstMove:
 		}
 	}
 
-	watchLoop(o.ctx, o.ctr.ew, key, "[operator] moveLoop exit", fn, &o.wg)
+	watchLoop(o.ctx, o.ctr.ew, key, "[operator] service %s MoveLoop exit", fn, &o.wg)
 }
 
 // 保证at least once
@@ -150,45 +139,7 @@ move:
 	for _, ma := range mal {
 		ma := ma
 		g.Go(func() error {
-			var (
-				directlyAdd  bool
-				directlyDrop bool
-			)
-
-			if ma.DropEndpoint != "" {
-				if err := o.sendMoveRequest(ma.ShardId, ma.DropEndpoint, "drop"); err != nil {
-					return errors.Wrap(err, "")
-				}
-			} else {
-				directlyAdd = true
-			}
-
-			if ma.AddEndpoint != "" {
-				if err := o.sendMoveRequest(ma.ShardId, ma.AddEndpoint, "add"); err != nil {
-					if !ma.AllowDrop {
-						return errors.Wrap(err, "")
-					}
-
-					Logger.Printf("[operator] FAILED to send move request %v, err: %v", *ma, err)
-
-					// 只在leader竞选成功场景下会下发分配指令，没有Drop动作，这里允许放弃当前动作，后续有shardAllocateLoop和shardLoadLoop兜底
-					// 如果下发失败，就必须去掉分配关系，以便shardAllocateLoop拿到的分配关系是比较真实的（这块即便下发都成功，shard可能因为异常停止工作）
-					if err := o.removeShardAllocate(ma.ShardId, ma.Service); err != nil {
-						return errors.Wrap(err, "")
-					}
-					return nil
-				}
-			} else {
-				directlyDrop = true
-
-				if err := o.ctr.ew.del(o.ctx, o.ctr.ew.nodeAppShardId(ma.Service, ma.ShardId)); err != nil {
-					return errors.Wrap(err, "")
-				}
-			}
-
-			Logger.Printf("[operator] Successfully move shard %s from %s to %s, directlyAdd: %b directlyDrop: %b", ma.ShardId, ma.DropEndpoint, ma.AddEndpoint, directlyAdd, directlyDrop)
-
-			return nil
+			return o.dropAndAdd(ma)
 		})
 	}
 	if err := g.Wait(); err != nil {
@@ -196,6 +147,8 @@ move:
 		time.Sleep(defaultSleepTimeout)
 		goto move
 	}
+
+	Logger.Printf("[operator] completed shard move task %s", string(value))
 
 	// 利用etcd tx清空任务节点，任务节点已经空就停止
 ack:
@@ -210,7 +163,50 @@ ack:
 	return nil
 }
 
-func (o *operator) sendMoveRequest(id string, endpoint string, action string) error {
+func (o *operator) dropAndAdd(ma *moveAction) error {
+	var (
+		onlyAdd  bool
+		onlyDrop bool
+	)
+
+	if ma.DropEndpoint != "" {
+		if err := o.send(ma.ShardId, ma.DropEndpoint, "drop"); err != nil {
+			return errors.Wrap(err, "")
+		}
+	} else {
+		onlyAdd = true
+	}
+
+	if ma.AddEndpoint != "" {
+		if err := o.send(ma.ShardId, ma.AddEndpoint, "add"); err != nil {
+			if !ma.AllowDrop {
+				return errors.Wrap(err, "")
+			}
+
+			Logger.Printf("[operator] FAILED to send move request %v, err: %v", *ma, err)
+
+			// 只在leader竞选成功场景下会下发分配指令，没有Drop动作，这里允许放弃当前动作，后续有shardAllocateLoop和shardLoadLoop兜底
+			// 如果下发失败，就必须去掉分配关系，以便shardAllocateLoop拿到的分配关系是比较真实的（这块即便下发都成功，shard可能因为异常停止工作）
+			if err := o.remove(ma.ShardId, ma.Service); err != nil {
+				return errors.Wrap(err, "")
+			}
+			return nil
+		}
+	} else {
+		onlyDrop = true
+
+		// 没有Add节点证明要把shard清除掉
+		if err := o.ctr.ew.del(o.ctx, o.ctr.ew.nodeAppShardId(ma.Service, ma.ShardId)); err != nil {
+			return errors.Wrap(err, "")
+		}
+	}
+
+	Logger.Printf("[operator] Successfully move shard %s from %s to %s, onlyAdd: %b onlyDrop: %b", ma.ShardId, ma.DropEndpoint, ma.AddEndpoint, onlyAdd, onlyDrop)
+
+	return nil
+}
+
+func (o *operator) send(id string, endpoint string, action string) error {
 	param := make(map[string]string)
 	param["shardId"] = id
 	b, err := json.Marshal(param)
@@ -237,7 +233,7 @@ func (o *operator) sendMoveRequest(id string, endpoint string, action string) er
 	return nil
 }
 
-func (o *operator) removeShardAllocate(id, service string) error {
+func (o *operator) remove(id, service string) error {
 	key := o.ctr.ew.nodeAppShardId(service, id)
 	resp, err := o.ctr.ew.get(o.ctx, key, nil)
 	if err != nil {
@@ -251,6 +247,9 @@ func (o *operator) removeShardAllocate(id, service string) error {
 	var ss shardSpec
 	if err := json.Unmarshal(resp.Kvs[0].Value, &ss); err != nil {
 		return errors.Wrap(err, "")
+	}
+	if ss.ContainerId == "" {
+		return nil
 	}
 	ss.ContainerId = ""
 	if _, err := o.ctr.ew.compareAndSwap(o.ctx, key, string(resp.Kvs[0].Value), ss.String(), -1); err != nil {

@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"net"
+	"net/http"
 	"sync"
 	"time"
 
@@ -93,4 +95,21 @@ func (m ArmorMap) ValueList() []string {
 		r = append(r, v)
 	}
 	return r
+}
+
+func newHttpClient() *http.Client {
+	httpDialContextFunc := (&net.Dialer{Timeout: 1 * time.Second, DualStack: true}).DialContext
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext: httpDialContextFunc,
+
+			IdleConnTimeout:       30 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 0,
+
+			MaxIdleConns:        50,
+			MaxIdleConnsPerHost: 50,
+		},
+		Timeout: 3 * time.Second,
+	}
 }

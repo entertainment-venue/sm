@@ -98,10 +98,17 @@ func newContainer(id, service string, endpoints []string) (*container, error) {
 }
 
 func (c *container) Close() {
+	// stop shard
 	for _, s := range c.shards {
 		s.Close()
 	}
 
+	// stop operator
+	for _, o := range c.srvOps {
+		o.Close()
+	}
+
+	// stop leader
 	if c.leader != nil {
 		c.leader.close()
 	}
@@ -193,7 +200,7 @@ func (c *container) TryNewOp(service string) error {
 	defer c.mu.Unlock()
 
 	if _, ok := c.srvOps[service]; !ok {
-		op, err := newOperator(c)
+		op, err := newOperator(c, service)
 		if err != nil {
 			return errors.Wrap(err, "")
 		}

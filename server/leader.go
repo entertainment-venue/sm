@@ -84,7 +84,7 @@ func (l *leader) campaign() {
 
 		// leader需要处理shard move的任务
 		var err error
-		l.op, err = newOperator(l.ctr)
+		l.op, err = newOperator(l.ctr, l.service)
 		if err != nil {
 			Logger.Printf("err %+v", err)
 			time.Sleep(defaultSleepTimeout)
