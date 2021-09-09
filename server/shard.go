@@ -79,7 +79,7 @@ func newShard(id string, ctr *container) (*shard, error) {
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 
 	var err error
-	s.session, err = concurrency.NewSession(s.ctr.ew.client, concurrency.WithTTL(defaultSessionTimeout))
+	s.session, err = concurrency.NewSession(s.ctr.ew.EtcdClient.Client, concurrency.WithTTL(defaultSessionTimeout))
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -94,7 +94,7 @@ func newShard(id string, ctr *container) (*shard, error) {
 	}()
 
 	// 获取shard的任务信息，在sm场景下，shard中包含所负责的app的service信息
-	resp, err := s.ctr.ew.get(s.ctx, s.ctr.ew.nodeAppShardId(s.ctr.service, s.id), nil)
+	resp, err := s.ctr.ew.EtcdClient.GetKV(s.ctx, s.ctr.ew.nodeAppShardId(s.ctr.service, s.id), nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -156,7 +156,7 @@ func (s *shard) UploadLoad() {
 
 		// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
 		k := s.ctr.ew.nodeAppShardHbId(s.ctr.service, s.id)
-		if _, err := s.ctr.ew.client.Put(s.ctx, k, ss.String(), clientv3.WithLease(s.session.Lease())); err != nil {
+		if _, err := s.ctr.ew.EtcdClient.Put(s.ctx, k, ss.String(), clientv3.WithLease(s.session.Lease())); err != nil {
 			return errors.Wrap(err, "")
 		}
 		return nil

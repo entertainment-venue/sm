@@ -47,7 +47,7 @@ func Test_watchLoop(t *testing.T) {
 		ctx, cancel = context.WithCancel(context.Background())
 	)
 
-	ew, err := newEtcdWrapper([]string{"127.0.0.1:2379"}, &container{})
+	ew, err := newEtcdWrapper([]string{"127.0.0.1:2379"})
 	if err != nil {
 		t.Errorf("err: %v", err)
 		t.SkipNow()

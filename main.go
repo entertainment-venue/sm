@@ -12,7 +12,7 @@ func main() {
 		server.WithId("127.0.0.1:8888"),
 		server.WithAddr(":8888"),
 		server.WithService("foo.bar"),
-		server.WithEtcdEndpoints([]string{"127.0.0.1:2379"}),
+		server.WithEndpoints([]string{"127.0.0.1:2379"}),
 	); err != nil {
 		panic(err)
 	}

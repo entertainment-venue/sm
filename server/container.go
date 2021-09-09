@@ -69,13 +69,13 @@ func newContainer(id, service string, endpoints []string) (*container, error) {
 	ctr.id = id
 	ctr.ctx, ctr.cancel = context.WithCancel(context.Background())
 
-	ctr.ew, err = newEtcdWrapper(endpoints, &ctr)
+	ctr.ew, err = newEtcdWrapper(endpoints)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
 
 	// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
-	ctr.session, err = concurrency.NewSession(ctr.ew.client, concurrency.WithTTL(defaultSessionTimeout))
+	ctr.session, err = concurrency.NewSession(ctr.ew.EtcdClient.Client, concurrency.WithTTL(defaultSessionTimeout))
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -156,7 +156,7 @@ func (c *container) UploadLoad() {
 		ld.NetIOCountersStat = &netIOCounters[0]
 
 		k := c.ew.nodeAppContainerIdHb(c.service, c.id)
-		if _, err := c.ew.client.Put(c.ctx, k, ld.String(), clientv3.WithLease(c.session.Lease())); err != nil {
+		if _, err := c.ew.EtcdClient.Put(c.ctx, k, ld.String(), clientv3.WithLease(c.session.Lease())); err != nil {
 			return errors.Wrap(err, "")
 		}
 

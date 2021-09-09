@@ -62,7 +62,7 @@ func (l *leader) campaign() {
 		default:
 		}
 
-		leaderNodePrefix := l.ctr.ew.leaderNode()
+		leaderNodePrefix := l.ctr.ew.leaderNode(l.service)
 		lvalue := leaderEtcdValue{ContainerId: l.ctr.id, CreateTime: time.Now().String()}
 		election := concurrency.NewElection(l.ctr.session, leaderNodePrefix)
 		if err := election.Campaign(l.ctx, lvalue.String()); err != nil {
@@ -74,7 +74,7 @@ func (l *leader) campaign() {
 
 		// leader启动时，等待一个时间段，方便所有container做至少一次heartbeat，然后开始监测是否需要进行container和shard映射关系的变更。
 		// etcd sdk中keepalive的请求发送时间时500ms，3s>>500ms，认为这个时间段内，所有container都会发heartbeat，不存在的就认为没有任务。
-		// time.Sleep(5 * time.Second)
+		time.Sleep(5 * time.Second)
 
 		if err := l.init(); err != nil {
 			Logger.Printf("err %+v", err)
@@ -113,7 +113,7 @@ func (l *leader) init() error {
 	// 分配关系下发，解决的是先把现有分配关系搞下去，然后再通过shardAllocateLoop检验是否需要整体进行shard move，相当于init
 	// TODO app接入数量一个公司可控，所以方案可行
 	bdShardNode := l.ctr.ew.nodeAppShard(l.service)
-	curShardIdAndValue, err := l.ctr.ew.getKvs(l.ctx, bdShardNode)
+	curShardIdAndValue, err := l.ctr.ew.EtcdClient.GetKVs(l.ctx, bdShardNode)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -138,7 +138,7 @@ func (l *leader) init() error {
 		return nil
 	}
 	bdTaskNode := l.ctr.ew.nodeAppTask(l.service)
-	if _, err := l.ctr.ew.compareAndSwap(l.ctx, bdTaskNode, "", moveActions.String(), -1); err != nil {
+	if _, err := l.ctr.ew.EtcdClient.CompareAndSwap(l.ctx, bdTaskNode, "", moveActions.String(), -1); err != nil {
 		return errors.Wrap(err, "")
 	}
 	return nil

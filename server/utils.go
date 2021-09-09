@@ -44,7 +44,7 @@ func watchLoop(ctx context.Context, ew *etcdWrapper, node string, exitMsg string
 	opts = append(opts, clientv3.WithPrefix())
 
 watchLoop:
-	wch := ew.client.Watch(ctx, node)
+	wch := ew.EtcdClient.Watch(ctx, node)
 	for {
 		var wr clientv3.WatchResponse
 		select {

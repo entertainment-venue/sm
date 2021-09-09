@@ -103,7 +103,7 @@ func (o *operator) MoveLoop() {
 	// Move只有对特定app负责的operator
 	// 当前如果存在任务，直接开始执行
 firstMove:
-	resp, err := o.ctr.ew.get(o.ctx, key, []clientv3.OpOption{})
+	resp, err := o.ctr.ew.EtcdClient.GetKV(o.ctx, key, []clientv3.OpOption{})
 	if err != nil {
 		Logger.Printf("err: %v", err)
 		time.Sleep(defaultSleepTimeout)
@@ -153,7 +153,7 @@ move:
 	// 利用etcd tx清空任务节点，任务节点已经空就停止
 ack:
 	key := o.ctr.ew.nodeAppTask(o.ctr.service)
-	if _, err := o.ctr.ew.compareAndSwap(o.ctx, key, string(value), "", -1); err != nil {
+	if _, err := o.ctr.ew.EtcdClient.CompareAndSwap(o.ctx, key, string(value), "", -1); err != nil {
 		// 节点数据被破坏，需要人工介入
 		Logger.Printf("err: %v", err)
 		time.Sleep(defaultSleepTimeout)
@@ -196,7 +196,7 @@ func (o *operator) dropAndAdd(ma *moveAction) error {
 		onlyDrop = true
 
 		// 没有Add节点证明要把shard清除掉
-		if err := o.ctr.ew.del(o.ctx, o.ctr.ew.nodeAppShardId(ma.Service, ma.ShardId)); err != nil {
+		if err := o.ctr.ew.EtcdClient.DelKV(o.ctx, o.ctr.ew.nodeAppShardId(ma.Service, ma.ShardId)); err != nil {
 			return errors.Wrap(err, "")
 		}
 	}
@@ -235,7 +235,7 @@ func (o *operator) send(id string, endpoint string, action string) error {
 
 func (o *operator) remove(id, service string) error {
 	key := o.ctr.ew.nodeAppShardId(service, id)
-	resp, err := o.ctr.ew.get(o.ctx, key, nil)
+	resp, err := o.ctr.ew.EtcdClient.GetKV(o.ctx, key, nil)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -252,7 +252,7 @@ func (o *operator) remove(id, service string) error {
 		return nil
 	}
 	ss.ContainerId = ""
-	if _, err := o.ctr.ew.compareAndSwap(o.ctx, key, string(resp.Kvs[0].Value), ss.String(), -1); err != nil {
+	if _, err := o.ctr.ew.EtcdClient.CompareAndSwap(o.ctx, key, string(resp.Kvs[0].Value), ss.String(), -1); err != nil {
 		return errors.Wrap(err, "")
 	}
 	return nil

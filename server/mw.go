@@ -100,7 +100,7 @@ func (w *maintenanceWorker) ContainerLoadLoop() {
 // 2 shard 被漏掉作为container检测的补充，最后校验，这种情况只涉及到漏掉的shard任务下发下去
 func allocateChecker(ctx context.Context, ew *etcdWrapper, service string, eq *eventQueue) error {
 	// 获取当前的shard分配关系
-	fixShardIdAndValue, err := ew.getKvs(ctx, ew.nodeAppShard(service))
+	fixShardIdAndValue, err := ew.EtcdClient.GetKVs(ctx, ew.nodeAppShard(service))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -117,7 +117,7 @@ func allocateChecker(ctx context.Context, ew *etcdWrapper, service string, eq *e
 
 	// 现有存活containers
 	var surviveContainerIdAndValue ArmorMap
-	surviveContainerIdAndValue, err = ew.getKvs(ctx, ew.nodeAppHbContainer(service))
+	surviveContainerIdAndValue, err = ew.EtcdClient.GetKVs(ctx, ew.nodeAppHbContainer(service))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -141,7 +141,7 @@ func allocateChecker(ctx context.Context, ew *etcdWrapper, service string, eq *e
 
 	// container hb和固定分配关系一致，下面检查shard存活
 	var surviveShardIdAndValue ArmorMap
-	surviveShardIdAndValue, err = ew.getKvs(ctx, ew.nodeAppShardHb(service))
+	surviveShardIdAndValue, err = ew.EtcdClient.GetKVs(ctx, ew.nodeAppShardHb(service))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}

@@ -39,7 +39,7 @@ type borderlandOptions struct {
 	service string
 
 	// etcd集群的配置
-	etcdEndpoints []string
+	endpoints []string
 
 	// 监听端口: 提供管理职能，add、drop
 	addr string
@@ -61,9 +61,9 @@ func WithService(v string) BorderlandOptionsFunc {
 	}
 }
 
-func WithEtcdEndpoints(v []string) BorderlandOptionsFunc {
+func WithEndpoints(v []string) BorderlandOptionsFunc {
 	return func(options *borderlandOptions) {
-		options.etcdEndpoints = v
+		options.endpoints = v
 	}
 }
 
@@ -79,11 +79,11 @@ func Run(_ context.Context, fn ...BorderlandOptionsFunc) error {
 		f(&opts)
 	}
 
-	if opts.id == "" || opts.service == "" || opts.addr == "" || len(opts.etcdEndpoints) == 0 {
+	if opts.id == "" || opts.service == "" || opts.addr == "" || len(opts.endpoints) == 0 {
 		return errors.Wrap(errParam, "")
 	}
 
-	cr, err := newContainer(opts.id, opts.service, opts.etcdEndpoints)
+	cr, err := newContainer(opts.id, opts.service, opts.endpoints)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
