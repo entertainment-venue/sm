@@ -2,7 +2,8 @@ package apputil
 
 import "context"
 
-type ShardExecutor interface {
+type ShardInterface interface {
 	Add(ctx context.Context, id string) error
 	Drop(ctx context.Context, id string) error
+	Load(ctx context.Context, id string) (string, error)
 }

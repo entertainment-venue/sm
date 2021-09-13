@@ -115,6 +115,14 @@ func (c *Container) Done() <-chan struct{} {
 	return c.donec
 }
 
+func (c *Container) Id() string {
+	return c.id
+}
+
+func (c *Container) Service() string {
+	return c.service
+}
+
 type SysLoad struct {
 	VirtualMemoryStat  *mem.VirtualMemoryStat `json:"virtualMemoryStat"`
 	CPUUsedPercent     float64                `json:"cpuUsedPercent"`
