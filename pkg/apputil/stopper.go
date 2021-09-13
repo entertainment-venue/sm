@@ -18,16 +18,16 @@ type GoroutineStopper struct {
 	wg sync.WaitGroup
 }
 
-type StopperFunc func(ctx context.Context)
+type StopableFunc func(ctx context.Context)
 
-func (stopper *GoroutineStopper) Wrap(fn StopperFunc) {
+func (stopper *GoroutineStopper) Wrap(fn StopableFunc) {
 	stopper.once.Do(func() {
 		// 不需要外部ctx
 		stopper.ctx, stopper.cancel = context.WithCancel(context.TODO())
 	})
 
 	stopper.wg.Add(1)
-	go func(fn StopperFunc, ctx context.Context) {
+	go func(fn StopableFunc, ctx context.Context) {
 		defer stopper.wg.Done()
 
 		fn(ctx)

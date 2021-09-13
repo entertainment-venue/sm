@@ -13,3 +13,7 @@ func EtcdPathAppContainerIdHb(service, id string) string {
 func EtcdPathAppShardHbId(service, id string) string {
 	return fmt.Sprintf("%s/shardhb/%s", EtcdPathAppPrefix(service), id)
 }
+
+func EtcdPathAppShardId(service, id string) string {
+	return fmt.Sprintf("%s/shard/%s", EtcdPathAppPrefix(service), id)
+}
