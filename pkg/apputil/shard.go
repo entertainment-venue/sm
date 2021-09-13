@@ -29,6 +29,11 @@ type ShardSpec struct {
 	// Deleted bool `json:"deleted"`
 }
 
+func (ss *ShardSpec) String() string {
+	b, _ := json.Marshal(ss)
+	return string(b)
+}
+
 type ShardInterface interface {
 	Add(ctx context.Context, id string, spec *ShardSpec) error
 	Drop(ctx context.Context, id string) error
@@ -59,8 +64,9 @@ type ShardServer struct {
 }
 
 type shardServerOptions struct {
-	ctx  context.Context
-	addr string
+	ctx             context.Context
+	addr            string
+	routeAndHandler map[string]func(c *gin.Context)
 
 	// FIXME 和ShardServer重复
 	implementation ShardInterface
@@ -93,6 +99,12 @@ func ShardServerWithContext(v context.Context) ShardServerOption {
 	}
 }
 
+func ShardServerWithApiHandler(routeAndHandler map[string]func(c *gin.Context)) ShardServerOption {
+	return func(sso *shardServerOptions) {
+		sso.routeAndHandler = routeAndHandler
+	}
+}
+
 func NewShardServer(opts ...ShardServerOption) error {
 	ops := &shardServerOptions{}
 	for _, opt := range opts {
@@ -115,6 +127,9 @@ func NewShardServer(opts ...ShardServerOption) error {
 	{
 		ssg.POST("/add-shard", ss.GinShardServerAddShard)
 		ssg.POST("/drop-shard", ss.GinContainerDropShard)
+	}
+	for route, handler := range ops.routeAndHandler {
+		r.POST(route, handler)
 	}
 
 	if err := r.Run(ops.addr); err != nil {
