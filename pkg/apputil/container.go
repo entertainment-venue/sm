@@ -98,12 +98,9 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 
 	// 上报系统负载，提供container liveness的标记
 	container.Stopper.Wrap(
-		ops.ctx,
-		func(ctx context.Context) error {
+		func(ctx context.Context) {
 			TickerLoop(ctx, 3*time.Second, "Container upload exit", container.UploadSysLoad)
-			return nil
-		},
-	)
+		})
 
 	return &container, nil
 }
