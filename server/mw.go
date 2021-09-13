@@ -21,7 +21,7 @@ type maintenanceWorker struct {
 
 	stopper *apputil.GoroutineStopper
 
-	// 从属于leader或者sm shard，service和container不一定一样
+	// 从属于leader或者sm serverShard，service和container不一定一样
 	service string
 }
 
@@ -75,7 +75,7 @@ func (w *maintenanceWorker) Close() {
 }
 
 // 1 serverContainer 的增加/减少是优先级最高，目前可能涉及大量shard move
-// 2 shard 被漏掉作为container检测的补充，最后校验，这种情况只涉及到漏掉的shard任务下发下去
+// 2 serverShard 被漏掉作为container检测的补充，最后校验，这种情况只涉及到漏掉的shard任务下发下去
 func (w *maintenanceWorker) allocateChecker(ctx context.Context, ew *etcdWrapper, service string, eq *eventQueue) error {
 	// 获取当前的shard分配关系
 	fixShardIdAndValue, err := w.parent.Client.GetKVs(ctx, ew.nodeAppShard(service))
@@ -86,7 +86,7 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context, ew *etcdWrapper
 	// 检查是否有shard没有在健康的container上
 	fixShardIdAndContainerId := make(ArmorMap)
 	for id, value := range fixShardIdAndValue {
-		var ss shardSpec
+		var ss apputil.ShardSpec
 		if err := json.Unmarshal([]byte(value), &ss); err != nil {
 			return errors.Wrap(err, "")
 		}

@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/entertainment-venue/borderland/pkg/apputil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 )
@@ -26,7 +27,7 @@ type Closer interface {
 	Close()
 }
 
-type borderlandOptions struct {
+type serverOptions struct {
 	// id是当前容器/进程的唯一标记，不能变化，用于做container和shard的映射关系
 	id string
 
@@ -38,38 +39,44 @@ type borderlandOptions struct {
 
 	// 监听端口: 提供管理职能，add、drop
 	addr string
+
+	ctx context.Context
 }
 
-var defaultOpts = borderlandOptions{}
+type ServerOption func(options *serverOptions)
 
-type BorderlandOptionsFunc func(options *borderlandOptions)
-
-func WithId(v string) BorderlandOptionsFunc {
-	return func(options *borderlandOptions) {
+func WithId(v string) ServerOption {
+	return func(options *serverOptions) {
 		options.id = v
 	}
 }
 
-func WithService(v string) BorderlandOptionsFunc {
-	return func(options *borderlandOptions) {
+func WithService(v string) ServerOption {
+	return func(options *serverOptions) {
 		options.service = v
 	}
 }
 
-func WithEndpoints(v []string) BorderlandOptionsFunc {
-	return func(options *borderlandOptions) {
+func WithEndpoints(v []string) ServerOption {
+	return func(options *serverOptions) {
 		options.endpoints = v
 	}
 }
 
-func WithAddr(v string) BorderlandOptionsFunc {
-	return func(options *borderlandOptions) {
+func WithAddr(v string) ServerOption {
+	return func(options *serverOptions) {
 		options.addr = v
 	}
 }
 
-func Run(ctx context.Context, fn ...BorderlandOptionsFunc) error {
-	opts := defaultOpts
+func WithContext(v context.Context) ServerOption {
+	return func(options *serverOptions) {
+		options.ctx = v
+	}
+}
+
+func Run(fn ...ServerOption) error {
+	opts := serverOptions{}
 	for _, f := range fn {
 		f(&opts)
 	}
@@ -78,37 +85,40 @@ func Run(ctx context.Context, fn ...BorderlandOptionsFunc) error {
 		return errors.Wrap(errParam, "")
 	}
 
-	cr, err := newContainer(ctx, opts.id, opts.service, opts.endpoints)
+	cc, err := apputil.NewContainer(
+		apputil.WithContext(opts.ctx),
+		apputil.WithService(opts.service),
+		apputil.WithId(opts.id),
+		apputil.WithEndpoints(opts.endpoints))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
 
-	api := containerApi{cr}
-
-	r := gin.Default()
-
-	// 支持borderland内部shard移动
-	containerGroup := r.Group("/borderland/serverContainer")
-	{
-		containerGroup.POST("/drop-shard", api.GinContainerDropShard)
-
-		containerGroup.POST("/add-shard", api.GinContainerAddShard)
-	}
-
-	// 支持业务app录入基本信息
-	appGroup := r.Group("/borderland/app")
-	{
-		// 应用基础信息，包括service
-		appGroup.POST("/add-spec", api.GinAppAddSpec)
-
-		// 业务场景下的分片拆分后，通过该接口录入borderland
-		appGroup.POST("/add-shard", api.GinAppAddShard)
-
-		// appGroup.POST("/del-shard", api.GinAppDelShard)
-	}
-
-	if err := r.Run(opts.addr); err != nil {
+	sc, err := newServerContainer(opts.ctx, opts.id, opts.service, opts.endpoints)
+	if err != nil {
 		return errors.Wrap(err, "")
 	}
+
+	go func() {
+		defer sc.Close()
+		for range cc.Done() {
+
+		}
+	}()
+
+	api := containerApi{sc}
+	routeAndHandler := make(map[string]func(c *gin.Context))
+	routeAndHandler["/borderland/admin/add-spec"] = api.GinAppAddSpec
+	routeAndHandler["/borderland/admin/add-shard"] = api.GinAppAddShard
+
+	if err := apputil.NewShardServer(
+		apputil.ShardServerWithAddr(opts.addr),
+		apputil.ShardServerWithContext(opts.ctx),
+		apputil.ShardServerWithContainer(cc),
+		apputil.ShardServerWithApiHandler(routeAndHandler),
+		apputil.ShardServerWithShardImplementation(sc)); err != nil {
+		return errors.Wrap(err, "")
+	}
+
 	return nil
 }

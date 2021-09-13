@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"github.com/entertainment-venue/borderland/pkg/apputil"
 	"net/http"
 	"time"
 
@@ -12,44 +13,6 @@ import (
 
 type containerApi struct {
 	cr *serverContainer
-}
-
-type shardOpReq struct {
-	ShardId string `json:"shardId"`
-}
-
-func (g *containerApi) GinContainerDropShard(c *gin.Context) {
-	var req shardOpReq
-	if err := c.ShouldBind(&req); err != nil {
-		Logger.Printf("err: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	Logger.Printf("req: %v", req)
-
-	if err := g.cr.Drop(req.ShardId); err != nil {
-		Logger.Printf("err: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{})
-}
-
-func (g *containerApi) GinContainerAddShard(c *gin.Context) {
-	var req shardOpReq
-	if err := c.ShouldBind(&req); err != nil {
-		Logger.Printf("err: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	Logger.Printf("req: %+v", req)
-
-	if err := g.cr.Add(req.ShardId); err != nil {
-		Logger.Printf("err: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{})
 }
 
 type appSpec struct {
@@ -115,7 +78,7 @@ func (g *containerApi) GinAppAddShard(c *gin.Context) {
 	}
 	Logger.Printf("req: %v", req)
 
-	spec := shardSpec{
+	spec := apputil.ShardSpec{
 		Service:    req.Service,
 		Task:       req.Task,
 		UpdateTime: time.Now().Unix(),
@@ -124,7 +87,7 @@ func (g *containerApi) GinAppAddShard(c *gin.Context) {
 	// 区分更新和添加
 	// 如果是添加，等待负责该app的shard做探测即可
 	// 如果是更新，shard是不允许更新的，这种更新的相当于shard工作内容的调整
-	if err := g.cr.Client.CreateAndGet(context.Background(), []string{g.cr.ew.nodeAppShardId(req.Service, req.ShardId)}, []string{spec.String()}, clientv3.NoLease); err != nil {
+	if err := g.cr.Client.CreateAndGet(context.Background(), []string{apputil.EtcdPathAppShardId(req.Service, req.ShardId)}, []string{spec.String()}, clientv3.NoLease); err != nil {
 		Logger.Printf("err: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -155,7 +118,7 @@ func (g *containerApi) GinAppDelShard(c *gin.Context) {
 		return
 	}
 	if resp.Count == 0 {
-		err = errors.Errorf("Failed to get shard %s content in service %s", req.ShardId, req.Service)
+		err = errors.Errorf("Failed to get serverShard %s content in service %s", req.ShardId, req.Service)
 		Logger.Printf("err: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

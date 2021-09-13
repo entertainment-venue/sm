@@ -13,7 +13,7 @@ import (
 )
 
 func Test_Start(t *testing.T) {
-	ctr, err := newContainer(context.TODO(), "127.0.0.1:8888", "foo.bar", []string{"127.0.0.1:2379"})
+	ctr, err := newServerContainer(context.TODO(), "127.0.0.1:8888", "foo.bar", []string{"127.0.0.1:2379"})
 	if err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()

@@ -142,7 +142,7 @@ move:
 		goto move
 	}
 
-	Logger.Printf("[operator] completed shard move task %s", string(value))
+	Logger.Printf("[operator] completed serverShard move task %s", string(value))
 
 	// 利用etcd tx清空任务节点，任务节点已经空就停止
 ack:
@@ -190,12 +190,12 @@ func (o *operator) dropAndAdd(ctx context.Context, ma *moveAction) error {
 		onlyDrop = true
 
 		// 没有Add节点证明要把shard清除掉
-		if err := o.sc.Client.DelKV(ctx, o.sc.ew.nodeAppShardId(ma.Service, ma.ShardId)); err != nil {
+		if err := o.sc.Client.DelKV(ctx, apputil.EtcdPathAppShardId(ma.Service, ma.ShardId)); err != nil {
 			return errors.Wrap(err, "")
 		}
 	}
 
-	Logger.Printf("[operator] Successfully move shard %s from %s to %s, onlyAdd: %b onlyDrop: %b", ma.ShardId, ma.DropEndpoint, ma.AddEndpoint, onlyAdd, onlyDrop)
+	Logger.Printf("[operator] Successfully move serverShard %s from %s to %s, onlyAdd: %b onlyDrop: %b", ma.ShardId, ma.DropEndpoint, ma.AddEndpoint, onlyAdd, onlyDrop)
 
 	return nil
 }
@@ -208,7 +208,7 @@ func (o *operator) send(id string, endpoint string, action string) error {
 		return errors.Wrap(err, "")
 	}
 
-	urlStr := fmt.Sprintf("http://%s/borderland/serverContainer/%s-shard", endpoint, action)
+	urlStr := fmt.Sprintf("http://%s/borderland/serverContainer/%s-serverShard", endpoint, action)
 	req, err := http.NewRequest(http.MethodPost, urlStr, bytes.NewBuffer(b))
 	if err != nil {
 		return errors.Wrap(err, "")
@@ -222,13 +222,13 @@ func (o *operator) send(id string, endpoint string, action string) error {
 	ioutil.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return errors.Errorf("[operator] FAILED to %s shard %s, not 200", action, id)
+		return errors.Errorf("[operator] FAILED to %s serverShard %s, not 200", action, id)
 	}
 	return nil
 }
 
 func (o *operator) remove(ctx context.Context, id, service string) error {
-	key := o.sc.ew.nodeAppShardId(service, id)
+	key := apputil.EtcdPathAppShardId(service, id)
 	resp, err := o.sc.Client.GetKV(ctx, key, nil)
 	if err != nil {
 		return errors.Wrap(err, "")
@@ -238,7 +238,7 @@ func (o *operator) remove(ctx context.Context, id, service string) error {
 		return nil
 	}
 
-	var ss shardSpec
+	var ss apputil.ShardSpec
 	if err := json.Unmarshal(resp.Kvs[0].Value, &ss); err != nil {
 		return errors.Wrap(err, "")
 	}

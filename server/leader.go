@@ -111,7 +111,7 @@ func (l *leader) init() error {
 	}
 	var moveActions moveActionList
 	for shardId, value := range curShardIdAndValue {
-		var ss shardSpec
+		var ss apputil.ShardSpec
 		if err := json.Unmarshal([]byte(value), &ss); err != nil {
 			return errors.Wrap(err, "")
 		}
