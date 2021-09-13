@@ -22,10 +22,6 @@ func (w *etcdWrapper) nodeAppContainerHb(service string) string {
 	return fmt.Sprintf("%s/containerhb/", apputil.EtcdPathAppPrefix(service))
 }
 
-func (w *etcdWrapper) nodeAppContainerIdHb(service, id string) string {
-	return fmt.Sprintf("%s/containerhb/%s", apputil.EtcdPathAppPrefix(service), id)
-}
-
 // 存储分配当前关系
 func (w *etcdWrapper) nodeAppShard(service string) string {
 	return fmt.Sprintf("%s/shard/", apputil.EtcdPathAppPrefix(service))
@@ -38,10 +34,6 @@ func (w *etcdWrapper) nodeAppShardId(service, id string) string {
 
 func (w *etcdWrapper) nodeAppShardHb(service string) string {
 	return fmt.Sprintf("%s/shardhb/", apputil.EtcdPathAppPrefix(service))
-}
-
-func (w *etcdWrapper) nodeAppShardHbId(service, id string) string {
-	return fmt.Sprintf("%s/shardhb/%s", apputil.EtcdPathAppPrefix(service), id)
 }
 
 // /borderland/proxy/task

@@ -128,7 +128,7 @@ func startShard(ctx context.Context, id string, sc *serverContainer) (*shard, er
 				ss := shardLoad{}
 
 				// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
-				k := s.sc.ew.nodeAppShardHbId(s.sc.service, s.id)
+				k := apputil.EtcdPathAppShardHbId(s.sc.service, s.id)
 				if _, err := s.sc.Client.Put(ctx, k, ss.String(), clientv3.WithLease(s.session.Lease())); err != nil {
 					return errors.Wrap(err, "")
 				}

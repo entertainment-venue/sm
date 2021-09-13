@@ -45,7 +45,7 @@ type eventQueue struct {
 	curEvs map[string]struct{}        // 防止同一service在queue中有重复任务
 }
 
-func newEventQueue(ctx context.Context) *eventQueue {
+func newEventQueue(_ context.Context) *eventQueue {
 	eq := eventQueue{
 		buffer:  make(map[string]chan *loadEvent),
 		stopper: &apputil.GoroutineStopper{},
@@ -100,12 +100,7 @@ func (eq *eventQueue) push(item *Item, checkDup bool) {
 
 		eq.stopper.Wrap(
 			func(ctx context.Context) {
-				apputil.TickerLoop(ctx, 1*time.Second, fmt.Sprintf(""),
-					func(ctx context.Context) error {
-						eq.evLoop(ctx, ev.Service, ch)
-						return nil
-					},
-				)
+				eq.evLoop(ctx, ev.Service, ch)
 			})
 	}
 
