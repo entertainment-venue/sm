@@ -18,20 +18,19 @@ type GoroutineStopper struct {
 	wg sync.WaitGroup
 }
 
-type StopperFunc func(ctx context.Context) error
+type StopperFunc func(ctx context.Context)
 
-func (stopper *GoroutineStopper) Wrap(ctx context.Context, fn StopperFunc) {
+func (stopper *GoroutineStopper) Wrap(fn StopperFunc) {
 	stopper.once.Do(func() {
-		stopper.ctx, stopper.cancel = context.WithCancel(ctx)
+		// 不需要外部ctx
+		stopper.ctx, stopper.cancel = context.WithCancel(context.TODO())
 	})
 
 	stopper.wg.Add(1)
 	go func(fn StopperFunc, ctx context.Context) {
 		defer stopper.wg.Done()
 
-		if err := fn(ctx); err != nil {
-			panic(err)
-		}
+		fn(ctx)
 	}(fn, stopper.ctx)
 }
 
