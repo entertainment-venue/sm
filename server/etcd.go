@@ -27,11 +27,6 @@ func (w *etcdWrapper) nodeAppShard(service string) string {
 	return fmt.Sprintf("%s/serverShard/", apputil.EtcdPathAppPrefix(service))
 }
 
-// /borderland/app/proxy/serverShard/业务自己定义的shard id
-// func (w *etcdWrapper) nodeAppShardId(service, id string) string {
-// 	return fmt.Sprintf("%s/serverShard/%s", apputil.EtcdPathAppPrefix(service), id)
-// }
-
 func (w *etcdWrapper) nodeAppShardHb(service string) string {
 	return fmt.Sprintf("%s/shardhb/", apputil.EtcdPathAppPrefix(service))
 }

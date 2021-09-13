@@ -3,11 +3,11 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"github.com/entertainment-venue/borderland/pkg/apputil"
 	"net/http"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
+	"github.com/entertainment-venue/borderland/pkg/apputil"
 	"github.com/gin-gonic/gin"
 )
 
