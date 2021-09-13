@@ -2,14 +2,13 @@ package apputil
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/entertainment-venue/borderland/pkg/logutil"
 )
 
-func tickerLoop(ctx context.Context, duration time.Duration, exitMsg string, fn func(ctx context.Context) error) {
+func TickerLoop(ctx context.Context, duration time.Duration, exitMsg string, fn func(ctx context.Context) error) {
 	ticker := time.Tick(duration)
 	for {
 		select {
@@ -24,9 +23,7 @@ func tickerLoop(ctx context.Context, duration time.Duration, exitMsg string, fn 
 	}
 }
 
-func watchLoop(ctx context.Context, client *clientv3.Client, node string, exitMsg string, fn func(ctx context.Context, ev *clientv3.Event) error, wg *sync.WaitGroup) {
-	defer wg.Done()
-
+func WatchLoop(ctx context.Context, client *clientv3.Client, node string, exitMsg string, fn func(ctx context.Context, ev *clientv3.Event) error) {
 	var opts []clientv3.OpOption
 	opts = append(opts, clientv3.WithPrefix())
 

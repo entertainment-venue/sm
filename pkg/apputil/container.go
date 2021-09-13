@@ -100,7 +100,7 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	container.Stopper.Wrap(
 		ops.ctx,
 		func(ctx context.Context) error {
-			tickerLoop(ctx, 3*time.Second, "Container upload exit", container.UploadSysLoad)
+			TickerLoop(ctx, 3*time.Second, "Container upload exit", container.UploadSysLoad)
 			return nil
 		},
 	)
