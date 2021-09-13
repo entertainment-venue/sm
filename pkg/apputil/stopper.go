@@ -20,7 +20,7 @@ type GoroutineStopper struct {
 
 type StopperFunc func(ctx context.Context) error
 
-func (stopper *GoroutineStopper) Run(ctx context.Context, fn StopperFunc) {
+func (stopper *GoroutineStopper) Wrap(ctx context.Context, fn StopperFunc) {
 	stopper.once.Do(func() {
 		stopper.ctx, stopper.cancel = context.WithCancel(ctx)
 	})
