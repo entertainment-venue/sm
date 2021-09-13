@@ -6,6 +6,7 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
+	"github.com/entertainment-venue/borderland/pkg/apputil"
 	"github.com/pkg/errors"
 )
 
@@ -44,42 +45,40 @@ func (s *shardSpec) String() string {
 	return string(b)
 }
 
-// shard需要实现该接口，帮助理解程序设计，不会有app实现多种doer
-type Sharder interface {
-	Closer
+type shardLoad struct {
+	RPS     int `json:"rps"`
+	AvgTime int `json:"avgTime"`
+}
 
-	// 作为被管理的shard的角色，上传load
-	LoadUploader
+func (s *shardLoad) String() string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
 
 type shard struct {
-	goroutineStopper
+	stopper *apputil.GoroutineStopper
 
-	id string
+	// 特定于sm业务的分片，service是sm集群的name
+	id, service string
 
-	// 被管理app的service name
-	service string
+	// serverContainer 是真实的资源，etcd client、http client
+	sc *serverContainer
 
-	// container 是真实的资源，etcd client、http client
-	ctr *container
-
-	// shard 保活手段和 container 分开，把load的上传和lease绑定起来，两方面
+	// shard 保活手段和 serverContainer 分开，把load的上传和lease绑定起来，两方面
 	// 1 自己周期hb，机制没有session中的keepalive健全
 	// 2 shard 掉线后，load数据自动清理
 	session *concurrency.Session
 
-	mw MaintenanceWorker
+	mtWorker *maintenanceWorker
 
-	stat *shardStat
+	stat *shardLoad
 }
 
-func newShard(id string, ctr *container) (*shard, error) {
-	s := shard{ctr: ctr}
-	s.id = id
-	s.ctx, s.cancel = context.WithCancel(context.Background())
+func startShard(ctx context.Context, id string, sc *serverContainer) (*shard, error) {
+	s := shard{sc: sc}
 
 	var err error
-	s.session, err = concurrency.NewSession(s.ctr.ew.EtcdClient.Client, concurrency.WithTTL(defaultSessionTimeout))
+	s.session, err = concurrency.NewSession(s.sc.Client.Client, concurrency.WithTTL(defaultSessionTimeout))
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -94,7 +93,7 @@ func newShard(id string, ctr *container) (*shard, error) {
 	}()
 
 	// 获取shard的任务信息，在sm场景下，shard中包含所负责的app的service信息
-	resp, err := s.ctr.ew.EtcdClient.GetKV(s.ctx, s.ctr.ew.nodeAppShardId(s.ctr.service, s.id), nil)
+	resp, err := s.sc.Client.GetKV(ctx, s.sc.ew.nodeAppShardId(s.sc.service, s.id), nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -112,55 +111,46 @@ func newShard(id string, ctr *container) (*shard, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
+
+	s.id = id
 	s.service = task.GovernedService
 
 	// shard和op的数量相关
-	if err := s.ctr.TryNewOp(s.service); err != nil {
+	if err := s.sc.NewOp(s.service); err != nil {
 		return nil, errors.Wrap(err, "")
 	}
 
-	s.mw = newMaintenanceWorker(s.ctr, s.service)
+	s.mtWorker = newMaintenanceWorker(s.sc, s.service)
 
-	s.wg.Add(1)
-	go s.UploadLoad()
+	s.stopper.Wrap(
+		func(ctx context.Context) {
+			fn := func(ctx context.Context) error {
+				ss := shardLoad{}
+
+				// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
+				k := s.sc.ew.nodeAppShardHbId(s.sc.service, s.id)
+				if _, err := s.sc.Client.Put(ctx, k, ss.String(), clientv3.WithLease(s.session.Lease())); err != nil {
+					return errors.Wrap(err, "")
+				}
+				return nil
+			}
+
+			apputil.TickerLoop(ctx, defaultShardLoopInterval, "heartbeat exit", fn)
+		},
+	)
 
 	// 检查app的分配和app shard上传的负载是否健康
-	s.mw.Start()
+	s.mtWorker.Start()
 
 	return &s, nil
 }
 
 func (s *shard) Close() {
-	s.mw.Close()
+	// 关闭自己孩子的goroutine
+	s.mtWorker.Close()
 
-	s.cancel()
-	s.wg.Wait()
-	Logger.Printf("shard %s for service %s stopped", s.id, s.ctr.service)
-}
+	// 关闭自己的
+	s.stopper.Close()
 
-type shardStat struct {
-	RPS     int `json:"rps"`
-	AvgTime int `json:"avgTime"`
-}
-
-func (s *shardStat) String() string {
-	b, _ := json.Marshal(s)
-	return string(b)
-}
-
-func (s *shard) UploadLoad() {
-	defer s.wg.Done()
-
-	fn := func(ctx context.Context) error {
-		ss := shardStat{}
-
-		// 参考etcd clientv3库中的election.go，把负载数据与lease绑定在一起，并利用session.go做liveness保持
-		k := s.ctr.ew.nodeAppShardHbId(s.ctr.service, s.id)
-		if _, err := s.ctr.ew.EtcdClient.Put(s.ctx, k, ss.String(), clientv3.WithLease(s.session.Lease())); err != nil {
-			return errors.Wrap(err, "")
-		}
-		return nil
-	}
-
-	tickerLoop(s.ctx, defaultShardLoopInterval, "heartbeat exit", fn, &s.wg)
+	Logger.Printf("shard %s for service %s stopped", s.id, s.sc.service)
 }

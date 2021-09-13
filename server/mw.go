@@ -9,98 +9,76 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
+	"github.com/entertainment-venue/borderland/pkg/apputil"
 	"github.com/pkg/errors"
 )
 
-// 抽离出的目的是发现leader和普通的sm shard都具备相似的能力，代码基本一致
-type MaintenanceWorker interface {
-	Starter
-	Closer
-
-	// 监控sm集群本身以及各接入业务app的shard负载
-	ShardLoadLoop()
-
-	// 负载的另一个维度，container，相比shard本身的load，在初期更容易理解，也更容易构建
-	ContainerLoadLoop()
-
-	// 监控sm集群本身以及各接入业务app的shard分配是否合理
-	ShardAllocateLoop()
-}
-
 // 管理某个sm app的shard
 type maintenanceWorker struct {
-	goroutineStopper
+	parent *serverContainer
 
+	ctx context.Context
+
+	stopper *apputil.GoroutineStopper
+
+	// 从属于leader或者sm shard，service和container不一定一样
 	service string
-
-	ctr *container
 }
 
-func newMaintenanceWorker(ctr *container, service string) *maintenanceWorker {
-	var mw maintenanceWorker
-	mw.ctx, mw.cancel = context.WithCancel(context.Background())
-	mw.ctr = ctr
-	mw.service = service
-	return &mw
+func newMaintenanceWorker(container *serverContainer, service string) *maintenanceWorker {
+	return &maintenanceWorker{parent: container, service: service, stopper: &apputil.GoroutineStopper{}}
 }
 
 func (w *maintenanceWorker) Start() {
-	w.wg.Add(3)
-	go w.ShardAllocateLoop()
-	go w.ShardLoadLoop()
-	go w.ContainerLoadLoop()
+	w.stopper.Wrap(
+		func(ctx context.Context) {
+			apputil.TickerLoop(
+				w.ctx,
+				defaultShardLoopInterval,
+				fmt.Sprintf("[mtWorker] service %s ShardAllocateLoop exit", w.service),
+				func(ctx context.Context) error {
+					return w.allocateChecker(ctx, w.parent.ew, w.service, w.parent.eq)
+				},
+			)
+		})
+
+	w.stopper.Wrap(
+		func(ctx context.Context) {
+			apputil.WatchLoop(
+				w.ctx,
+				w.parent.Client.Client,
+				w.parent.ew.nodeAppShardHb(w.service),
+				fmt.Sprintf("[mtWorker] service %s ShardLoadLoop exit", w.service),
+				func(ctx context.Context, ev *clientv3.Event) error {
+					return shardLoadChecker(ctx, w.service, w.parent.eq, ev)
+				},
+			)
+		})
+
+	w.stopper.Wrap(
+		func(ctx context.Context) {
+			apputil.WatchLoop(
+				w.ctx,
+				w.parent.Client.Client,
+				w.parent.ew.nodeAppContainerHb(w.service),
+				fmt.Sprintf("[mtWorker] service %s ContainerLoadLoop exit", w.service),
+				func(ctx context.Context, ev *clientv3.Event) error {
+					return containerLoadChecker(ctx, w.service, w.parent.eq, ev)
+				},
+			)
+		})
 }
 
 func (w *maintenanceWorker) Close() {
-	w.cancel()
-	w.wg.Wait()
-	Logger.Printf("maintenanceWorker for service %s stopped", w.ctr.service)
+	w.stopper.Close()
+	Logger.Printf("maintenanceWorker for service %s stopped", w.parent.service)
 }
 
-func (w *maintenanceWorker) ShardAllocateLoop() {
-	tickerLoop(
-		w.ctx,
-		defaultShardLoopInterval,
-		fmt.Sprintf("[mw] service %s ShardAllocateLoop exit", w.service),
-		func(ctx context.Context) error {
-			return allocateChecker(ctx, w.ctr.ew, w.service, w.ctr.eq)
-		},
-		&w.wg,
-	)
-}
-
-func (w *maintenanceWorker) ShardLoadLoop() {
-	watchLoop(
-		w.ctx,
-		w.ctr.ew,
-		w.ctr.ew.nodeAppShardHb(w.service),
-		fmt.Sprintf("[mw] service %s ShardLoadLoop exit", w.service),
-		func(ctx context.Context, ev *clientv3.Event) error {
-			return shardLoadChecker(ctx, w.service, w.ctr.eq, ev)
-		},
-		&w.wg,
-	)
-}
-
-func (w *maintenanceWorker) ContainerLoadLoop() {
-	watchLoop(
-		w.ctx,
-		w.ctr.ew,
-		w.ctr.ew.nodeAppContainerHb(w.service),
-		fmt.Sprintf("[mw] service %s ContainerLoadLoop exit", w.service),
-		func(ctx context.Context, ev *clientv3.Event) error {
-			return containerLoadChecker(ctx, w.service, w.ctr.eq, ev)
-		},
-		&w.wg,
-	)
-
-}
-
-// 1 container 的增加/减少是优先级最高，目前可能涉及大量shard move
+// 1 serverContainer 的增加/减少是优先级最高，目前可能涉及大量shard move
 // 2 shard 被漏掉作为container检测的补充，最后校验，这种情况只涉及到漏掉的shard任务下发下去
-func allocateChecker(ctx context.Context, ew *etcdWrapper, service string, eq *eventQueue) error {
+func (w *maintenanceWorker) allocateChecker(ctx context.Context, ew *etcdWrapper, service string, eq *eventQueue) error {
 	// 获取当前的shard分配关系
-	fixShardIdAndValue, err := ew.EtcdClient.GetKVs(ctx, ew.nodeAppShard(service))
+	fixShardIdAndValue, err := w.parent.Client.GetKVs(ctx, ew.nodeAppShard(service))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -117,7 +95,7 @@ func allocateChecker(ctx context.Context, ew *etcdWrapper, service string, eq *e
 
 	// 现有存活containers
 	var surviveContainerIdAndValue ArmorMap
-	surviveContainerIdAndValue, err = ew.EtcdClient.GetKVs(ctx, ew.nodeAppHbContainer(service))
+	surviveContainerIdAndValue, err = w.parent.Client.GetKVs(ctx, ew.nodeAppHbContainer(service))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -139,9 +117,9 @@ func allocateChecker(ctx context.Context, ew *etcdWrapper, service string, eq *e
 	}
 	Logger.Printf("[utils] service %s containerChanged false", service)
 
-	// container hb和固定分配关系一致，下面检查shard存活
+	// serverContainer hb和固定分配关系一致，下面检查shard存活
 	var surviveShardIdAndValue ArmorMap
-	surviveShardIdAndValue, err = ew.EtcdClient.GetKVs(ctx, ew.nodeAppShardHb(service))
+	surviveShardIdAndValue, err = w.parent.Client.GetKVs(ctx, ew.nodeAppShardHb(service))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}

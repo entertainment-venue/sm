@@ -11,7 +11,7 @@ import (
 )
 
 type containerApi struct {
-	cr *container
+	cr *serverContainer
 }
 
 type shardOpReq struct {
@@ -82,7 +82,7 @@ func (g *containerApi) GinAppAddSpec(c *gin.Context) {
 	nodes = append(nodes, g.cr.ew.nodeAppTask(req.Service))
 	values = append(values, req.String())
 	values = append(values, "")
-	if err := g.cr.ew.EtcdClient.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
+	if err := g.cr.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
 		Logger.Printf("err: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -124,7 +124,7 @@ func (g *containerApi) GinAppAddShard(c *gin.Context) {
 	// 区分更新和添加
 	// 如果是添加，等待负责该app的shard做探测即可
 	// 如果是更新，shard是不允许更新的，这种更新的相当于shard工作内容的调整
-	if err := g.cr.ew.EtcdClient.CreateAndGet(context.Background(), []string{g.cr.ew.nodeAppShardId(req.Service, req.ShardId)}, []string{spec.String()}, clientv3.NoLease); err != nil {
+	if err := g.cr.Client.CreateAndGet(context.Background(), []string{g.cr.ew.nodeAppShardId(req.Service, req.ShardId)}, []string{spec.String()}, clientv3.NoLease); err != nil {
 		Logger.Printf("err: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

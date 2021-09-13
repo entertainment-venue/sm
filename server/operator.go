@@ -11,6 +11,7 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/mvcc/mvccpb"
+	"github.com/entertainment-venue/borderland/pkg/apputil"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 )
@@ -41,32 +42,24 @@ type moveAction struct {
 	AllowDrop bool `json:"allowDrop"`
 }
 
-type Operator interface {
-	Closer
-
-	MoveLoop()
-	Scale()
-}
-
 // container和shard上报两个维度的load，leader(sm)或者shard(app)探测到异常，会发布任务出来，operator就是这个任务的执行者
 type operator struct {
-	goroutineStopper
+	stopper *apputil.GoroutineStopper
 
 	service string
 
-	ctr        *container
+	sc         *serverContainer
 	httpClient *http.Client
 	prevValue  string
 }
 
-func newOperator(cr *container, service string) (*operator, error) {
-	op := operator{ctr: cr}
-	op.ctx, op.cancel = context.WithCancel(context.Background())
-	op.service = service
+func newOperator(sc *serverContainer, service string) (*operator, error) {
+	op := operator{service: service, sc: sc, httpClient: newHttpClient()}
 
-	op.httpClient = newHttpClient()
-
-	go op.MoveLoop()
+	op.stopper.Wrap(
+		func(ctx context.Context) {
+			op.MoveLoop(ctx)
+		})
 
 	// TODO scale
 
@@ -74,13 +67,14 @@ func newOperator(cr *container, service string) (*operator, error) {
 }
 
 func (o *operator) Close() {
-	o.cancel()
-	o.wg.Wait()
-	Logger.Printf("[operator] stopped for service %s", o.ctr.service)
+	if o.stopper != nil {
+		o.stopper.Close()
+	}
+	Logger.Printf("[operator] stopped for service %s", o.sc.service)
 }
 
 // sm的shard需要能为接入app提供shard移动的能力，且保证每个任务被执行掉，所以任务会绑定在shard，防止sm的shard移动导致任务没人干
-func (o *operator) MoveLoop() {
+func (o *operator) MoveLoop(ctx context.Context) {
 	fn := func(ctx context.Context, ev *clientv3.Event) error {
 		if ev.Type == mvccpb.DELETE {
 			return nil
@@ -91,19 +85,19 @@ func (o *operator) MoveLoop() {
 			return nil
 		}
 
-		if err := o.move(ev.Kv.Value); err != nil {
+		if err := o.move(ctx, ev.Kv.Value); err != nil {
 			return errors.Wrap(err, "")
 		}
 
 		return nil
 	}
 
-	key := o.ctr.ew.nodeAppTask(o.ctr.service)
+	key := o.sc.ew.nodeAppTask(o.sc.service)
 
 	// Move只有对特定app负责的operator
 	// 当前如果存在任务，直接开始执行
 firstMove:
-	resp, err := o.ctr.ew.EtcdClient.GetKV(o.ctx, key, []clientv3.OpOption{})
+	resp, err := o.sc.Client.GetKV(ctx, key, []clientv3.OpOption{})
 	if err != nil {
 		Logger.Printf("err: %v", err)
 		time.Sleep(defaultSleepTimeout)
@@ -112,7 +106,7 @@ firstMove:
 	if resp.Count > 0 {
 		s := string(resp.Kvs[0].Value)
 		if s != "" {
-			if err := o.move(resp.Kvs[0].Value); err != nil {
+			if err := o.move(ctx, resp.Kvs[0].Value); err != nil {
 				Logger.Printf("err: %v", err)
 				time.Sleep(defaultSleepTimeout)
 				goto firstMove
@@ -120,11 +114,11 @@ firstMove:
 		}
 	}
 
-	watchLoop(o.ctx, o.ctr.ew, key, "[operator] service %s MoveLoop exit", fn, &o.wg)
+	apputil.WatchLoop(ctx, o.sc.Client.Client, key, "[operator] service %s MoveLoop exit", fn)
 }
 
 // 保证at least once
-func (o *operator) move(value []byte) error {
+func (o *operator) move(ctx context.Context, value []byte) error {
 	var mal moveActionList
 	if err := json.Unmarshal(value, &mal); err != nil {
 		Logger.Printf("[operator] Unexpected err: %v", err)
@@ -139,7 +133,7 @@ move:
 	for _, ma := range mal {
 		ma := ma
 		g.Go(func() error {
-			return o.dropAndAdd(ma)
+			return o.dropAndAdd(ctx, ma)
 		})
 	}
 	if err := g.Wait(); err != nil {
@@ -152,8 +146,8 @@ move:
 
 	// 利用etcd tx清空任务节点，任务节点已经空就停止
 ack:
-	key := o.ctr.ew.nodeAppTask(o.ctr.service)
-	if _, err := o.ctr.ew.EtcdClient.CompareAndSwap(o.ctx, key, string(value), "", -1); err != nil {
+	key := o.sc.ew.nodeAppTask(o.sc.service)
+	if _, err := o.sc.Client.CompareAndSwap(ctx, key, string(value), "", -1); err != nil {
 		// 节点数据被破坏，需要人工介入
 		Logger.Printf("err: %v", err)
 		time.Sleep(defaultSleepTimeout)
@@ -163,7 +157,7 @@ ack:
 	return nil
 }
 
-func (o *operator) dropAndAdd(ma *moveAction) error {
+func (o *operator) dropAndAdd(ctx context.Context, ma *moveAction) error {
 	var (
 		onlyAdd  bool
 		onlyDrop bool
@@ -187,7 +181,7 @@ func (o *operator) dropAndAdd(ma *moveAction) error {
 
 			// 只在leader竞选成功场景下会下发分配指令，没有Drop动作，这里允许放弃当前动作，后续有shardAllocateLoop和shardLoadLoop兜底
 			// 如果下发失败，就必须去掉分配关系，以便shardAllocateLoop拿到的分配关系是比较真实的（这块即便下发都成功，shard可能因为异常停止工作）
-			if err := o.remove(ma.ShardId, ma.Service); err != nil {
+			if err := o.remove(ctx, ma.ShardId, ma.Service); err != nil {
 				return errors.Wrap(err, "")
 			}
 			return nil
@@ -196,7 +190,7 @@ func (o *operator) dropAndAdd(ma *moveAction) error {
 		onlyDrop = true
 
 		// 没有Add节点证明要把shard清除掉
-		if err := o.ctr.ew.EtcdClient.DelKV(o.ctx, o.ctr.ew.nodeAppShardId(ma.Service, ma.ShardId)); err != nil {
+		if err := o.sc.Client.DelKV(ctx, o.sc.ew.nodeAppShardId(ma.Service, ma.ShardId)); err != nil {
 			return errors.Wrap(err, "")
 		}
 	}
@@ -214,7 +208,7 @@ func (o *operator) send(id string, endpoint string, action string) error {
 		return errors.Wrap(err, "")
 	}
 
-	urlStr := fmt.Sprintf("http://%s/borderland/container/%s-shard", endpoint, action)
+	urlStr := fmt.Sprintf("http://%s/borderland/serverContainer/%s-shard", endpoint, action)
 	req, err := http.NewRequest(http.MethodPost, urlStr, bytes.NewBuffer(b))
 	if err != nil {
 		return errors.Wrap(err, "")
@@ -233,9 +227,9 @@ func (o *operator) send(id string, endpoint string, action string) error {
 	return nil
 }
 
-func (o *operator) remove(id, service string) error {
-	key := o.ctr.ew.nodeAppShardId(service, id)
-	resp, err := o.ctr.ew.EtcdClient.GetKV(o.ctx, key, nil)
+func (o *operator) remove(ctx context.Context, id, service string) error {
+	key := o.sc.ew.nodeAppShardId(service, id)
+	resp, err := o.sc.Client.GetKV(ctx, key, nil)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -252,7 +246,7 @@ func (o *operator) remove(id, service string) error {
 		return nil
 	}
 	ss.ContainerId = ""
-	if _, err := o.ctr.ew.EtcdClient.CompareAndSwap(o.ctx, key, string(resp.Kvs[0].Value), ss.String(), -1); err != nil {
+	if _, err := o.sc.Client.CompareAndSwap(ctx, key, string(resp.Kvs[0].Value), ss.String(), -1); err != nil {
 		return errors.Wrap(err, "")
 	}
 	return nil

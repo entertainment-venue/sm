@@ -1,13 +1,13 @@
 package server
 
 import (
-	"fmt"
+	"context"
 	"testing"
 	"time"
 )
 
 func Test_newOperator(t *testing.T) {
-	ctr, err := newContainer("127.0.0.1:8888", "foo.bar", []string{"127.0.0.1:2379"})
+	ctr, err := newContainer(context.TODO(), "127.0.0.1:8888", "foo.bar", []string{"127.0.0.1:2379"})
 	if err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
@@ -23,38 +23,33 @@ func Test_newOperator(t *testing.T) {
 		time.Sleep(60 * time.Second)
 		op.Close()
 	}()
-
-	select {
-	case <-op.ctx.Done():
-		fmt.Printf("exit")
-	}
 }
 
 func Test_remove(t *testing.T) {
-	ctr, err := newContainer("127.0.0.1:8888", "foo.bar", []string{"127.0.0.1:2379"})
+	ctr, err := newContainer(context.TODO(), "127.0.0.1:8888", "foo.bar", []string{"127.0.0.1:2379"})
 	if err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
 	}
 
 	o := operator{}
-	o.ctr = ctr
+	o.sc = ctr
 
-	if err := o.remove("1", "foo.bar"); err != nil {
+	if err := o.remove(context.TODO(), "1", "foo.bar"); err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
 	}
 }
 
 func Test_dropAndAdd(t *testing.T) {
-	ctr, err := newContainer("127.0.0.1:8888", "foo.bar", []string{"127.0.0.1:2379"})
+	ctr, err := newContainer(context.TODO(), "127.0.0.1:8888", "foo.bar", []string{"127.0.0.1:2379"})
 	if err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
 	}
 
 	o := operator{}
-	o.ctr = ctr
+	o.sc = ctr
 	o.httpClient = newHttpClient()
 
 	// ma := moveAction{
@@ -70,5 +65,5 @@ func Test_dropAndAdd(t *testing.T) {
 		AddEndpoint: "127.0.0.1:8888",
 		AllowDrop:   true,
 	}
-	o.dropAndAdd(&ma)
+	o.dropAndAdd(context.TODO(), &ma)
 }

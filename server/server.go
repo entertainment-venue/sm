@@ -18,11 +18,6 @@ type StdLogger interface {
 
 var Logger StdLogger = log.New(os.Stdout, "[BORDERLAND] ", log.LstdFlags|log.Lshortfile)
 
-type LoadUploader interface {
-	// 上报sm各shard的load信息，提供给leader用于做计算
-	UploadLoad()
-}
-
 type Starter interface {
 	Start()
 }
@@ -73,7 +68,7 @@ func WithAddr(v string) BorderlandOptionsFunc {
 	}
 }
 
-func Run(_ context.Context, fn ...BorderlandOptionsFunc) error {
+func Run(ctx context.Context, fn ...BorderlandOptionsFunc) error {
 	opts := defaultOpts
 	for _, f := range fn {
 		f(&opts)
@@ -83,7 +78,7 @@ func Run(_ context.Context, fn ...BorderlandOptionsFunc) error {
 		return errors.Wrap(errParam, "")
 	}
 
-	cr, err := newContainer(opts.id, opts.service, opts.endpoints)
+	cr, err := newContainer(ctx, opts.id, opts.service, opts.endpoints)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -93,7 +88,7 @@ func Run(_ context.Context, fn ...BorderlandOptionsFunc) error {
 	r := gin.Default()
 
 	// 支持borderland内部shard移动
-	containerGroup := r.Group("/borderland/container")
+	containerGroup := r.Group("/borderland/serverContainer")
 	{
 		containerGroup.POST("/drop-shard", api.GinContainerDropShard)
 

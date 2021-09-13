@@ -4,8 +4,11 @@ import (
 	"container/heap"
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
+
+	"github.com/entertainment-venue/borderland/pkg/apputil"
 )
 
 const defaultEventChanLength = 32
@@ -32,33 +35,41 @@ func (i *loadEvent) String() string {
 }
 
 type eventQueue struct {
-	goroutineStopper
+	stopper *apputil.GoroutineStopper
 
 	// 延迟队列: 不能立即处理的先放这里，启动单独的goroutine把event根据时间拿出来，再放到异步队列中
 	pq PriorityQueue
 
-	mu        sync.Mutex
-	evChan    map[string]chan *loadEvent // 区分service给chan，每个worker给一个goroutine
-	curEvList map[string]struct{}        // 防止同一service在queue中有重复任务
+	mu     sync.Mutex
+	buffer map[string]chan *loadEvent // 区分service给chan，每个worker给一个goroutine
+	curEvs map[string]struct{}        // 防止同一service在queue中有重复任务
 }
 
 func newEventQueue(ctx context.Context) *eventQueue {
-	eq := eventQueue{}
-
-	eq.ctx, eq.cancel = context.WithCancel(ctx)
-	eq.evChan = make(map[string]chan *loadEvent)
+	eq := eventQueue{
+		buffer:  make(map[string]chan *loadEvent),
+		stopper: &apputil.GoroutineStopper{},
+	}
 
 	heap.Init(&eq.pq)
 
-	eq.wg.Add(1)
-	go eq.pqLoop()
-
+	eq.stopper.Wrap(
+		func(ctx context.Context) {
+			apputil.TickerLoop(
+				ctx, 1*time.Second, fmt.Sprintf(""),
+				func(ctx context.Context) error {
+					eq.tryPopAndPush()
+					return nil
+				},
+			)
+		})
 	return &eq
 }
 
 func (eq *eventQueue) Close() {
-	eq.cancel()
-	eq.wg.Wait()
+	if eq.stopper != nil {
+		eq.stopper.Close()
+	}
 }
 
 func (eq *eventQueue) push(item *Item, checkDup bool) {
@@ -72,22 +83,30 @@ func (eq *eventQueue) push(item *Item, checkDup bool) {
 	}
 
 	if checkDup {
-		if _, ok := eq.curEvList[ev.Service]; ok {
+		if _, ok := eq.curEvs[ev.Service]; ok {
 			Logger.Printf("[eq] service %s already exist in queue", ev.Service)
 			eq.mu.Unlock()
 			return
 		}
-		eq.curEvList[ev.Service] = struct{}{}
+		eq.curEvs[ev.Service] = struct{}{}
 	}
 
-	ch, ok := eq.evChan[ev.Service]
+	ch, ok := eq.buffer[ev.Service]
 	if !ok {
 		ch = make(chan *loadEvent, defaultEventChanLength)
-		eq.evChan[ev.Service] = ch
+		eq.buffer[ev.Service] = ch
 
 		Logger.Printf("[eq] evLoop started for service %s", ev.Service)
-		eq.wg.Add(1)
-		go eq.evLoop(ev.Service, ch)
+
+		eq.stopper.Wrap(
+			func(ctx context.Context) {
+				apputil.TickerLoop(ctx, 1*time.Second, fmt.Sprintf(""),
+					func(ctx context.Context) error {
+						eq.evLoop(ctx, ev.Service, ch)
+						return nil
+					},
+				)
+			})
 	}
 
 	switch ev.Type {
@@ -103,44 +122,31 @@ func (eq *eventQueue) push(item *Item, checkDup bool) {
 	}
 }
 
-func (eq *eventQueue) pqLoop() {
-	defer eq.wg.Done()
-
-	ticker := time.Tick(1 * time.Second)
-	for {
-		select {
-		case <-eq.ctx.Done():
-			Logger.Println("[eq] pqLoop exit")
-			return
-		case <-ticker:
-		popASAP:
-			v := heap.Pop(&eq.pq)
-			if v == nil {
-				continue
-			}
-			item := v.(*Item)
-
-			if time.Now().Unix() < item.Priority {
-				// TODO 重复入队的代价在heap场景比较大，需要优化掉
-				heap.Push(&eq.pq, item)
-				continue
-			}
-			eq.push(item, false)
-
-			// 存在需要处理的事件，立即pop，减小延迟
-			goto popASAP
-		}
+func (eq *eventQueue) tryPopAndPush() {
+popASAP:
+	v := heap.Pop(&eq.pq)
+	if v == nil {
+		return
 	}
+	item := v.(*Item)
+
+	if time.Now().Unix() < item.Priority {
+		// TODO 重复入队的代价在heap场景比较大，需要优化掉
+		heap.Push(&eq.pq, item)
+		return
+	}
+	eq.push(item, false)
+
+	// 存在需要处理的事件，立即pop，减小延迟
+	goto popASAP
 }
 
-func (eq *eventQueue) evLoop(service string, ch chan *loadEvent) {
-	defer eq.wg.Done()
-
+func (eq *eventQueue) evLoop(ctx context.Context, service string, ch chan *loadEvent) {
 	// worker只启动一个，用于计算，算法本身可以利用多核能力
 	for {
 		var ev *loadEvent
 		select {
-		case <-eq.ctx.Done():
+		case <-ctx.Done():
 			Logger.Printf("[eq] evLoop for service [%s] exit", service)
 			return
 		case ev = <-ch:
