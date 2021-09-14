@@ -7,8 +7,8 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
-	"github.com/entertainment-venue/borderland/pkg/etcdutil"
-	"github.com/entertainment-venue/borderland/pkg/logutil"
+	"github.com/entertainment-venue/sm/pkg/etcdutil"
+	"github.com/entertainment-venue/sm/pkg/logutil"
 	"github.com/pkg/errors"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"

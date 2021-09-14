@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/entertainment-venue/borderland/pkg/logutil"
+	"github.com/entertainment-venue/sm/pkg/logutil"
 )
 
 func TickerLoop(ctx context.Context, duration time.Duration, exitMsg string, fn func(ctx context.Context) error) {

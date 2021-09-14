@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/entertainment-venue/borderland/pkg/etcdutil"
+	"github.com/entertainment-venue/sm/pkg/etcdutil"
 )
 
 func Test_tickerLoop(t *testing.T) {

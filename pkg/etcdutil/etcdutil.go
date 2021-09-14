@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/entertainment-venue/borderland/pkg/logutil"
+	"github.com/entertainment-venue/sm/pkg/logutil"
 	"github.com/pkg/errors"
 )
 

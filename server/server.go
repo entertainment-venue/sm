@@ -108,8 +108,8 @@ func Run(fn ...ServerOption) error {
 
 	api := containerApi{sc}
 	routeAndHandler := make(map[string]func(c *gin.Context))
-	routeAndHandler["/borderland/admin/add-spec"] = api.GinAppAddSpec
-	routeAndHandler["/borderland/admin/add-shard"] = api.GinAppAddShard
+	routeAndHandler["/sm/admin/add-spec"] = api.GinAppAddSpec
+	routeAndHandler["/sm/admin/add-shard"] = api.GinAppAddShard
 
 	if err := apputil.NewShardServer(
 		apputil.ShardServerWithAddr(opts.addr),

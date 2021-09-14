@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 
-	"github.com/entertainment-venue/borderland/server"
+	"github.com/entertainment-venue/sm/server"
 )
 
 func main() {
