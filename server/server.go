@@ -108,7 +108,7 @@ func Run(fn ...ServerOption) error {
 		return errors.Wrap(err, "")
 	}
 
-	sc, err := newServerContainer(opts.ctx, opts.id, opts.service, opts.endpoints)
+	sc, err := newServerContainer(opts.ctx, opts.id, opts.service)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}

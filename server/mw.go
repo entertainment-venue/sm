@@ -215,9 +215,9 @@ func shardLoadChecker(_ context.Context, service string, eq *eventQueue, ev *cli
 
 	var item Item
 	if ev.IsModify() {
-		qev.Type = evTypeShardUpdate
+		qev.Type = tShardUpdate
 	} else {
-		qev.Type = evTypeShardDel
+		qev.Type = tShardDel
 
 		// 3s是给服务器container重启的时间buffer
 		item.Priority = start.Add(3 * time.Second).Unix()
@@ -238,9 +238,9 @@ func containerLoadChecker(_ context.Context, service string, eq *eventQueue, ev 
 
 	var item Item
 	if ev.IsModify() {
-		qev.Type = evTypeContainerUpdate
+		qev.Type = tContainerUpdate
 	} else {
-		qev.Type = evTypeContainerDel
+		qev.Type = tContainerDel
 		// 3s是给服务器container重启的事件
 		item.Priority = start.Add(3 * time.Second).Unix()
 	}

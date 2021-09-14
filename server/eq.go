@@ -30,10 +30,10 @@ const defaultEventChanLength = 32
 type eventType int
 
 const (
-	evTypeShardUpdate eventType = iota
-	evTypeShardDel
-	evTypeContainerUpdate
-	evTypeContainerDel
+	tShardUpdate eventType = iota + 1
+	tShardDel
+	tContainerUpdate
+	tContainerDel
 )
 
 type loadEvent struct {
@@ -119,9 +119,9 @@ func (eq *eventQueue) push(item *Item, checkDup bool) {
 	}
 
 	switch ev.Type {
-	case evTypeShardUpdate, evTypeContainerUpdate:
+	case tShardUpdate, tContainerUpdate:
 		ch <- &ev
-	case evTypeShardDel, evTypeContainerDel:
+	case tShardDel, tContainerDel:
 		if time.Now().Unix() >= item.Priority {
 			ch <- &ev
 			return
@@ -165,13 +165,13 @@ func (eq *eventQueue) evLoop(ctx context.Context, service string, ch chan *loadE
 
 		// TODO 同一service需要保证只有一个goroutine在计算，否则没有意义
 		switch ev.Type {
-		case evTypeShardUpdate:
+		case tShardUpdate:
 			// TODO 解析load，确定shard的load超出阈值，触发shard move
-		case evTypeShardDel:
+		case tShardDel:
 			// TODO 检查shard是否都处于有container的状态
-		case evTypeContainerUpdate:
+		case tContainerUpdate:
 			// TODO
-		case evTypeContainerDel:
+		case tContainerDel:
 			// TODO
 		}
 	}

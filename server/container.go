@@ -46,11 +46,17 @@ type serverContainer struct {
 	leader *leader
 }
 
-func newServerContainer(ctx context.Context, id, service string, endpoints []string) (*serverContainer, error) {
+func newServerContainer(ctx context.Context, id, service string) (*serverContainer, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Container只关注通用部分，所以service和id还是要保留一份到数据结构
-	sc := serverContainer{service: service, id: id, cancel: cancel, ew: newEtcdWrapper(), eq: newEventQueue(ctx)}
+	sc := serverContainer{
+		service: service,
+		id:      id,
+		cancel:  cancel,
+		ew:      newEtcdWrapper(),
+		eq:      newEventQueue(ctx),
+	}
 
 	sc.leader = newLeader(ctx, &sc)
 

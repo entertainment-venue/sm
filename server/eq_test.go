@@ -22,7 +22,7 @@ import (
 func TestEventQueue_push(t *testing.T) {
 	lev := loadEvent{
 		Service:     "foo.bar",
-		Type:        evTypeContainerDel,
+		Type:        tContainerDel,
 		EnqueueTime: 1,
 	}
 	item := Item{
