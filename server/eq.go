@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/entertainment-venue/borderland/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil"
 )
 
 const defaultEventChanLength = 32

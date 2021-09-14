@@ -11,7 +11,7 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/mvcc/mvccpb"
-	"github.com/entertainment-venue/borderland/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 )

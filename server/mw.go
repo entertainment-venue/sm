@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/entertainment-venue/borderland/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
 )
 

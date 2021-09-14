@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/entertainment-venue/borderland/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
 )
 
-// borderland的任务
+// sm的任务
 type shardTask struct {
 	GovernedService string `json:"governedService"`
 }

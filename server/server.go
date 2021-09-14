@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/entertainment-venue/borderland/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 )

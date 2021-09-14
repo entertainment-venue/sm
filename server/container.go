@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/entertainment-venue/borderland/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
 )
 
@@ -23,7 +23,7 @@ type serverContainer struct {
 
 	mu     sync.Mutex
 	shards map[string]*serverShard
-	// serverShard borderland管理很多业务app，不同业务app有不同的task节点，这块做个map，可能出现单container负责多个app的场景
+	// serverShard sm管理很多业务app，不同业务app有不同的task节点，这块做个map，可能出现单container负责多个app的场景
 	srvOps  map[string]*operator
 	stopped bool // container进入stopped状态
 

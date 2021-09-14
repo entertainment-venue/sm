@@ -3,7 +3,7 @@ package server
 import (
 	"fmt"
 
-	"github.com/entertainment-venue/borderland/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil"
 )
 
 type etcdWrapper struct {
