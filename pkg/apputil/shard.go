@@ -123,10 +123,10 @@ func NewShardServer(opts ...ShardServerOption) error {
 	}
 
 	r := gin.Default()
-	ssg := r.Group("/bl/shardserver")
+	ssg := r.Group("/sm/admin")
 	{
-		ssg.POST("/add-shard", ss.GinShardServerAddShard)
-		ssg.POST("/drop-shard", ss.GinContainerDropShard)
+		ssg.POST("/add-shard", ss.GinAddShard)
+		ssg.POST("/drop-shard", ss.GinDropShard)
 	}
 	for route, handler := range ops.routeAndHandler {
 		r.POST(route, handler)
@@ -172,7 +172,7 @@ func (ss *ShardServer) Close() {
 	}
 }
 
-func (ss *ShardServer) GinShardServerAddShard(c *gin.Context) {
+func (ss *ShardServer) GinAddShard(c *gin.Context) {
 	var req ShardOpMessage
 	if err := c.ShouldBind(&req); err != nil {
 		logutil.Logger.Printf("err: %v", err)
@@ -211,7 +211,7 @@ func (ss *ShardServer) GinShardServerAddShard(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{})
 }
 
-func (ss *ShardServer) GinContainerDropShard(c *gin.Context) {
+func (ss *ShardServer) GinDropShard(c *gin.Context) {
 	var req ShardOpMessage
 	if err := c.ShouldBind(&req); err != nil {
 		logutil.Logger.Printf("err: %v", err)

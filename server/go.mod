@@ -1,4 +1,4 @@
-module github.com/entertainment-venue/borderland/server
+module github.com/entertainment-venue/sm/server
 
 go 1.14
 

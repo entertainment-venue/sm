@@ -1,4 +1,4 @@
-module github.com/entertainment-venue/borderland/pkg
+module github.com/entertainment-venue/sm/pkg
 
 go 1.14
 

@@ -208,7 +208,7 @@ func (o *operator) send(id string, endpoint string, action string) error {
 		return errors.Wrap(err, "")
 	}
 
-	urlStr := fmt.Sprintf("http://%s/sm/serverContainer/%s-serverShard", endpoint, action)
+	urlStr := fmt.Sprintf("http://%s/sm/admin/%s-shard", endpoint, action)
 	req, err := http.NewRequest(http.MethodPost, urlStr, bytes.NewBuffer(b))
 	if err != nil {
 		return errors.Wrap(err, "")

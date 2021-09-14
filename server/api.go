@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type containerApi struct {
+type shardServer struct {
 	cr *serverContainer
 }
 
@@ -27,7 +27,7 @@ func (s *appSpec) String() string {
 	return string(b)
 }
 
-func (g *containerApi) GinAppAddSpec(c *gin.Context) {
+func (g *shardServer) GinAppAddSpec(c *gin.Context) {
 	var req appSpec
 	if err := c.ShouldBind(&req); err != nil {
 		Logger.Printf("err: %v", err)
@@ -69,7 +69,7 @@ func (r *appAddShardRequest) String() string {
 	return string(b)
 }
 
-func (g *containerApi) GinAppAddShard(c *gin.Context) {
+func (g *shardServer) GinAppAddShard(c *gin.Context) {
 	var req appAddShardRequest
 	if err := c.ShouldBind(&req); err != nil {
 		Logger.Printf("err: %v", err)
@@ -102,7 +102,7 @@ type appDelShardRequest struct {
 	Service string `json:"service"`
 }
 
-func (g *containerApi) GinAppDelShard(c *gin.Context) {
+func (g *shardServer) GinAppDelShard(c *gin.Context) {
 	var req appDelShardRequest
 	if err := c.ShouldBind(&req); err != nil {
 		Logger.Printf("err: %v", err)
