@@ -22,12 +22,12 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
-	"github.com/entertainment-venue/sm/pkg/logutil"
 	"github.com/pkg/errors"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
+	"go.uber.org/zap"
 )
 
 // 1 上报container的load信息，保证container的liveness，才能够参与shard的分配
@@ -41,6 +41,8 @@ type Container struct {
 
 	id, service string
 	donec       <-chan struct{}
+
+	lg *zap.Logger
 }
 
 type containerOptions struct {
@@ -89,7 +91,9 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 		return nil, errors.New("endpoints err")
 	}
 
-	client, err := etcdutil.NewEtcdClient(ops.endpoints)
+	logger, _ := zap.NewProduction()
+
+	client, err := etcdutil.NewEtcdClient(ops.endpoints, logger)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -99,7 +103,7 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	}
 
 	donec := make(chan struct{})
-	container := Container{Client: client, Session: s, id: ops.id, service: ops.service, donec: donec}
+	container := Container{Client: client, Session: s, id: ops.id, service: ops.service, donec: donec, lg: logger}
 
 	go func() {
 		defer close(donec)
@@ -107,13 +111,16 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 		for range container.Session.Done() {
 
 		}
-		logutil.Logger.Printf("[container] Container [service %s id %s] session closed", ops.service, ops.id)
+		container.lg.Info("session closed",
+			zap.String("service", ops.service),
+			zap.String("id", ops.id),
+		)
 	}()
 
 	// 上报系统负载，提供container liveness的标记
 	container.Stopper.Wrap(
 		func(ctx context.Context) {
-			TickerLoop(ctx, 3*time.Second, "Container upload exit", container.UploadSysLoad)
+			TickerLoop(ctx, logger, 3*time.Second, "Container upload exit", container.UploadSysLoad)
 		})
 
 	return &container, nil

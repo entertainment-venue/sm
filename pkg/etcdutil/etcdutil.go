@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/entertainment-venue/sm/pkg/logutil"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 var (
@@ -34,9 +34,11 @@ var (
 
 type EtcdClient struct {
 	*clientv3.Client
+
+	lg *zap.Logger
 }
 
-func NewEtcdClient(endpoints []string) (*EtcdClient, error) {
+func NewEtcdClient(endpoints []string, lg *zap.Logger) (*EtcdClient, error) {
 	if len(endpoints) < 1 {
 		return nil, errors.New("You must provide at least one etcd address")
 	}
@@ -44,7 +46,7 @@ func NewEtcdClient(endpoints []string) (*EtcdClient, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	return &EtcdClient{client}, nil
+	return &EtcdClient{Client: client, lg: lg}, nil
 }
 
 func (w *EtcdClient) GetKV(_ context.Context, node string, opts []clientv3.OpOption) (*clientv3.GetResponse, error) {
@@ -86,7 +88,7 @@ func (w *EtcdClient) DelKV(_ context.Context, prefix string) error {
 		return errors.Wrap(err, "")
 	}
 	if resp.Deleted == 0 {
-		logutil.Logger.Printf("FAILED to DelKV %s no kv exist", prefix)
+		w.lg.Warn("no kv exist", zap.String("prefix", prefix))
 	}
 	return nil
 }
@@ -128,11 +130,17 @@ func (w *EtcdClient) CreateAndGet(_ context.Context, nodes []string, values []st
 		return errors.Wrap(err, "")
 	}
 	if resp.Succeeded {
-		logutil.Logger.Printf("Successfully create node %+v with values %+v", nodes, values)
+		w.lg.Info("create node success",
+			zap.Strings("nodes", nodes),
+			zap.Strings("values", values),
+		)
 		return nil
 	}
 	// 创建失败，不需要再继续，业务认定自己是创建的场景，curValue不能走下面的compare and swap
-	logutil.Logger.Printf("FAILED to create node %s with values %s because node already exist", nodes, values)
+	w.lg.Error("failed to create node (already exist)",
+		zap.Strings("nodes", nodes),
+		zap.Strings("values", values),
+	)
 	return errEtcdNodeExist
 }
 
@@ -167,7 +175,11 @@ func (w *EtcdClient) CompareAndSwap(_ context.Context, node string, curValue str
 		return "", errors.Wrapf(err, "FAILED to swap node %s from %s to %s", node, curValue, newValue)
 	}
 	if resp.Succeeded {
-		logutil.Logger.Printf("Successfully swap node %s from %s to %s", node, curValue, newValue)
+		w.lg.Info("swap node success",
+			zap.String("node", node),
+			zap.String("curValue", curValue),
+			zap.String("newValue", newValue),
+		)
 		return "", nil
 	}
 	if resp.Responses[0].GetResponseRange().Count == 0 {
@@ -175,9 +187,20 @@ func (w *EtcdClient) CompareAndSwap(_ context.Context, node string, curValue str
 	}
 	realValue := string(resp.Responses[0].GetResponseRange().Kvs[0].Value)
 	if realValue == newValue {
-		logutil.Logger.Printf("FAILED to swap node %s, current value %s, but want change value from %s to %s", node, realValue, curValue, newValue)
+		w.lg.Error("failed to swap node",
+			zap.String("node", node),
+			zap.String("realValue", realValue),
+			zap.String("newValue", newValue),
+			zap.Error(errEtcdNodeExist),
+		)
 		return realValue, errEtcdValueExist
 	}
-	logutil.Logger.Printf("FAILED to swap node %s, current value %s, but want change value from %s to %s", node, realValue, curValue, newValue)
+	w.lg.Error("failed to swap node",
+		zap.String("node", node),
+		zap.String("realValue", realValue),
+		zap.String("curValue", curValue),
+		zap.String("newValue", newValue),
+		zap.Error(errEtcdValueNotMatch),
+	)
 	return realValue, errEtcdValueNotMatch
 }

@@ -19,25 +19,25 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/entertainment-venue/sm/pkg/logutil"
+	"go.uber.org/zap"
 )
 
-func TickerLoop(ctx context.Context, duration time.Duration, exitMsg string, fn func(ctx context.Context) error) {
+func TickerLoop(ctx context.Context, lg *zap.Logger, duration time.Duration, exitMsg string, fn func(ctx context.Context) error) {
 	ticker := time.Tick(duration)
 	for {
 		select {
 		case <-ticker:
 		case <-ctx.Done():
-			logutil.Logger.Printf(exitMsg)
+			lg.Info(exitMsg)
 			return
 		}
 		if err := fn(ctx); err != nil {
-			logutil.Logger.Printf("err: %v", err)
+			lg.Error("fn err", zap.Error(err))
 		}
 	}
 }
 
-func WatchLoop(ctx context.Context, client *clientv3.Client, node string, exitMsg string, fn func(ctx context.Context, ev *clientv3.Event) error) {
+func WatchLoop(ctx context.Context, lg *zap.Logger, client *clientv3.Client, node string, exitMsg string, fn func(ctx context.Context, ev *clientv3.Event) error) {
 	var opts []clientv3.OpOption
 	opts = append(opts, clientv3.WithPrefix())
 
@@ -48,17 +48,17 @@ watchLoop:
 		select {
 		case wr = <-wch:
 		case <-ctx.Done():
-			logutil.Logger.Printf(exitMsg)
+			lg.Info(exitMsg)
 			return
 		}
 		if err := wr.Err(); err != nil {
-			logutil.Logger.Printf("err: %v", err)
+			lg.Error("watch err", zap.Error(err))
 			goto watchLoop
 		}
 
 		for _, ev := range wr.Events {
 			if err := fn(ctx, ev); err != nil {
-				logutil.Logger.Printf("err: %v", err)
+				lg.Error("fn err", zap.Error(err))
 				time.Sleep(3 * time.Second)
 				goto watchLoop
 			}

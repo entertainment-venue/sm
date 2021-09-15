@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/entertainment-venue/sm/pkg/logutil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 type ShardSpec struct {
@@ -77,6 +77,7 @@ type ShardServer struct {
 
 	impl      ShardInterface
 	container *Container
+	lg        *zap.Logger
 }
 
 type shardServerOptions struct {
@@ -87,6 +88,7 @@ type shardServerOptions struct {
 	// FIXME 和ShardServer重复
 	implementation ShardInterface
 	container      *Container
+	lg             *zap.Logger
 }
 
 type ShardServerOption func(options *shardServerOptions)
@@ -121,6 +123,12 @@ func ShardServerWithApiHandler(routeAndHandler map[string]func(c *gin.Context)) 
 	}
 }
 
+func ShardServerWithLogger(lg *zap.Logger) ShardServerOption {
+	return func(sso *shardServerOptions) {
+		sso.lg = lg
+	}
+}
+
 func NewShardServer(opts ...ShardServerOption) error {
 	ops := &shardServerOptions{}
 	for _, opt := range opts {
@@ -131,11 +139,14 @@ func NewShardServer(opts ...ShardServerOption) error {
 		return errors.New("addr err")
 	}
 
+	logger, _ := zap.NewProduction()
+
 	ss := ShardServer{
 		shards:   make(map[string]struct{}),
 		stopper:  &GoroutineStopper{},
 		hbNode:   EtcdPathAppShardHbId(ops.container.Service(), ops.container.Id()),
 		taskNode: EtcdPathAppShardId(ops.container.Service(), ops.container.Id()),
+		lg:       logger,
 	}
 
 	r := gin.Default()
@@ -155,7 +166,7 @@ func NewShardServer(opts ...ShardServerOption) error {
 	// 上传shard的load，load是从接入服务拿到
 	ss.stopper.Wrap(func(ctx context.Context) {
 		TickerLoop(
-			ctx, 3*time.Second, "[shardserver] load uploader exit",
+			ctx, logger, 3*time.Second, "[shardserver] load uploader exit",
 			func(ctx context.Context) error {
 				for id := range ss.shards {
 					sl, err := ss.impl.Load(context.TODO(), id)
@@ -191,35 +202,48 @@ func (ss *ShardServer) Close() {
 func (ss *ShardServer) GinAddShard(c *gin.Context) {
 	var req ShardOpMessage
 	if err := c.ShouldBind(&req); err != nil {
-		logutil.Logger.Printf("err: %v", err)
+		ss.lg.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	req.Type = OpTypeAdd
-	logutil.Logger.Printf("[shardserver] add shard req: %+v", req)
+	ss.lg.Info("add shard request", zap.Reflect("request", req))
 
 	resp, err := ss.container.Client.GetKV(context.TODO(), ss.taskNode, nil)
 	if err != nil {
-		logutil.Logger.Printf("err: %v", err)
+		ss.lg.Error("GetKV err",
+			zap.Error(err),
+			zap.String("taskNode", ss.taskNode),
+		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	if resp.Count == 0 {
 		err = errors.Errorf("Failed to get shard %s content", req.Id)
-		logutil.Logger.Printf("err: %v", err)
+		ss.lg.Error("no shard exist",
+			zap.String("id", req.Id),
+			zap.Error(err),
+		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	var spec ShardSpec
 	if err := json.Unmarshal(resp.Kvs[0].Value, &spec); err != nil {
-		logutil.Logger.Printf("err: %v", err)
+		ss.lg.Error("Unmarshal err",
+			zap.Error(err),
+			zap.ByteString("value", resp.Kvs[0].Value),
+		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	if err := ss.impl.Add(context.TODO(), req.Id, &spec); err != nil {
-		logutil.Logger.Printf("err: %s", err.Error())
+		ss.lg.Error("Add err",
+			zap.Error(err),
+			zap.String("id", req.Id),
+			zap.Reflect("spec", spec),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -230,17 +254,21 @@ func (ss *ShardServer) GinAddShard(c *gin.Context) {
 func (ss *ShardServer) GinDropShard(c *gin.Context) {
 	var req ShardOpMessage
 	if err := c.ShouldBind(&req); err != nil {
-		logutil.Logger.Printf("err: %v", err)
+		ss.lg.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	req.Type = OpTypeDrop
-	logutil.Logger.Printf("[shardserver] add shard req: %+v", req)
 
 	if err := ss.impl.Drop(context.TODO(), req.Id); err != nil {
-		logutil.Logger.Printf("err: %s", err.Error())
+		ss.lg.Error("Drop err",
+			zap.Error(err),
+			zap.String("id", req.Id),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	ss.lg.Info("drop shard success", zap.Reflect("req", req))
 	c.JSON(http.StatusOK, gin.H{})
 }
