@@ -19,10 +19,16 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
+)
+
+var (
+	ttLogger, _ = zap.NewProduction()
 )
 
 func Test_init(t *testing.T) {
-	ctr, err := newServerContainer(context.TODO(), "127.0.0.1:8888", "foo.bar")
+	ctr, err := newServerContainer(context.TODO(), ttLogger, "127.0.0.1:8888", "foo.bar")
 	if err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
@@ -35,7 +41,7 @@ func Test_init(t *testing.T) {
 }
 
 func Test_newLeader(t *testing.T) {
-	ctr, err := newServerContainer(context.TODO(), "127.0.0.1:8888", "foo.bar")
+	ctr, err := newServerContainer(context.TODO(), ttLogger, "127.0.0.1:8888", "foo.bar")
 	if err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()

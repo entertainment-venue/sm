@@ -25,6 +25,7 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 // 管理某个sm app的shard
@@ -37,6 +38,8 @@ type maintenanceWorker struct {
 
 	// 从属于leader或者sm serverShard，service和container不一定一样
 	service string
+
+	lg *zap.Logger
 }
 
 func newMaintenanceWorker(container *serverContainer, service string) *maintenanceWorker {
@@ -85,7 +88,7 @@ func (w *maintenanceWorker) Start() {
 
 func (w *maintenanceWorker) Close() {
 	w.stopper.Close()
-	Logger.Printf("maintenanceWorker for service %s stopped", w.parent.service)
+	w.lg.Info("maintenanceWorker stopped", zap.String("service", w.service))
 }
 
 // 1 serverContainer 的增加/减少是优先级最高，目前可能涉及大量shard move
@@ -115,9 +118,8 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context, ew *etcdWrapper
 	}
 
 	if containerChanged(fixShardIdAndContainerId.ValueList(), surviveContainerIdAndValue.KeyList()) {
-		r := reallocate(service, surviveContainerIdAndValue, fixShardIdAndContainerId)
+		r := w.reallocate(service, surviveContainerIdAndValue, fixShardIdAndContainerId)
 		if len(r) > 0 {
-			Logger.Printf("[utils] service %s containerChanged true", service)
 
 			item := Item{
 				Value:    r.String(),
@@ -125,11 +127,14 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context, ew *etcdWrapper
 			}
 			eq.push(&item, true)
 
-			Logger.Printf("Container changed for service %s, enqueue item %s", service, item.String())
+			w.lg.Info("container changed cause item enqueue",
+				zap.String("service", service),
+				zap.String("item", item.String()),
+			)
 			return nil
 		}
 	}
-	Logger.Printf("[utils] service %s containerChanged false", service)
+	w.lg.Debug("container not changed", zap.String("service", service))
 
 	// serverContainer hb和固定分配关系一致，下面检查shard存活
 	var surviveShardIdAndValue ArmorMap
@@ -139,20 +144,23 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context, ew *etcdWrapper
 	}
 
 	if shardChanged(fixShardIdAndContainerId.KeyList(), surviveShardIdAndValue.KeyMap()) {
-		r := reallocate(service, surviveContainerIdAndValue, fixShardIdAndContainerId)
+		r := w.reallocate(service, surviveContainerIdAndValue, fixShardIdAndContainerId)
 		if len(r) > 0 {
-			Logger.Printf("[utils] service %s shardChanged true", service)
-
 			item := Item{
 				Value:    r.String(),
 				Priority: time.Now().Unix(),
 			}
 			eq.push(&item, true)
 
-			Logger.Printf("Container changed for service %s, result %v", service, r)
+			w.lg.Info("shard changed cause item enqueue",
+				zap.String("service", service),
+				zap.String("item", item.String()),
+			)
+
+			return nil
 		}
 	}
-	Logger.Printf("[utils] service %s shardChanged false", service)
+	w.lg.Debug("shard not changed", zap.String("service", service))
 
 	return nil
 }
@@ -172,10 +180,16 @@ func shardChanged(fixShardIds []string, surviveShardIdMap map[string]struct{}) b
 	return false
 }
 
-func reallocate(service string, surviveContainerIdAndValue ArmorMap, fixShardIdAndContainerId ArmorMap) moveActionList {
+func (w *maintenanceWorker) reallocate(service string, surviveContainerIdAndValue ArmorMap, fixShardIdAndContainerId ArmorMap) moveActionList {
 	shardIds := fixShardIdAndContainerId.KeyList()
 	surviveContainerIds := surviveContainerIdAndValue.KeyList()
 	newContainerIdAndShardIds := performAssignment(shardIds, surviveContainerIds)
+
+	w.lg.Info("performAssignment",
+		zap.Strings("shardIds", shardIds),
+		zap.Strings("surviveContainerIds", surviveContainerIds),
+		zap.Reflect("result", newContainerIdAndShardIds),
+	)
 
 	var result moveActionList
 	for newId, shardIds := range newContainerIdAndShardIds {

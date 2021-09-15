@@ -23,10 +23,13 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 type shardServer struct {
 	cr *serverContainer
+
+	lg *zap.Logger
 }
 
 type appSpec struct {
@@ -41,26 +44,30 @@ func (s *appSpec) String() string {
 	return string(b)
 }
 
-func (g *shardServer) GinAppAddSpec(c *gin.Context) {
+func (ss *shardServer) GinAppAddSpec(c *gin.Context) {
 	var req appSpec
 	if err := c.ShouldBind(&req); err != nil {
-		Logger.Printf("err: %v", err)
+		ss.lg.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	Logger.Printf("req: %v", req)
+	ss.lg.Info("receive request", zap.String("request", req.String()))
 
 	//  写入app spec和app task节点在一个tx
 	var (
 		nodes  []string
 		values []string
 	)
-	nodes = append(nodes, g.cr.ew.nodeAppSpec(req.Service))
-	nodes = append(nodes, g.cr.ew.nodeAppTask(req.Service))
+	nodes = append(nodes, ss.cr.ew.nodeAppSpec(req.Service))
+	nodes = append(nodes, ss.cr.ew.nodeAppTask(req.Service))
 	values = append(values, req.String())
 	values = append(values, "")
-	if err := g.cr.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
-		Logger.Printf("err: %v", err)
+	if err := ss.cr.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
+		ss.lg.Error("CreateAndGet err",
+			zap.Error(err),
+			zap.Strings("nodes", nodes),
+			zap.Strings("values", values),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -83,14 +90,14 @@ func (r *appAddShardRequest) String() string {
 	return string(b)
 }
 
-func (g *shardServer) GinAppAddShard(c *gin.Context) {
+func (ss *shardServer) GinAppAddShard(c *gin.Context) {
 	var req appAddShardRequest
 	if err := c.ShouldBind(&req); err != nil {
-		Logger.Printf("err: %v", err)
+		ss.lg.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	Logger.Printf("req: %v", req)
+	ss.lg.Info("receive request", zap.String("request", req.String()))
 
 	spec := apputil.ShardSpec{
 		Service:    req.Service,
@@ -101,8 +108,16 @@ func (g *shardServer) GinAppAddShard(c *gin.Context) {
 	// 区分更新和添加
 	// 如果是添加，等待负责该app的shard做探测即可
 	// 如果是更新，shard是不允许更新的，这种更新的相当于shard工作内容的调整
-	if err := g.cr.Client.CreateAndGet(context.Background(), []string{apputil.EtcdPathAppShardId(req.Service, req.ShardId)}, []string{spec.String()}, clientv3.NoLease); err != nil {
-		Logger.Printf("err: %v", err)
+	var (
+		nodes  = []string{apputil.EtcdPathAppShardId(req.Service, req.ShardId)}
+		values = []string{spec.String()}
+	)
+	if err := ss.cr.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
+		ss.lg.Error("CreateAndGet err",
+			zap.Error(err),
+			zap.Strings("nodes", nodes),
+			zap.Strings("values", values),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

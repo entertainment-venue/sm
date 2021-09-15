@@ -21,7 +21,7 @@ import (
 )
 
 func Test_newOperator(t *testing.T) {
-	ctr, err := newServerContainer(context.TODO(), "127.0.0.1:8888", "foo.bar")
+	ctr, err := newServerContainer(context.TODO(), ttLogger, "127.0.0.1:8888", "foo.bar")
 	if err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
@@ -40,7 +40,7 @@ func Test_newOperator(t *testing.T) {
 }
 
 func Test_remove(t *testing.T) {
-	ctr, err := newServerContainer(context.TODO(), "127.0.0.1:8888", "foo.bar")
+	ctr, err := newServerContainer(context.TODO(), ttLogger, "127.0.0.1:8888", "foo.bar")
 	if err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
@@ -56,7 +56,7 @@ func Test_remove(t *testing.T) {
 }
 
 func Test_dropAndAdd(t *testing.T) {
-	ctr, err := newServerContainer(context.TODO(), "127.0.0.1:8888", "foo.bar")
+	ctr, err := newServerContainer(context.TODO(), ttLogger, "127.0.0.1:8888", "foo.bar")
 	if err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()

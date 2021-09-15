@@ -20,6 +20,7 @@ import (
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 type serverContainer struct {
@@ -44,21 +45,24 @@ type serverContainer struct {
 	eq *eventQueue
 
 	leader *leader
+
+	lg *zap.Logger
 }
 
-func newServerContainer(ctx context.Context, id, service string) (*serverContainer, error) {
+func newServerContainer(ctx context.Context, lg *zap.Logger, id, service string) (*serverContainer, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Container只关注通用部分，所以service和id还是要保留一份到数据结构
 	sc := serverContainer{
+		lg:      lg,
 		service: service,
 		id:      id,
 		cancel:  cancel,
 		ew:      newEtcdWrapper(),
-		eq:      newEventQueue(ctx),
+		eq:      newEventQueue(ctx, lg),
 	}
 
-	sc.leader = newLeader(ctx, &sc)
+	sc.leader = newLeader(ctx, lg, &sc)
 
 	return &sc, nil
 }
@@ -83,25 +87,33 @@ func (c *serverContainer) Close() {
 		o.Close()
 	}
 
-	Logger.Printf("serverContainer %s for service %s stopped", c.id, c.service)
+	c.lg.Info("close serverContainer",
+		zap.String("id", c.id),
+		zap.String("service", c.service),
+	)
 }
 
-func (c *serverContainer) Add(_ context.Context, id string, spec *apputil.ShardSpec) error {
+func (c *serverContainer) Add(ctx context.Context, id string, spec *apputil.ShardSpec) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.stopped {
-		Logger.Printf("[parent] service %s stopped, id %s", c.service, id)
+		c.lg.Info("container stopped",
+			zap.String("id", id),
+			zap.String("service", c.service),
+		)
 		return nil
 	}
 
 	if _, ok := c.shards[id]; ok {
-		Logger.Printf("serverShard %s already added", id)
-		// 允许重入，Add操作保证at least once
+		c.lg.Info("shard existed",
+			zap.String("id", id),
+			zap.String("service", c.service),
+		)
 		return nil
 	}
 
-	shard, err := startShard(context.TODO(), c, id, spec)
+	shard, err := startShard(ctx, c.lg, c, id, spec)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -114,7 +126,10 @@ func (c *serverContainer) Drop(_ context.Context, id string) error {
 	defer c.mu.Unlock()
 
 	if c.stopped {
-		Logger.Printf("[parent] service %s stopped, id %s", c.service, id)
+		c.lg.Info("container stopped",
+			zap.String("id", id),
+			zap.String("service", c.service),
+		)
 		return nil
 	}
 
@@ -131,7 +146,10 @@ func (c *serverContainer) Load(ctx context.Context, id string) (string, error) {
 	defer c.mu.Unlock()
 
 	if c.stopped {
-		Logger.Printf("[parent] service %s stopped, id %s", c.service, id)
+		c.lg.Info("container stopped",
+			zap.String("id", id),
+			zap.String("service", c.service),
+		)
 		return "", nil
 	}
 
@@ -147,7 +165,9 @@ func (c *serverContainer) NewOp(service string) error {
 	defer c.mu.Unlock()
 
 	if c.stopped {
-		Logger.Printf("[parent] service %s stopped", service)
+		c.lg.Info("container stopped",
+			zap.String("service", service),
+		)
 		return nil
 	}
 

@@ -62,7 +62,5 @@ func performAssignment(shardIds []string, instanceIds []string) map[string][]str
 		ids = append(ids, id)
 	}
 
-	Logger.Printf("Divided: \n shardIds => (%+v) \n instanceId => (%+v) \n result => (%+v) \n", ids, instanceIds, result)
-
 	return result
 }

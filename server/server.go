@@ -16,30 +16,12 @@ package server
 
 import (
 	"context"
-	"log"
-	"os"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
-
-// StdLogger is used to log error messages.
-type StdLogger interface {
-	Print(v ...interface{})
-	Printf(format string, v ...interface{})
-	Println(v ...interface{})
-}
-
-var Logger StdLogger = log.New(os.Stdout, "[BORDERLAND] ", log.LstdFlags|log.Lshortfile)
-
-type Starter interface {
-	Start()
-}
-
-type Closer interface {
-	Close()
-}
 
 type serverOptions struct {
 	// id是当前容器/进程的唯一标记，不能变化，用于做container和shard的映射关系
@@ -108,19 +90,22 @@ func Run(fn ...ServerOption) error {
 		return errors.Wrap(err, "")
 	}
 
-	sc, err := newServerContainer(opts.ctx, opts.id, opts.service)
+	logger, _ := zap.NewProduction()
+
+	sc, err := newServerContainer(opts.ctx, logger, opts.id, opts.service)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
 
 	go func() {
+		defer logger.Sync()
 		defer sc.Close()
 		for range cc.Done() {
 
 		}
 	}()
 
-	ss := shardServer{sc}
+	ss := shardServer{sc, logger}
 	routeAndHandler := make(map[string]func(c *gin.Context))
 	routeAndHandler["/sm/admin/add-spec"] = ss.GinAppAddSpec
 	routeAndHandler["/sm/admin/add-shard"] = ss.GinAppAddShard

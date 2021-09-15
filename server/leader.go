@@ -22,6 +22,7 @@ import (
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 type leaderEtcdValue struct {
@@ -46,10 +47,12 @@ type leader struct {
 
 	// op需要监听特定app的task在etcd中的节点，保证app级别只有一个，sm放在leader中
 	op *operator
+
+	lg *zap.Logger
 }
 
-func newLeader(ctx context.Context, container *serverContainer) *leader {
-	l := leader{ctx: ctx, parent: container}
+func newLeader(ctx context.Context, lg *zap.Logger, container *serverContainer) *leader {
+	l := leader{ctx: ctx, lg: lg, parent: container}
 
 	l.mtWorker = newMaintenanceWorker(container, container.service)
 
@@ -66,7 +69,7 @@ func (l *leader) campaign() {
 	loop:
 		select {
 		case <-l.ctx.Done():
-			Logger.Printf("[leader] service %s campaign exit", l.parent.service)
+			l.lg.Info("leader exit campaign", zap.String("service", l.parent.service))
 			return
 		default:
 		}
@@ -75,18 +78,22 @@ func (l *leader) campaign() {
 		lvalue := leaderEtcdValue{ContainerId: l.parent.id, CreateTime: time.Now().String()}
 		election := concurrency.NewElection(l.parent.Session, leaderNodePrefix)
 		if err := election.Campaign(l.ctx, lvalue.String()); err != nil {
-			Logger.Printf("err %+v", err)
+			l.lg.Error("failed to campaign", zap.Error(err))
 			time.Sleep(defaultSleepTimeout)
 			goto loop
 		}
-		Logger.Printf("[leader] service %s Successfully campaign for current serverContainer %s with leader %s/%d", l.parent.service, l.parent.id, leaderNodePrefix, l.parent.Session.Lease())
+		l.lg.Info("campaign success",
+			zap.String("service", l.parent.service),
+			zap.String("leaderNodePrefix", leaderNodePrefix),
+			zap.Int64("lease", int64(l.parent.Session.Lease())),
+		)
 
 		// leader启动时，等待一个时间段，方便所有container做至少一次heartbeat，然后开始监测是否需要进行container和shard映射关系的变更。
 		// etcd sdk中keepalive的请求发送时间时500ms，3s>>500ms，认为这个时间段内，所有container都会发heartbeat，不存在的就认为没有任务。
 		time.Sleep(5 * time.Second)
 
 		if err := l.init(); err != nil {
-			Logger.Printf("err %+v", err)
+			l.lg.Error("leader failed to init", zap.Error(err))
 			time.Sleep(defaultSleepTimeout)
 			goto loop
 		}
@@ -95,7 +102,7 @@ func (l *leader) campaign() {
 		var err error
 		l.op, err = newOperator(l.parent, l.parent.service)
 		if err != nil {
-			Logger.Printf("err %+v", err)
+			l.lg.Error("leader failed to newOperator", zap.Error(err))
 			time.Sleep(defaultSleepTimeout)
 			goto loop
 		}
@@ -105,10 +112,10 @@ func (l *leader) campaign() {
 		go l.mtWorker.Start()
 
 		// block until出现需要放弃leader职权的事件
-		Logger.Printf("[leader] service %s completed start operator and mtWorker, block until exit", l.parent.service)
+		l.lg.Info("leader completed op", zap.String("service", l.parent.service))
 		select {
 		case <-l.ctx.Done():
-			Logger.Printf("[leader] service %s campaign exit", l.parent.service)
+			l.lg.Info("leader exit", zap.String("service", l.parent.service))
 			return
 		}
 	}
@@ -135,12 +142,16 @@ func (l *leader) init() error {
 			// 下发指令，接受不了的直接干掉当前的分配关系
 			ma := moveAction{Service: l.parent.service, ShardId: shardId, AddEndpoint: ss.ContainerId, AllowDrop: true}
 			moveActions = append(moveActions, &ma)
-			Logger.Printf("[leader] service %s Init move action %+v", ma, l.parent.service)
+
+			l.lg.Info("init shard move action",
+				zap.String("service", l.parent.service),
+				zap.Object("action", &ma),
+			)
 		}
 	}
 	// 向自己的app任务节点发任务
 	if len(moveActions) == 0 {
-		Logger.Printf("[leader] service %s No move action created", l.parent.service)
+		l.lg.Info("init no move action created", zap.String("service", l.parent.service))
 		return nil
 	}
 	bdTaskNode := l.parent.ew.nodeAppTask(l.parent.service)
@@ -154,5 +165,6 @@ func (l *leader) close() {
 	if l.op != nil {
 		l.op.Close()
 	}
-	Logger.Printf("[leader] stopped for service %s ", l.parent.service)
+
+	l.lg.Info("close leader", zap.String("service", l.parent.service))
 }

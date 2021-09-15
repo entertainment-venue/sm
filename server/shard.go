@@ -20,6 +20,7 @@ import (
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 // sm的任务
@@ -37,10 +38,12 @@ type serverShard struct {
 	id, service string
 
 	mtWorker *maintenanceWorker
+
+	lg *zap.Logger
 }
 
-func startShard(_ context.Context, sc *serverContainer, id string, spec *apputil.ShardSpec) (*serverShard, error) {
-	s := serverShard{parent: sc, id: id}
+func startShard(_ context.Context, lg *zap.Logger, sc *serverContainer, id string, spec *apputil.ShardSpec) (*serverShard, error) {
+	s := serverShard{parent: sc, id: id, lg: lg}
 
 	var st shardTask
 	if err := json.Unmarshal([]byte(spec.Task), &st); err != nil {
@@ -66,7 +69,10 @@ func (s *serverShard) Close() {
 	// 关闭自己的
 	s.stopper.Close()
 
-	Logger.Printf("serverShard %s for service %s stopped", s.id, s.parent.service)
+	s.lg.Info("serverShard exit",
+		zap.String("id", s.id),
+		zap.String("service", s.service),
+	)
 }
 
 type shardLoad struct {

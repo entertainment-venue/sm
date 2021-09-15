@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"go.uber.org/zap"
 )
 
 const defaultEventChanLength = 32
@@ -57,12 +58,15 @@ type eventQueue struct {
 	mu     sync.Mutex
 	buffer map[string]chan *loadEvent // 区分service给chan，每个worker给一个goroutine
 	curEvs map[string]struct{}        // 防止同一service在queue中有重复任务
+
+	lg *zap.Logger
 }
 
-func newEventQueue(_ context.Context) *eventQueue {
+func newEventQueue(_ context.Context, lg *zap.Logger) *eventQueue {
 	eq := eventQueue{
 		buffer:  make(map[string]chan *loadEvent),
 		stopper: &apputil.GoroutineStopper{},
+		lg:      lg,
 	}
 
 	heap.Init(&eq.pq)
@@ -92,14 +96,13 @@ func (eq *eventQueue) push(item *Item, checkDup bool) {
 
 	var ev loadEvent
 	if err := json.Unmarshal([]byte(item.Value), &ev); err != nil {
-		Logger.Printf("[eq] err: %v", err)
+		eq.lg.Error("Unmarshal err", zap.String("raw", item.Value))
 		return
 	}
 
 	if checkDup {
 		if _, ok := eq.curEvs[ev.Service]; ok {
-			Logger.Printf("[eq] service %s already exist in queue", ev.Service)
-			eq.mu.Unlock()
+			eq.lg.Error("service already exist", zap.String("service", ev.Service))
 			return
 		}
 		eq.curEvs[ev.Service] = struct{}{}
@@ -110,12 +113,12 @@ func (eq *eventQueue) push(item *Item, checkDup bool) {
 		ch = make(chan *loadEvent, defaultEventChanLength)
 		eq.buffer[ev.Service] = ch
 
-		Logger.Printf("[eq] evLoop started for service %s", ev.Service)
-
 		eq.stopper.Wrap(
 			func(ctx context.Context) {
 				eq.evLoop(ctx, ev.Service, ch)
 			})
+
+		eq.lg.Info("evLoop started", zap.String("service", ev.Service))
 	}
 
 	switch ev.Type {
@@ -126,7 +129,8 @@ func (eq *eventQueue) push(item *Item, checkDup bool) {
 			ch <- &ev
 			return
 		}
-		Logger.Printf("[eq] item enqueue %s", item)
+
+		eq.lg.Info("item enqueue", zap.String("item", item.String()))
 		heap.Push(&eq.pq, item)
 	}
 }
@@ -156,12 +160,12 @@ func (eq *eventQueue) evLoop(ctx context.Context, service string, ch chan *loadE
 		var ev *loadEvent
 		select {
 		case <-ctx.Done():
-			Logger.Printf("[eq] evLoop for service [%s] exit", service)
+			eq.lg.Info("evLoop exit", zap.String("service", service))
 			return
 		case ev = <-ch:
 		}
 
-		Logger.Printf("[eq] got ev %s", ev)
+		eq.lg.Info("ev received", zap.String("ev", ev.String()))
 
 		// TODO 同一service需要保证只有一个goroutine在计算，否则没有意义
 		switch ev.Type {

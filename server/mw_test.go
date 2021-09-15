@@ -27,7 +27,7 @@ import (
 )
 
 func Test_Start(t *testing.T) {
-	ctr, err := newServerContainer(context.TODO(), "127.0.0.1:8888", "foo.bar")
+	ctr, err := newServerContainer(context.TODO(), ttLogger, "127.0.0.1:8888", "foo.bar")
 	if err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
@@ -188,8 +188,10 @@ func Test_reallocate(t *testing.T) {
 		},
 	}
 
+	w := maintenanceWorker{}
+
 	for idx, tt := range tests {
-		r := reallocate(service, tt.surviveContainerIdAndValue, tt.fixShardIdAndContainerId)
+		r := w.reallocate(service, tt.surviveContainerIdAndValue, tt.fixShardIdAndContainerId)
 		sort.Sort(r)
 		sort.Sort(tt.expect)
 		if !reflect.DeepEqual(r, tt.expect) {
@@ -200,7 +202,7 @@ func Test_reallocate(t *testing.T) {
 }
 
 func Test_shardLoadChecker(t *testing.T) {
-	eq := newEventQueue(context.Background())
+	eq := newEventQueue(context.Background(), ttLogger)
 
 	ev := clientv3.Event{
 		Type: mvccpb.DELETE,
@@ -218,7 +220,7 @@ func Test_shardLoadChecker(t *testing.T) {
 }
 
 func Test_containerLoadChecker(t *testing.T) {
-	eq := newEventQueue(context.Background())
+	eq := newEventQueue(context.Background(), ttLogger)
 
 	ev := clientv3.Event{
 		Type: mvccpb.DELETE,

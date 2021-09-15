@@ -27,6 +27,8 @@ import (
 	"github.com/coreos/etcd/mvcc/mvccpb"
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -56,6 +58,16 @@ type moveAction struct {
 	AllowDrop bool `json:"allowDrop"`
 }
 
+func (action *moveAction) String() string {
+	b, _ := json.Marshal(action)
+	return string(b)
+}
+
+func (action *moveAction) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
+	encoder.AddString("content", action.String())
+	return nil
+}
+
 // container和shard上报两个维度的load，leader(sm)或者shard(app)探测到异常，会发布任务出来，operator就是这个任务的执行者
 type operator struct {
 	stopper *apputil.GoroutineStopper
@@ -65,6 +77,8 @@ type operator struct {
 	sc         *serverContainer
 	httpClient *http.Client
 	prevValue  string
+
+	lg *zap.Logger
 }
 
 func newOperator(sc *serverContainer, service string) (*operator, error) {
@@ -84,7 +98,7 @@ func (o *operator) Close() {
 	if o.stopper != nil {
 		o.stopper.Close()
 	}
-	Logger.Printf("[operator] stopped for service %s", o.sc.service)
+	o.lg.Info("close operator", zap.String("service", o.sc.service))
 }
 
 // sm的shard需要能为接入app提供shard移动的能力，且保证每个任务被执行掉，所以任务会绑定在shard，防止sm的shard移动导致任务没人干
@@ -95,7 +109,7 @@ func (o *operator) MoveLoop(ctx context.Context) {
 		}
 
 		if string(ev.Kv.Value) == o.prevValue {
-			Logger.Printf("[operator] Duplicate event: %s", o.prevValue)
+			o.lg.Warn("duplicate event", zap.String("prevValue", o.prevValue))
 			return nil
 		}
 
@@ -113,7 +127,10 @@ func (o *operator) MoveLoop(ctx context.Context) {
 firstMove:
 	resp, err := o.sc.Client.GetKV(ctx, key, []clientv3.OpOption{})
 	if err != nil {
-		Logger.Printf("err: %v", err)
+		o.lg.Error("failed to GetKV",
+			zap.String("key", key),
+			zap.Error(err),
+		)
 		time.Sleep(defaultSleepTimeout)
 		goto firstMove
 	}
@@ -121,7 +138,11 @@ firstMove:
 		s := string(resp.Kvs[0].Value)
 		if s != "" {
 			if err := o.move(ctx, resp.Kvs[0].Value); err != nil {
-				Logger.Printf("err: %v", err)
+				o.lg.Error("failed to move",
+					zap.ByteString("value", resp.Kvs[0].Value),
+					zap.Error(err),
+				)
+
 				time.Sleep(defaultSleepTimeout)
 				goto firstMove
 			}
@@ -135,7 +156,10 @@ firstMove:
 func (o *operator) move(ctx context.Context, value []byte) error {
 	var mal moveActionList
 	if err := json.Unmarshal(value, &mal); err != nil {
-		Logger.Printf("[operator] Unexpected err: %v", err)
+		o.lg.Error("failed to unmarshal",
+			zap.ByteString("value", value),
+			zap.Error(err),
+		)
 		// return ASAP unmarshal失败重试没意义，需要人工接入进行数据修正
 		return errors.Wrap(err, "")
 	}
@@ -151,19 +175,23 @@ move:
 		})
 	}
 	if err := g.Wait(); err != nil {
-		Logger.Printf("err: %v", err)
+		o.lg.Error("failed to Wait", zap.Error(err))
 		time.Sleep(defaultSleepTimeout)
 		goto move
 	}
 
-	Logger.Printf("[operator] completed serverShard move task %s", string(value))
+	o.lg.Info("complete move", zap.ByteString("value", value))
 
 	// 利用etcd tx清空任务节点，任务节点已经空就停止
 ack:
 	key := o.sc.ew.nodeAppTask(o.sc.service)
 	if _, err := o.sc.Client.CompareAndSwap(ctx, key, string(value), "", -1); err != nil {
 		// 节点数据被破坏，需要人工介入
-		Logger.Printf("err: %v", err)
+		o.lg.Error("failed to CompareAndSwap",
+			zap.String("key", key),
+			zap.ByteString("value", value),
+			zap.Error(err),
+		)
 		time.Sleep(defaultSleepTimeout)
 		goto ack
 	}
@@ -191,7 +219,10 @@ func (o *operator) dropAndAdd(ctx context.Context, ma *moveAction) error {
 				return errors.Wrap(err, "")
 			}
 
-			Logger.Printf("[operator] FAILED to send move request %v, err: %v", *ma, err)
+			o.lg.Error("failed to send",
+				zap.Object("value", ma),
+				zap.Error(err),
+			)
 
 			// 只在leader竞选成功场景下会下发分配指令，没有Drop动作，这里允许放弃当前动作，后续有shardAllocateLoop和shardLoadLoop兜底
 			// 如果下发失败，就必须去掉分配关系，以便shardAllocateLoop拿到的分配关系是比较真实的（这块即便下发都成功，shard可能因为异常停止工作）
@@ -209,7 +240,11 @@ func (o *operator) dropAndAdd(ctx context.Context, ma *moveAction) error {
 		}
 	}
 
-	Logger.Printf("[operator] Successfully move serverShard %s from %s to %s, onlyAdd: %b onlyDrop: %b", ma.ShardId, ma.DropEndpoint, ma.AddEndpoint, onlyAdd, onlyDrop)
+	o.lg.Info("move shard success",
+		zap.Object("ma", ma),
+		zap.Bool("onlyAdd", onlyAdd),
+		zap.Bool("onlyDrop", onlyDrop),
+	)
 
 	return nil
 }
@@ -248,7 +283,7 @@ func (o *operator) remove(ctx context.Context, id, service string) error {
 		return errors.Wrap(err, "")
 	}
 	if resp.Count == 0 {
-		Logger.Printf("[operator] Unexpected err, key %s not exist", key)
+		o.lg.Warn("key not exist when remove", zap.String("key", key))
 		return nil
 	}
 
