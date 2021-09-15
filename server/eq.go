@@ -74,7 +74,7 @@ func newEventQueue(_ context.Context, lg *zap.Logger) *eventQueue {
 	eq.stopper.Wrap(
 		func(ctx context.Context) {
 			apputil.TickerLoop(
-				ctx, 1*time.Second, fmt.Sprintf(""),
+				ctx, lg, 1*time.Second, fmt.Sprintf(""),
 				func(ctx context.Context) error {
 					eq.tryPopAndPush()
 					return nil

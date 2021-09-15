@@ -18,6 +18,12 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
+)
+
+var (
+	ttLogger, _ = zap.NewProduction()
 )
 
 func Test_newOperator(t *testing.T) {
