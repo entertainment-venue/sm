@@ -149,7 +149,7 @@ firstMove:
 		}
 	}
 
-	apputil.WatchLoop(ctx, o.sc.Client.Client, key, "[operator] service %s MoveLoop exit", fn)
+	apputil.WatchLoop(ctx, o.lg, o.sc.Client.Client, key, "[operator] service %s MoveLoop exit", fn)
 }
 
 // 保证at least once

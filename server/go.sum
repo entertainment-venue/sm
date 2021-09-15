@@ -18,10 +18,13 @@ github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSs
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/entertainment-venue/sm v0.0.0-20210914035545-18bf43c978cc h1:fBu1mF+/PtWVito2xp1QlyKfsXPSdnmb0uMT7vmMCTA=
 github.com/entertainment-venue/sm v0.0.0-20210914123511-56607a3c9458 h1:kZR93gt367LML5Jm7+Dm0qLljUlvsVjKlTykdGi98m8=
+github.com/entertainment-venue/sm v0.0.0-20210915092249-0e5604db6436 h1:oCvaoO3i91d8YVGpQUIMg4OI+rZDEdTdVZs4zEyJG7w=
 github.com/entertainment-venue/sm/pkg v0.0.0-20210914035545-18bf43c978cc h1:GBb13DmW9USwOZp3DsCdnyMSDYzlAzLAgrKgpDfCObk=
 github.com/entertainment-venue/sm/pkg v0.0.0-20210914035545-18bf43c978cc/go.mod h1:HFA5JE6rsmu6D1Om4SNhM3CCMZuCk2o8ui3xAFH2DA0=
 github.com/entertainment-venue/sm/pkg v0.0.0-20210914123511-56607a3c9458 h1:1d7J1JnXLZ8WFpXbTvujE2Z3CD5MoKKo87AjJEHPnoQ=
 github.com/entertainment-venue/sm/pkg v0.0.0-20210914123511-56607a3c9458/go.mod h1:HFA5JE6rsmu6D1Om4SNhM3CCMZuCk2o8ui3xAFH2DA0=
+github.com/entertainment-venue/sm/pkg v0.0.0-20210915092249-0e5604db6436 h1:vBpYXybTzqo06cPfwITYOgwjVNavbVeaYYlRsCiqsf0=
+github.com/entertainment-venue/sm/pkg v0.0.0-20210915092249-0e5604db6436/go.mod h1:HFA5JE6rsmu6D1Om4SNhM3CCMZuCk2o8ui3xAFH2DA0=
 github.com/envoyproxy/go-control-plane v0.9.1-0.20191026205805-5f8ba28d4473/go.mod h1:YTl/9mNaCwkRvm6d1a2C3ymFceY/DCBVvsKhRF0iEA4=
 github.com/envoyproxy/protoc-gen-validate v0.1.0/go.mod h1:iSmxcyjqTsJpI2R4NaDN7+kN2VEUnK/pcBlmesArF7c=
 github.com/gin-contrib/sse v0.1.0 h1:Y/yl/+YNO8GZSjAhjMsSuLt29uWRFHdHYUb5lYOV9qE=

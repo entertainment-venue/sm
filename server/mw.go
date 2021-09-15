@@ -51,6 +51,7 @@ func (w *maintenanceWorker) Start() {
 		func(ctx context.Context) {
 			apputil.TickerLoop(
 				w.ctx,
+				w.lg,
 				defaultShardLoopInterval,
 				fmt.Sprintf("[mtWorker] service %s ShardAllocateLoop exit", w.service),
 				func(ctx context.Context) error {
@@ -63,6 +64,7 @@ func (w *maintenanceWorker) Start() {
 		func(ctx context.Context) {
 			apputil.WatchLoop(
 				w.ctx,
+				w.lg,
 				w.parent.Client.Client,
 				w.parent.ew.nodeAppShardHb(w.service),
 				fmt.Sprintf("[mtWorker] service %s ShardLoadLoop exit", w.service),
@@ -76,6 +78,7 @@ func (w *maintenanceWorker) Start() {
 		func(ctx context.Context) {
 			apputil.WatchLoop(
 				w.ctx,
+				w.lg,
 				w.parent.Client.Client,
 				w.parent.ew.nodeAppContainerHb(w.service),
 				fmt.Sprintf("[mtWorker] service %s ContainerLoadLoop exit", w.service),

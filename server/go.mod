@@ -4,7 +4,8 @@ go 1.14
 
 require (
 	github.com/coreos/etcd v3.3.25+incompatible
-	github.com/entertainment-venue/sm/pkg v0.0.0-20210914123511-56607a3c9458
+	github.com/coreos/go-systemd v0.0.0-00010101000000-000000000000 // indirect
+	github.com/entertainment-venue/sm/pkg v0.0.0-20210915092249-0e5604db6436
 	github.com/gin-gonic/gin v1.7.4
 	github.com/go-playground/validator/v10 v10.9.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -14,6 +15,7 @@ require (
 	github.com/ugorji/go v1.2.6 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.7.0 // indirect
+	go.uber.org/zap v1.19.1
 	golang.org/x/crypto v0.0.0-20210817164053-32db794688a5 // indirect
 	golang.org/x/net v0.0.0-20210913180222-943fd674d43e // indirect
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
