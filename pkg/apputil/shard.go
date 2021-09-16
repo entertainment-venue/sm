@@ -17,6 +17,7 @@ package apputil
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -75,17 +76,23 @@ type ShardServer struct {
 	hbNode   string
 	taskNode string
 
+	// 在Close方法中需要能被close掉
+	srv *http.Server
+
+	donec chan struct{}
+
+	ctx       context.Context
 	impl      ShardInterface
 	container *Container
 	lg        *zap.Logger
 }
 
 type shardServerOptions struct {
-	ctx             context.Context
 	addr            string
 	routeAndHandler map[string]func(c *gin.Context)
 
 	// FIXME 和ShardServer重复
+	ctx       context.Context
 	impl      ShardInterface
 	container *Container
 	lg        *zap.Logger
@@ -129,59 +136,42 @@ func ShardServerWithLogger(lg *zap.Logger) ShardServerOption {
 	}
 }
 
-func NewShardServer(opts ...ShardServerOption) error {
+func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 	ops := &shardServerOptions{}
 	for _, opt := range opts {
 		opt(ops)
 	}
 
 	if ops.addr == "" {
-		return errors.New("addr err")
+		return nil, errors.New("addr err")
 	}
 	if ops.container == nil {
-		return errors.New("container err")
+		return nil, errors.New("container err")
 	}
 	if ops.lg == nil {
-		return errors.New("lg err")
+		return nil, errors.New("lg err")
 	}
 	if ops.impl == nil {
-		return errors.New("impl err")
+		return nil, errors.New("impl err")
+	}
+	if ops.ctx == nil {
+		return nil, errors.New("ctx err")
 	}
 
 	ss := ShardServer{
-		shards:   make(map[string]struct{}),
-		stopper:  &GoroutineStopper{},
-		hbNode:   EtcdPathAppShardHbId(ops.container.Service(), ops.container.Id()),
-		taskNode: EtcdPathAppShardId(ops.container.Service(), ops.container.Id()),
-		lg:       ops.lg,
-	}
-
-	go func() {
-		defer ss.Close()
-		for range ops.ctx.Done() {
-
-		}
-	}()
-
-	r := gin.Default()
-	ssg := r.Group("/sm/admin")
-	{
-		ssg.POST("/add-shard", ss.GinAddShard)
-		ssg.POST("/drop-shard", ss.GinDropShard)
-	}
-	if ops.routeAndHandler != nil {
-		for route, handler := range ops.routeAndHandler {
-			r.POST(route, handler)
-		}
-	}
-	if err := r.Run(ops.addr); err != nil {
-		return errors.Wrap(err, "")
+		stopper:   &GoroutineStopper{},
+		container: ops.container,
+		shards:    make(map[string]struct{}),
+		hbNode:    EtcdPathAppShardHbId(ops.container.Service(), ops.container.Id()),
+		taskNode:  EtcdPathAppShardId(ops.container.Service(), ops.container.Id()),
+		lg:        ops.lg,
+		ctx:       ops.ctx,
 	}
 
 	// 上传shard的load，load是从接入服务拿到
 	ss.stopper.Wrap(func(ctx context.Context) {
 		TickerLoop(
-			ctx, ops.lg, 3*time.Second, "[shardserver] load uploader exit",
+			ctx, ops.lg, 3*time.Second, fmt.Sprintf("shard server %s stop upload load", ss.hbNode),
 			func(ctx context.Context) error {
 				for id := range ss.shards {
 					sl, err := ss.impl.Load(ctx, id)
@@ -198,14 +188,74 @@ func NewShardServer(opts ...ShardServerOption) error {
 		)
 	})
 
-	return nil
+	router := gin.Default()
+	ssg := router.Group("/sm/admin")
+	{
+		ssg.POST("/add-shard", ss.GinAddShard)
+		ssg.POST("/drop-shard", ss.GinDropShard)
+	}
+	if ops.routeAndHandler != nil {
+		for route, handler := range ops.routeAndHandler {
+			router.POST(route, handler)
+		}
+	}
+
+	srv := &http.Server{
+		Addr:    ops.addr,
+		Handler: router,
+	}
+	ss.srv = srv
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			ops.lg.Panic("failed to listen",
+				zap.Error(err),
+				zap.String("addr", ops.addr),
+			)
+		}
+	}()
+
+	go func() {
+		defer ss.Close()
+
+		// shardserver使用container与etcd建立的session，回收心跳节点
+		select {
+		case <-ss.container.Session.Done():
+			ss.lg.Info("session closed", zap.String("hbNode", ss.hbNode))
+		case <-ops.ctx.Done():
+			ss.lg.Info("context done", zap.String("hbNode", ss.hbNode))
+		}
+	}()
+
+	return &ss, nil
 }
 
 func (ss *ShardServer) Close() {
+	defer close(ss.donec)
+
+	if ss.srv != nil {
+		if err := ss.srv.Shutdown(ss.ctx); err != nil {
+			ss.lg.Error("failed to shutdown http srv",
+				zap.Error(err),
+				zap.String("hbNode", ss.hbNode),
+			)
+
+		} else {
+			ss.lg.Info("shutdown http srv success", zap.String("hbNode", ss.hbNode))
+		}
+	}
 	if ss.stopper != nil {
 		ss.stopper.Close()
 	}
-	ss.lg.Info("ShardServer closed", zap.String("service", ss.container.Service()))
+
+	ss.lg.Info("shard server closed",
+		zap.String("service", ss.container.Service()),
+		zap.String("hbNode", ss.hbNode),
+	)
+}
+
+func (ss *ShardServer) Done() <-chan struct{} {
+	return ss.donec
 }
 
 func (ss *ShardServer) GinAddShard(c *gin.Context) {

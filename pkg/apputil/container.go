@@ -35,7 +35,7 @@ import (
 type Container struct {
 	Client  *etcdutil.EtcdClient
 	Session *concurrency.Session
-	Stopper *GoroutineStopper
+	stopper *GoroutineStopper
 
 	id      string
 	service string
@@ -119,10 +119,10 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	}
 
 	donec := make(chan struct{})
-	container := Container{
+	c := Container{
 		Client:  ec,
 		Session: s,
-		Stopper: &GoroutineStopper{},
+		stopper: &GoroutineStopper{},
 
 		id:      ops.id,
 		service: ops.service,
@@ -130,50 +130,47 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 		lg:      ops.lg,
 	}
 
-	container.lg.Info("session opened",
-		zap.String("id", container.Id()),
-		zap.String("service", container.Service()),
+	c.lg.Info("session opened",
+		zap.String("id", c.Id()),
+		zap.String("service", c.Service()),
 	)
 
 	go func() {
-		// 通知上层应用
-		defer close(donec)
-
 		// session关闭后，停掉当前container的工作goroutine
-		defer container.Close()
+		defer c.Close()
 
 		// 监控session的关闭
 		// 需要监控两个方面:
 		// 1. 与etcd网络连接问题导致session不稳定
 		// 2. 使用apputil的app主动通过ctx关闭
 		select {
-		case <-container.Session.Done():
-			container.lg.Info("session closed",
-				zap.String("id", container.Id()),
-				zap.String("service", container.Service()),
+		case <-c.Session.Done():
+			c.lg.Info("session closed",
+				zap.String("id", c.Id()),
+				zap.String("service", c.Service()),
 			)
 		case <-ops.ctx.Done():
-			container.lg.Info("context done",
-				zap.String("id", container.Id()),
-				zap.String("service", container.Service()),
+			c.lg.Info("context done",
+				zap.String("id", c.Id()),
+				zap.String("service", c.Service()),
 			)
 		}
 	}()
 
 	// 上报系统负载，提供container liveness的标记
-	container.Stopper.Wrap(
+	c.stopper.Wrap(
 		func(ctx context.Context) {
-			TickerLoop(ctx, ops.lg, 3*time.Second, "container sys load upload ended", container.UploadSysLoad)
+			TickerLoop(ctx, ops.lg, 3*time.Second, "container stop upload load", c.UploadSysLoad)
 		})
 
-	return &container, nil
+	return &c, nil
 }
 
 func (c *Container) Close() {
 	defer close(c.donec)
 
-	if c.Stopper != nil {
-		c.Stopper.Close()
+	if c.stopper != nil {
+		c.stopper.Close()
 	}
 	c.lg.Info("container closed",
 		zap.String("id", c.Id()),

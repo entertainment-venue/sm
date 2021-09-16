@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func Test_NewContainer_ParamErr(t *testing.T) {
+func TestContainer_NewContainer_ParamErr(t *testing.T) {
 	var tests = []struct {
 		opts   []ContainerOption
 		hasErr bool
@@ -76,15 +76,9 @@ func Test_NewContainer_ParamErr(t *testing.T) {
 	}
 }
 
-func Test_NewContainer_CancelCtx(t *testing.T) {
+func TestContainer_NewContainer_CancelCtx(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	ops := []ContainerOption{
-		ContainerWithId("127.0.0.1:8888"),
-		ContainerWithService("foo.bar"),
-		ContainerWithEndpoints([]string{"127.0.0.1:2379"}),
-		ContainerWithLogger(ttLogger),
-		ContainerWithContext(ctx),
-	}
+	ops := newTestContainerOptions(ctx)
 	if _, err := NewContainer(ops...); err != nil {
 		t.Errorf("unexpected err %s", err.Error())
 		t.SkipNow()
@@ -98,14 +92,8 @@ func Test_NewContainer_CancelCtx(t *testing.T) {
 	time.Sleep(5 * time.Second)
 }
 
-func Test_NewContainer_Close(t *testing.T) {
-	ops := []ContainerOption{
-		ContainerWithId("127.0.0.1:8888"),
-		ContainerWithService("foo.bar"),
-		ContainerWithEndpoints([]string{"127.0.0.1:2379"}),
-		ContainerWithLogger(ttLogger),
-		ContainerWithContext(context.TODO()),
-	}
+func TestContainer_Close(t *testing.T) {
+	ops := newTestContainerOptions(context.TODO())
 	container, err := NewContainer(ops...)
 	if err != nil {
 		t.Errorf("unexpected err %s", err.Error())
@@ -123,4 +111,14 @@ func Test_NewContainer_Close(t *testing.T) {
 	}
 	fmt.Println("waiting goroutine to exit...")
 	time.Sleep(5 * time.Second)
+}
+
+func newTestContainerOptions(ctx context.Context) []ContainerOption {
+	return []ContainerOption{
+		ContainerWithId("127.0.0.1:8888"),
+		ContainerWithService("foo.bar"),
+		ContainerWithEndpoints([]string{"127.0.0.1:2379"}),
+		ContainerWithLogger(ttLogger),
+		ContainerWithContext(ctx),
+	}
 }
