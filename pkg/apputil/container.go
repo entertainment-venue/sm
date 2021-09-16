@@ -96,21 +96,27 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	if ops.id == "" {
 		return nil, errors.New("id err")
 	}
+	if ops.service == "" {
+		return nil, errors.New("service err")
+	}
 	if len(ops.endpoints) == 0 {
 		return nil, errors.New("endpoints err")
 	}
+	if ops.lg == nil {
+		return nil, errors.New("lg err")
+	}
 
-	client, err := etcdutil.NewEtcdClient(ops.endpoints, ops.lg)
+	ec, err := etcdutil.NewEtcdClient(ops.endpoints, ops.lg)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	s, err := concurrency.NewSession(client.Client, concurrency.WithTTL(5))
+	s, err := concurrency.NewSession(ec.Client, concurrency.WithTTL(5))
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
 
 	donec := make(chan struct{})
-	container := Container{Client: client, Session: s, id: ops.id, service: ops.service, donec: donec, lg: ops.lg}
+	container := Container{Client: ec, Session: s, id: ops.id, service: ops.service, donec: donec, lg: ops.lg}
 
 	go func() {
 		// 通知上层应用

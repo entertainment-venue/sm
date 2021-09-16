@@ -86,9 +86,9 @@ type shardServerOptions struct {
 	routeAndHandler map[string]func(c *gin.Context)
 
 	// FIXME 和ShardServer重复
-	implementation ShardInterface
-	container      *Container
-	lg             *zap.Logger
+	impl      ShardInterface
+	container *Container
+	lg        *zap.Logger
 }
 
 type ShardServerOption func(options *shardServerOptions)
@@ -107,7 +107,7 @@ func ShardServerWithContainer(v *Container) ShardServerOption {
 
 func ShardServerWithShardImplementation(v ShardInterface) ShardServerOption {
 	return func(sso *shardServerOptions) {
-		sso.implementation = v
+		sso.impl = v
 	}
 }
 
@@ -138,16 +138,30 @@ func NewShardServer(opts ...ShardServerOption) error {
 	if ops.addr == "" {
 		return errors.New("addr err")
 	}
-
-	logger, _ := zap.NewProduction()
+	if ops.container == nil {
+		return errors.New("container err")
+	}
+	if ops.lg == nil {
+		return errors.New("lg err")
+	}
+	if ops.impl == nil {
+		return errors.New("impl err")
+	}
 
 	ss := ShardServer{
 		shards:   make(map[string]struct{}),
 		stopper:  &GoroutineStopper{},
 		hbNode:   EtcdPathAppShardHbId(ops.container.Service(), ops.container.Id()),
 		taskNode: EtcdPathAppShardId(ops.container.Service(), ops.container.Id()),
-		lg:       logger,
+		lg:       ops.lg,
 	}
+
+	go func() {
+		defer ss.Close()
+		for range ops.ctx.Done() {
+
+		}
+	}()
 
 	r := gin.Default()
 	ssg := r.Group("/sm/admin")
@@ -155,8 +169,10 @@ func NewShardServer(opts ...ShardServerOption) error {
 		ssg.POST("/add-shard", ss.GinAddShard)
 		ssg.POST("/drop-shard", ss.GinDropShard)
 	}
-	for route, handler := range ops.routeAndHandler {
-		r.POST(route, handler)
+	if ops.routeAndHandler != nil {
+		for route, handler := range ops.routeAndHandler {
+			r.POST(route, handler)
+		}
 	}
 
 	if err := r.Run(ops.addr); err != nil {
@@ -166,7 +182,7 @@ func NewShardServer(opts ...ShardServerOption) error {
 	// 上传shard的load，load是从接入服务拿到
 	ss.stopper.Wrap(func(ctx context.Context) {
 		TickerLoop(
-			ctx, logger, 3*time.Second, "[shardserver] load uploader exit",
+			ctx, ops.lg, 3*time.Second, "[shardserver] load uploader exit",
 			func(ctx context.Context) error {
 				for id := range ss.shards {
 					sl, err := ss.impl.Load(context.TODO(), id)
@@ -182,13 +198,6 @@ func NewShardServer(opts ...ShardServerOption) error {
 			},
 		)
 	})
-
-	go func() {
-		defer ss.Close()
-		for range ops.ctx.Done() {
-
-		}
-	}()
 
 	return nil
 }
