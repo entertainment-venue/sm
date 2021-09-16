@@ -53,7 +53,7 @@ func Test_remove(t *testing.T) {
 	}
 
 	o := operator{}
-	o.sc = ctr
+	o.parent = ctr
 
 	if err := o.remove(context.TODO(), "1", "foo.bar"); err != nil {
 		t.Errorf("err: %+v", err)
@@ -69,8 +69,8 @@ func Test_dropAndAdd(t *testing.T) {
 	}
 
 	o := operator{}
-	o.sc = ctr
-	o.httpClient = newHttpClient()
+	o.parent = ctr
+	o.hc = newHttpClient()
 
 	// ma := moveAction{
 	// 	Service:     "foo.bar",

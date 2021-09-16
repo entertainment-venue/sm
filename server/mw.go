@@ -123,9 +123,9 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context, ew *etcdWrapper
 	if containerChanged(fixShardIdAndContainerId.ValueList(), surviveContainerIdAndValue.KeyList()) {
 		r := w.reallocate(service, surviveContainerIdAndValue, fixShardIdAndContainerId)
 		if len(r) > 0 {
-
+			ev := mvEvent{Service: service, EnqueueTime: time.Now().Unix(), Value: r.String()}
 			item := Item{
-				Value:    r.String(),
+				Value:    ev.String(),
 				Priority: time.Now().Unix(),
 			}
 			eq.push(&item, true)
@@ -149,8 +149,9 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context, ew *etcdWrapper
 	if shardChanged(fixShardIdAndContainerId.KeyList(), surviveShardIdAndValue.KeyMap()) {
 		r := w.reallocate(service, surviveContainerIdAndValue, fixShardIdAndContainerId)
 		if len(r) > 0 {
+			ev := mvEvent{Service: service, EnqueueTime: time.Now().Unix(), Value: r.String()}
 			item := Item{
-				Value:    r.String(),
+				Value:    ev.String(),
 				Priority: time.Now().Unix(),
 			}
 			eq.push(&item, true)
@@ -228,7 +229,7 @@ func shardLoadChecker(_ context.Context, service string, eq *eventQueue, ev *cli
 	}
 
 	start := time.Now()
-	qev := loadEvent{Service: service, EnqueueTime: start.Unix(), Load: string(ev.Kv.Value)}
+	qev := mvEvent{Service: service, EnqueueTime: start.Unix(), Value: string(ev.Kv.Value)}
 
 	var item Item
 	if ev.IsModify() {
@@ -251,7 +252,7 @@ func containerLoadChecker(_ context.Context, service string, eq *eventQueue, ev 
 	}
 
 	start := time.Now()
-	qev := loadEvent{Service: service, EnqueueTime: start.Unix(), Load: string(ev.Kv.Value)}
+	qev := mvEvent{Service: service, EnqueueTime: start.Unix(), Value: string(ev.Kv.Value)}
 
 	var item Item
 	if ev.IsModify() {

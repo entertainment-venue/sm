@@ -66,9 +66,9 @@ func launchServerContainer(ctx context.Context, lg *zap.Logger, id, service stri
 		id:      id,
 		cancel:  cancel,
 		ew:      newEtcdWrapper(),
-		eq:      newEventQueue(ctx, lg),
 	}
 
+	sc.eq = newEventQueue(ctx, lg, &sc)
 	sc.mtWorker = newMaintenanceWorker(&sc, sc.service)
 
 	sc.stopper.Wrap(
@@ -279,7 +279,7 @@ func (c *serverContainer) leaderStartDistribution(ctx context.Context) error {
 
 			c.lg.Info("leaderStartDistribution shard move action",
 				zap.String("service", c.service),
-				zap.Object("action", &ma),
+				zap.Reflect("action", ma),
 			)
 		}
 	}

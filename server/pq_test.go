@@ -24,7 +24,7 @@ func TestPriorityQueue(t *testing.T) {
 	var evPQ PriorityQueue
 	heap.Init(&evPQ)
 
-	ev := loadEvent{
+	ev := mvEvent{
 		Service:     "foo.bar",
 		Type:        tContainerDel,
 		EnqueueTime: 1,

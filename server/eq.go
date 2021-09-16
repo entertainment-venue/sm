@@ -37,34 +37,36 @@ const (
 	tContainerDel
 )
 
-type loadEvent struct {
+type mvEvent struct {
 	Service     string    `json:"service"`
 	Type        eventType `json:"type"`
 	EnqueueTime int64     `json:"enqueueTime"`
-	Load        string    `json:"load"`
+	Value       string    `json:"value"`
 }
 
-func (i *loadEvent) String() string {
+func (i *mvEvent) String() string {
 	b, _ := json.Marshal(i)
 	return string(b)
 }
 
 type eventQueue struct {
+	parent  *serverContainer
 	stopper *apputil.GoroutineStopper
 
 	// 延迟队列: 不能立即处理的先放这里，启动单独的goroutine把event根据时间拿出来，再放到异步队列中
 	pq PriorityQueue
 
 	mu     sync.Mutex
-	buffer map[string]chan *loadEvent // 区分service给chan，每个worker给一个goroutine
-	curEvs map[string]struct{}        // 防止同一service在queue中有重复任务
+	buffer map[string]chan *mvEvent // 区分service给chan，每个worker给一个goroutine
+	curEvs map[string]struct{}      // 防止同一service在queue中有重复任务
 
 	lg *zap.Logger
 }
 
-func newEventQueue(_ context.Context, lg *zap.Logger) *eventQueue {
+func newEventQueue(_ context.Context, lg *zap.Logger, sc *serverContainer) *eventQueue {
 	eq := eventQueue{
-		buffer:  make(map[string]chan *loadEvent),
+		parent:  sc,
+		buffer:  make(map[string]chan *mvEvent),
 		stopper: &apputil.GoroutineStopper{},
 		lg:      lg,
 	}
@@ -88,13 +90,14 @@ func (eq *eventQueue) Close() {
 	if eq.stopper != nil {
 		eq.stopper.Close()
 	}
+	eq.lg.Info("eq closed", zap.String("", ""))
 }
 
 func (eq *eventQueue) push(item *Item, checkDup bool) {
 	eq.mu.Lock()
 	defer eq.mu.Unlock()
 
-	var ev loadEvent
+	var ev mvEvent
 	if err := json.Unmarshal([]byte(item.Value), &ev); err != nil {
 		eq.lg.Error("Unmarshal err", zap.String("raw", item.Value))
 		return
@@ -110,7 +113,7 @@ func (eq *eventQueue) push(item *Item, checkDup bool) {
 
 	ch, ok := eq.buffer[ev.Service]
 	if !ok {
-		ch = make(chan *loadEvent, defaultEventChanLength)
+		ch = make(chan *mvEvent, defaultEventChanLength)
 		eq.buffer[ev.Service] = ch
 
 		eq.stopper.Wrap(
@@ -154,10 +157,10 @@ popASAP:
 	goto popASAP
 }
 
-func (eq *eventQueue) evLoop(ctx context.Context, service string, ch chan *loadEvent) {
+func (eq *eventQueue) evLoop(ctx context.Context, service string, ch chan *mvEvent) {
 	// worker只启动一个，用于计算，算法本身可以利用多核能力
 	for {
-		var ev *loadEvent
+		var ev *mvEvent
 		select {
 		case <-ctx.Done():
 			eq.lg.Info("evLoop exit", zap.String("service", service))

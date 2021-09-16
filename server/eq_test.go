@@ -20,7 +20,7 @@ import (
 )
 
 func TestEventQueue_push(t *testing.T) {
-	lev := loadEvent{
+	lev := mvEvent{
 		Service:     "foo.bar",
 		Type:        tContainerDel,
 		EnqueueTime: 1,

@@ -200,6 +200,7 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 		}
 	}
 
+	// https://learnku.com/docs/gin-gonic/2019/examples-graceful-restart-or-stop/6173
 	srv := &http.Server{
 		Addr:    ops.addr,
 		Handler: router,

@@ -28,7 +28,6 @@ import (
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -63,30 +62,22 @@ func (action *moveAction) String() string {
 	return string(b)
 }
 
-func (action *moveAction) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
-	encoder.AddString("content", action.String())
-	return nil
-}
-
 // container和shard上报两个维度的load，leader(sm)或者shard(app)探测到异常，会发布任务出来，operator就是这个任务的执行者
 type operator struct {
-	stopper *apputil.GoroutineStopper
-
-	service string
-
-	sc         *serverContainer
-	httpClient *http.Client
-	prevValue  string
-
-	lg *zap.Logger
+	parent    *serverContainer
+	stopper   *apputil.GoroutineStopper
+	service   string
+	lg        *zap.Logger
+	hc        *http.Client
+	prevValue string
 }
 
 func newOperator(sc *serverContainer, service string) (*operator, error) {
-	op := operator{service: service, sc: sc, httpClient: newHttpClient()}
+	op := operator{service: service, parent: sc, hc: newHttpClient()}
 
 	op.stopper.Wrap(
 		func(ctx context.Context) {
-			op.MoveLoop(ctx)
+			op.moveLoop(ctx)
 		})
 
 	// TODO scale
@@ -98,16 +89,43 @@ func (o *operator) Close() {
 	if o.stopper != nil {
 		o.stopper.Close()
 	}
-	o.lg.Info("close operator", zap.String("service", o.sc.service))
+	o.lg.Info("operator closed", zap.String("service", o.parent.service))
 }
 
-// sm的shard需要能为接入app提供shard移动的能力，且保证每个任务被执行掉，所以任务会绑定在shard，防止sm的shard移动导致任务没人干
-func (o *operator) MoveLoop(ctx context.Context) {
+func (o *operator) moveLoop(ctx context.Context) {
+	key := o.parent.ew.nodeAppTask(o.parent.service)
+
+	// Move只有对特定app负责的operator
+	// 当前如果存在任务，直接开始执行
+dealWithLatestTask:
+	resp, err := o.parent.Client.GetKV(ctx, key, []clientv3.OpOption{})
+	if err != nil {
+		o.lg.Error("failed to GetKV",
+			zap.String("key", key),
+			zap.Error(err),
+		)
+		time.Sleep(defaultSleepTimeout)
+		goto dealWithLatestTask
+	}
+	if resp.Count > 0 && string(resp.Kvs[0].Value) != "" {
+		if err := o.move(ctx, resp.Kvs[0].Value); err != nil {
+			o.lg.Error("failed to move",
+				zap.ByteString("value", resp.Kvs[0].Value),
+				zap.Error(err),
+			)
+
+			time.Sleep(defaultSleepTimeout)
+			goto dealWithLatestTask
+		}
+	}
+
 	fn := func(ctx context.Context, ev *clientv3.Event) error {
 		if ev.Type == mvccpb.DELETE {
+			o.lg.Error("unexpected event", zap.Reflect("ev", ev))
 			return nil
 		}
 
+		// 不接受重复的任务，在一个任务运行时，eq提交任务也会失败
 		if string(ev.Kv.Value) == o.prevValue {
 			o.lg.Warn("duplicate event", zap.String("prevValue", o.prevValue))
 			return nil
@@ -117,39 +135,12 @@ func (o *operator) MoveLoop(ctx context.Context) {
 			return errors.Wrap(err, "")
 		}
 
+		o.prevValue = string(ev.Kv.Value)
+
 		return nil
 	}
 
-	key := o.sc.ew.nodeAppTask(o.sc.service)
-
-	// Move只有对特定app负责的operator
-	// 当前如果存在任务，直接开始执行
-firstMove:
-	resp, err := o.sc.Client.GetKV(ctx, key, []clientv3.OpOption{})
-	if err != nil {
-		o.lg.Error("failed to GetKV",
-			zap.String("key", key),
-			zap.Error(err),
-		)
-		time.Sleep(defaultSleepTimeout)
-		goto firstMove
-	}
-	if resp.Count > 0 {
-		s := string(resp.Kvs[0].Value)
-		if s != "" {
-			if err := o.move(ctx, resp.Kvs[0].Value); err != nil {
-				o.lg.Error("failed to move",
-					zap.ByteString("value", resp.Kvs[0].Value),
-					zap.Error(err),
-				)
-
-				time.Sleep(defaultSleepTimeout)
-				goto firstMove
-			}
-		}
-	}
-
-	apputil.WatchLoop(ctx, o.lg, o.sc.Client.Client, key, "[operator] service %s MoveLoop exit", fn)
+	apputil.WatchLoop(ctx, o.lg, o.parent.Client.Client, key, "[operator] service %s moveLoop exit", fn)
 }
 
 // 保证at least once
@@ -184,8 +175,8 @@ move:
 
 	// 利用etcd tx清空任务节点，任务节点已经空就停止
 ack:
-	key := o.sc.ew.nodeAppTask(o.sc.service)
-	if _, err := o.sc.Client.CompareAndSwap(ctx, key, string(value), "", -1); err != nil {
+	key := o.parent.ew.nodeAppTask(o.parent.service)
+	if _, err := o.parent.Client.CompareAndSwap(ctx, key, string(value), "", -1); err != nil {
 		// 节点数据被破坏，需要人工介入
 		o.lg.Error("failed to CompareAndSwap",
 			zap.String("key", key),
@@ -220,8 +211,8 @@ func (o *operator) dropAndAdd(ctx context.Context, ma *moveAction) error {
 			}
 
 			o.lg.Error("failed to send",
-				zap.Object("value", ma),
 				zap.Error(err),
+				zap.Reflect("value", ma),
 			)
 
 			// 只在leader竞选成功场景下会下发分配指令，没有Drop动作，这里允许放弃当前动作，后续有shardAllocateLoop和shardLoadLoop兜底
@@ -235,13 +226,13 @@ func (o *operator) dropAndAdd(ctx context.Context, ma *moveAction) error {
 		onlyDrop = true
 
 		// 没有Add节点证明要把shard清除掉
-		if err := o.sc.Client.DelKV(ctx, apputil.EtcdPathAppShardId(ma.Service, ma.ShardId)); err != nil {
+		if err := o.parent.Client.DelKV(ctx, apputil.EtcdPathAppShardId(ma.Service, ma.ShardId)); err != nil {
 			return errors.Wrap(err, "")
 		}
 	}
 
 	o.lg.Info("move shard success",
-		zap.Object("ma", ma),
+		zap.Reflect("ma", ma),
 		zap.Bool("onlyAdd", onlyAdd),
 		zap.Bool("onlyDrop", onlyDrop),
 	)
@@ -263,7 +254,7 @@ func (o *operator) send(id string, endpoint string, action string) error {
 		return errors.Wrap(err, "")
 	}
 
-	resp, err := o.httpClient.Do(req)
+	resp, err := o.hc.Do(req)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -278,7 +269,7 @@ func (o *operator) send(id string, endpoint string, action string) error {
 
 func (o *operator) remove(ctx context.Context, id, service string) error {
 	key := apputil.EtcdPathAppShardId(service, id)
-	resp, err := o.sc.Client.GetKV(ctx, key, nil)
+	resp, err := o.parent.Client.GetKV(ctx, key, nil)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -295,7 +286,7 @@ func (o *operator) remove(ctx context.Context, id, service string) error {
 		return nil
 	}
 	ss.ContainerId = ""
-	if _, err := o.sc.Client.CompareAndSwap(ctx, key, string(resp.Kvs[0].Value), ss.String(), -1); err != nil {
+	if _, err := o.parent.Client.CompareAndSwap(ctx, key, string(resp.Kvs[0].Value), ss.String(), -1); err != nil {
 		return errors.Wrap(err, "")
 	}
 	return nil
