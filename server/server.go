@@ -23,6 +23,17 @@ import (
 	"go.uber.org/zap"
 )
 
+type Server struct {
+	// 管理sm server内部的goroutine
+	cancel context.CancelFunc
+
+	c  *apputil.Container
+	ss *apputil.ShardServer
+	sc *serverContainer
+
+	lg *zap.Logger
+}
+
 type serverOptions struct {
 	// id是当前容器/进程的唯一标记，不能变化，用于做container和shard的映射关系
 	id string
@@ -35,8 +46,6 @@ type serverOptions struct {
 
 	// 监听端口: 提供管理职能，add、drop
 	addr string
-
-	ctx context.Context
 }
 
 type ServerOption func(options *serverOptions)
@@ -65,61 +74,81 @@ func WithAddr(v string) ServerOption {
 	}
 }
 
-func WithContext(v context.Context) ServerOption {
-	return func(options *serverOptions) {
-		options.ctx = v
-	}
-}
-
-func Run(fn ...ServerOption) error {
+func NewServer(fn ...ServerOption) (*Server, error) {
 	ops := serverOptions{}
 	for _, f := range fn {
 		f(&ops)
 	}
 
-	if ops.id == "" || ops.service == "" || ops.addr == "" || len(ops.endpoints) == 0 {
-		return errors.Wrap(errParam, "")
+	if ops.id == "" {
+		return nil, errors.New("id err")
+	}
+	if ops.service == "" {
+		return nil, errors.New("service err")
+	}
+	if ops.addr == "" {
+		return nil, errors.New("addr err")
+	}
+	if len(ops.endpoints) == 0 {
+		return nil, errors.New("endpoints err")
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	logger, _ := zap.NewProduction()
+	srv := Server{cancel: cancel, lg: logger}
 
-	cc, err := apputil.NewContainer(
-		apputil.ContainerWithContext(ops.ctx),
+	c, err := apputil.NewContainer(
+		apputil.ContainerWithContext(ctx),
 		apputil.ContainerWithService(ops.service),
 		apputil.ContainerWithId(ops.id),
 		apputil.ContainerWithEndpoints(ops.endpoints),
 		apputil.ContainerWithLogger(logger))
 	if err != nil {
-		return errors.Wrap(err, "")
+		return nil, errors.Wrap(err, "")
 	}
+	srv.c = c
 
-	sc, err := launchServerContainer(ops.ctx, logger, ops.id, ops.service)
+	sc, err := launchServerContainer(ctx, logger, ops.id, ops.service)
 	if err != nil {
-		return errors.Wrap(err, "")
+		return nil, errors.Wrap(err, "")
 	}
+	srv.sc = sc
+
+	apiSrv := shardServer{sc, logger}
+	routeAndHandler := make(map[string]func(c *gin.Context))
+	routeAndHandler["/sm/server/add-spec"] = apiSrv.GinAddSpec
+	routeAndHandler["/sm/server/add-shard"] = apiSrv.GinAddShard
+	ss, err := apputil.NewShardServer(
+		apputil.ShardServerWithAddr(ops.addr),
+		apputil.ShardServerWithContext(ctx),
+		apputil.ShardServerWithContainer(c),
+		apputil.ShardServerWithApiHandler(routeAndHandler),
+		apputil.ShardServerWithShardImplementation(sc),
+		apputil.ShardServerWithLogger(logger))
+	if err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+	srv.ss = ss
 
 	go func() {
-		defer logger.Sync()
-		defer sc.Close()
-		for range cc.Done() {
+		defer srv.Close()
 
+		// 关注apputil中的Container和ShardServer关闭，sm服务停下来
+		select {
+		case <-c.Done():
+			logger.Info("container done")
+		case <-ss.Done():
+			logger.Info("shard server done")
 		}
 	}()
 
-	ss := shardServer{sc, logger}
-	routeAndHandler := make(map[string]func(c *gin.Context))
-	routeAndHandler["/sm/server/add-spec"] = ss.GinAddSpec
-	routeAndHandler["/sm/server/add-shard"] = ss.GinAddShard
+	return &srv, nil
+}
 
-	if err := apputil.NewShardServer(
-		apputil.ShardServerWithAddr(ops.addr),
-		apputil.ShardServerWithContext(ops.ctx),
-		apputil.ShardServerWithContainer(cc),
-		apputil.ShardServerWithApiHandler(routeAndHandler),
-		apputil.ShardServerWithShardImplementation(sc),
-		apputil.ShardServerWithLogger(logger)); err != nil {
-		return errors.Wrap(err, "")
+func (s *Server) Close() {
+	defer s.lg.Sync()
+
+	if s.cancel != nil {
+		s.cancel()
 	}
-
-	return nil
 }
