@@ -5,7 +5,7 @@ go 1.14
 require (
 	github.com/coreos/etcd v3.3.25+incompatible
 	github.com/coreos/go-systemd v0.0.0-00010101000000-000000000000 // indirect
-	github.com/entertainment-venue/sm/pkg v0.0.0-20210915092249-0e5604db6436
+	github.com/entertainment-venue/sm/pkg v0.0.0-20210916040023-83eab2e57d65
 	github.com/gin-gonic/gin v1.7.4
 	github.com/go-playground/validator/v10 v10.9.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -16,12 +16,12 @@ require (
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.7.0 // indirect
 	go.uber.org/zap v1.19.1
-	golang.org/x/crypto v0.0.0-20210817164053-32db794688a5 // indirect
-	golang.org/x/net v0.0.0-20210913180222-943fd674d43e // indirect
+	golang.org/x/crypto v0.0.0-20210915214749-c084706c2272 // indirect
+	golang.org/x/net v0.0.0-20210916014120-12bc252f5db8 // indirect
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
-	golang.org/x/sys v0.0.0-20210910150752-751e447fb3d0 // indirect
+	golang.org/x/sys v0.0.0-20210915083310-ed5796bab164 // indirect
 	golang.org/x/text v0.3.7 // indirect
-	google.golang.org/genproto v0.0.0-20210909211513-a8c4777a87af // indirect
+	google.golang.org/genproto v0.0.0-20210915214522-86cf1236ec46 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 

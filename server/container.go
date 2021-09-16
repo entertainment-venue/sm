@@ -56,7 +56,7 @@ type serverContainer struct {
 	op *operator
 }
 
-func newServerContainer(ctx context.Context, lg *zap.Logger, id, service string) (*serverContainer, error) {
+func launchServerContainer(ctx context.Context, lg *zap.Logger, id, service string) (*serverContainer, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Container只关注通用部分，所以service和id还是要保留一份到数据结构

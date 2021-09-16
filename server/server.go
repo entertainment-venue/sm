@@ -72,27 +72,28 @@ func WithContext(v context.Context) ServerOption {
 }
 
 func Run(fn ...ServerOption) error {
-	opts := serverOptions{}
+	ops := serverOptions{}
 	for _, f := range fn {
-		f(&opts)
+		f(&ops)
 	}
 
-	if opts.id == "" || opts.service == "" || opts.addr == "" || len(opts.endpoints) == 0 {
+	if ops.id == "" || ops.service == "" || ops.addr == "" || len(ops.endpoints) == 0 {
 		return errors.Wrap(errParam, "")
-	}
-
-	cc, err := apputil.NewContainer(
-		apputil.WithContext(opts.ctx),
-		apputil.WithService(opts.service),
-		apputil.WithId(opts.id),
-		apputil.WithEndpoints(opts.endpoints))
-	if err != nil {
-		return errors.Wrap(err, "")
 	}
 
 	logger, _ := zap.NewProduction()
 
-	sc, err := newServerContainer(opts.ctx, logger, opts.id, opts.service)
+	cc, err := apputil.NewContainer(
+		apputil.ContainerWithContext(ops.ctx),
+		apputil.ContainerWithService(ops.service),
+		apputil.ContainerWithId(ops.id),
+		apputil.ContainerWithEndpoints(ops.endpoints),
+		apputil.ContainerWithLogger(logger))
+	if err != nil {
+		return errors.Wrap(err, "")
+	}
+
+	sc, err := launchServerContainer(ops.ctx, logger, ops.id, ops.service)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -107,15 +108,16 @@ func Run(fn ...ServerOption) error {
 
 	ss := shardServer{sc, logger}
 	routeAndHandler := make(map[string]func(c *gin.Context))
-	routeAndHandler["/sm/admin/add-spec"] = ss.GinAppAddSpec
-	routeAndHandler["/sm/admin/add-shard"] = ss.GinAppAddShard
+	routeAndHandler["/sm/server/add-spec"] = ss.GinAddSpec
+	routeAndHandler["/sm/server/add-shard"] = ss.GinAddShard
 
 	if err := apputil.NewShardServer(
-		apputil.ShardServerWithAddr(opts.addr),
-		apputil.ShardServerWithContext(opts.ctx),
+		apputil.ShardServerWithAddr(ops.addr),
+		apputil.ShardServerWithContext(ops.ctx),
 		apputil.ShardServerWithContainer(cc),
 		apputil.ShardServerWithApiHandler(routeAndHandler),
-		apputil.ShardServerWithShardImplementation(sc)); err != nil {
+		apputil.ShardServerWithShardImplementation(sc),
+		apputil.ShardServerWithLogger(logger)); err != nil {
 		return errors.Wrap(err, "")
 	}
 

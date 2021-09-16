@@ -32,20 +32,20 @@ type shardServer struct {
 	lg *zap.Logger
 }
 
-type appSpec struct {
+type addSpecRequest struct {
 	// 目前app的spec更多承担的是管理职能，shard配置的一个起点，先只配置上service，可以唯一标记一个app
 	Service string `json:"service"`
 
 	CreateTime int64 `json:"createTime"`
 }
 
-func (s *appSpec) String() string {
+func (s *addSpecRequest) String() string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
 
-func (ss *shardServer) GinAppAddSpec(c *gin.Context) {
-	var req appSpec
+func (ss *shardServer) GinAddSpec(c *gin.Context) {
+	var req addSpecRequest
 	if err := c.ShouldBind(&req); err != nil {
 		ss.lg.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -75,7 +75,7 @@ func (ss *shardServer) GinAppAddSpec(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{})
 }
 
-type appAddShardRequest struct {
+type addShardRequest struct {
 	ShardId string `json:"shardId"`
 
 	// 为哪个业务app增加shard
@@ -85,13 +85,13 @@ type appAddShardRequest struct {
 	Task string `json:"task"`
 }
 
-func (r *appAddShardRequest) String() string {
+func (r *addShardRequest) String() string {
 	b, _ := json.Marshal(r)
 	return string(b)
 }
 
-func (ss *shardServer) GinAppAddShard(c *gin.Context) {
-	var req appAddShardRequest
+func (ss *shardServer) GinAddShard(c *gin.Context) {
+	var req addShardRequest
 	if err := c.ShouldBind(&req); err != nil {
 		ss.lg.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
