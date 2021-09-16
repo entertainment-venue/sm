@@ -23,6 +23,11 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
+	"go.uber.org/zap"
+)
+
+var (
+	ttLogger, _ = zap.NewProduction()
 )
 
 func Test_tickerLoop(t *testing.T) {
@@ -34,6 +39,7 @@ func Test_tickerLoop(t *testing.T) {
 	wg.Add(1)
 	go TickerLoop(
 		ctx,
+		ttLogger,
 		time.Second,
 		"test loop exit",
 		func(ctx context.Context) error {
@@ -61,7 +67,7 @@ func Test_watchLoop(t *testing.T) {
 		ctx, cancel = context.WithCancel(context.Background())
 	)
 
-	client, err := etcdutil.NewEtcdClient([]string{"127.0.0.1:2379"})
+	client, err := etcdutil.NewEtcdClient([]string{"127.0.0.1:2379"}, ttLogger)
 	if err != nil {
 		t.Errorf("err: %v", err)
 		t.SkipNow()
@@ -70,6 +76,7 @@ func Test_watchLoop(t *testing.T) {
 	wg.Add(1)
 	go WatchLoop(
 		ctx,
+		ttLogger,
 		client.Client,
 		"foo",
 		"test loop exit",

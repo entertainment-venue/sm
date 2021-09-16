@@ -33,46 +33,55 @@ import (
 // 1 上报container的load信息，保证container的liveness，才能够参与shard的分配
 // 2 与sm交互，下发add和drop给到Shard
 type Container struct {
-	Client *etcdutil.EtcdClient
-
+	Client  *etcdutil.EtcdClient
 	Session *concurrency.Session
-
 	Stopper *GoroutineStopper
 
-	id, service string
-	donec       <-chan struct{}
+	id      string
+	service string
+	lg      *zap.Logger
 
-	lg *zap.Logger
+	// 可以通知调用方Container结束
+	donec <-chan struct{}
 }
 
 type containerOptions struct {
-	id        string
-	service   string
-	endpoints []string
 	ctx       context.Context
+	endpoints []string
+
+	// 数据传递
+	id      string
+	service string
+	lg      *zap.Logger
 }
 
 type ContainerOption func(options *containerOptions)
 
-func WithId(v string) ContainerOption {
+func ContainerWithId(v string) ContainerOption {
 	return func(co *containerOptions) {
 		co.id = v
 	}
 }
 
-func WithService(v string) ContainerOption {
+func ContainerWithService(v string) ContainerOption {
 	return func(co *containerOptions) {
 		co.service = v
 	}
 }
 
-func WithEndpoints(v []string) ContainerOption {
+func ContainerWithEndpoints(v []string) ContainerOption {
 	return func(co *containerOptions) {
 		co.endpoints = v
 	}
 }
 
-func WithContext(ctx context.Context) ContainerOption {
+func ContainerWithLogger(lg *zap.Logger) ContainerOption {
+	return func(co *containerOptions) {
+		co.lg = lg
+	}
+}
+
+func ContainerWithContext(ctx context.Context) ContainerOption {
 	return func(co *containerOptions) {
 		co.ctx = ctx
 	}
@@ -91,9 +100,7 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 		return nil, errors.New("endpoints err")
 	}
 
-	logger, _ := zap.NewProduction()
-
-	client, err := etcdutil.NewEtcdClient(ops.endpoints, logger)
+	client, err := etcdutil.NewEtcdClient(ops.endpoints, ops.lg)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -103,11 +110,16 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	}
 
 	donec := make(chan struct{})
-	container := Container{Client: client, Session: s, id: ops.id, service: ops.service, donec: donec, lg: logger}
+	container := Container{Client: client, Session: s, id: ops.id, service: ops.service, donec: donec, lg: ops.lg}
 
 	go func() {
+		// 通知上层应用
 		defer close(donec)
+
+		// session关闭后，停掉当前container的工作goroutine
 		defer container.Close()
+
+		// 监控session的关闭
 		for range container.Session.Done() {
 
 		}
@@ -120,7 +132,7 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	// 上报系统负载，提供container liveness的标记
 	container.Stopper.Wrap(
 		func(ctx context.Context) {
-			TickerLoop(ctx, logger, 3*time.Second, "Container upload exit", container.UploadSysLoad)
+			TickerLoop(ctx, ops.lg, 3*time.Second, "Container upload exit", container.UploadSysLoad)
 		})
 
 	return &container, nil
