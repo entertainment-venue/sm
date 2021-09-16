@@ -149,3 +149,27 @@ func TestShardServer_NewShardServer_Close(t *testing.T) {
 	fmt.Println("waiting goroutine to exit...")
 	time.Sleep(5 * time.Second)
 }
+
+func TestShardServer_Api(t *testing.T) {
+	ops := newTestContainerOptions(context.TODO())
+	container, err := NewContainer(ops...)
+	if err != nil {
+		t.Errorf("unexpected err %s", err.Error())
+		t.SkipNow()
+	}
+
+	ss, err := NewShardServer(
+		ShardServerWithAddr(":8888"),
+		ShardServerWithContainer(container),
+		ShardServerWithLogger(ttLogger),
+		ShardServerWithShardImplementation(&testShardImpl{}),
+		ShardServerWithContext(context.TODO()),
+	)
+	if err != nil {
+		t.Errorf("err: %v", err)
+		t.SkipNow()
+	}
+
+	time.Sleep(60 * time.Second)
+	ss.Close()
+}

@@ -118,7 +118,11 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 		return nil, errors.Wrap(err, "")
 	}
 
-	donec := make(chan struct{})
+	ops.lg.Info("session opened",
+		zap.String("id", ops.id),
+		zap.String("service", ops.service),
+	)
+
 	c := Container{
 		Client:  ec,
 		Session: s,
@@ -126,14 +130,15 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 
 		id:      ops.id,
 		service: ops.service,
-		donec:   donec,
+		donec:   make(chan struct{}),
 		lg:      ops.lg,
 	}
 
-	c.lg.Info("session opened",
-		zap.String("id", c.Id()),
-		zap.String("service", c.Service()),
-	)
+	// 上报系统负载，提供container liveness的标记
+	c.stopper.Wrap(
+		func(ctx context.Context) {
+			TickerLoop(ctx, ops.lg, 3*time.Second, "container stop upload load", c.UploadSysLoad)
+		})
 
 	go func() {
 		// session关闭后，停掉当前container的工作goroutine
@@ -156,12 +161,6 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 			)
 		}
 	}()
-
-	// 上报系统负载，提供container liveness的标记
-	c.stopper.Wrap(
-		func(ctx context.Context) {
-			TickerLoop(ctx, ops.lg, 3*time.Second, "container stop upload load", c.UploadSysLoad)
-		})
 
 	return &c, nil
 }
