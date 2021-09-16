@@ -105,6 +105,9 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	if ops.lg == nil {
 		return nil, errors.New("lg err")
 	}
+	if ops.ctx == nil {
+		return nil, errors.New("ctx err")
+	}
 
 	ec, err := etcdutil.NewEtcdClient(ops.endpoints, ops.lg)
 	if err != nil {
@@ -116,7 +119,21 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	}
 
 	donec := make(chan struct{})
-	container := Container{Client: ec, Session: s, id: ops.id, service: ops.service, donec: donec, lg: ops.lg}
+	container := Container{
+		Client:  ec,
+		Session: s,
+		Stopper: &GoroutineStopper{},
+
+		id:      ops.id,
+		service: ops.service,
+		donec:   donec,
+		lg:      ops.lg,
+	}
+
+	container.lg.Info("session opened",
+		zap.String("id", container.Id()),
+		zap.String("service", container.Service()),
+	)
 
 	go func() {
 		// 通知上层应用
@@ -126,19 +143,27 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 		defer container.Close()
 
 		// 监控session的关闭
-		for range container.Session.Done() {
-
+		// 需要监控两个方面:
+		// 1. 与etcd网络连接问题导致session不稳定
+		// 2. 使用apputil的app主动通过ctx关闭
+		select {
+		case <-container.Session.Done():
+			container.lg.Info("session closed",
+				zap.String("id", container.Id()),
+				zap.String("service", container.Service()),
+			)
+		case <-ops.ctx.Done():
+			container.lg.Info("context done",
+				zap.String("id", container.Id()),
+				zap.String("service", container.Service()),
+			)
 		}
-		container.lg.Info("session closed",
-			zap.String("service", ops.service),
-			zap.String("id", ops.id),
-		)
 	}()
 
 	// 上报系统负载，提供container liveness的标记
 	container.Stopper.Wrap(
 		func(ctx context.Context) {
-			TickerLoop(ctx, ops.lg, 3*time.Second, "Container upload exit", container.UploadSysLoad)
+			TickerLoop(ctx, ops.lg, 3*time.Second, "container sys load upload ended", container.UploadSysLoad)
 		})
 
 	return &container, nil
@@ -148,6 +173,10 @@ func (c *Container) Close() {
 	if c.Stopper != nil {
 		c.Stopper.Close()
 	}
+	c.lg.Info("container closed",
+		zap.String("id", c.Id()),
+		zap.String("service", c.Service()),
+	)
 }
 
 func (c *Container) Done() <-chan struct{} {

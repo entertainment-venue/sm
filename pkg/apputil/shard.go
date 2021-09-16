@@ -174,7 +174,6 @@ func NewShardServer(opts ...ShardServerOption) error {
 			r.POST(route, handler)
 		}
 	}
-
 	if err := r.Run(ops.addr); err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -185,7 +184,7 @@ func NewShardServer(opts ...ShardServerOption) error {
 			ctx, ops.lg, 3*time.Second, "[shardserver] load uploader exit",
 			func(ctx context.Context) error {
 				for id := range ss.shards {
-					sl, err := ss.impl.Load(context.TODO(), id)
+					sl, err := ss.impl.Load(ctx, id)
 					if err != nil {
 						return errors.Wrap(err, "")
 					}
@@ -206,6 +205,7 @@ func (ss *ShardServer) Close() {
 	if ss.stopper != nil {
 		ss.stopper.Close()
 	}
+	ss.lg.Info("ShardServer closed", zap.String("service", ss.container.Service()))
 }
 
 func (ss *ShardServer) GinAddShard(c *gin.Context) {
