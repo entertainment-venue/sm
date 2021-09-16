@@ -112,6 +112,11 @@ func Test_NewContainer_Close(t *testing.T) {
 		t.SkipNow()
 	}
 
+	go func() {
+		<-container.Done()
+		fmt.Println("donec work")
+	}()
+
 	select {
 	case <-time.After(5 * time.Second):
 		container.Close()

@@ -42,7 +42,7 @@ type Container struct {
 	lg      *zap.Logger
 
 	// 可以通知调用方Container结束
-	donec <-chan struct{}
+	donec chan struct{}
 }
 
 type containerOptions struct {
@@ -170,6 +170,8 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 }
 
 func (c *Container) Close() {
+	defer close(c.donec)
+
 	if c.Stopper != nil {
 		c.Stopper.Close()
 	}
