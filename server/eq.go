@@ -116,6 +116,7 @@ func (eq *eventQueue) push(item *Item, checkDup bool) {
 		ch = make(chan *mvEvent, defaultEventChanLength)
 		eq.buffer[ev.Service] = ch
 
+		// 区分service启动evLoop，目前直接将任务设置到etcd节点中，因为所有任务都是不断重入的，不担心错过，如果当前正在处理某个任务，就直接放弃
 		eq.stopper.Wrap(
 			func(ctx context.Context) {
 				eq.evLoop(ctx, ev.Service, ch)
@@ -170,16 +171,26 @@ func (eq *eventQueue) evLoop(ctx context.Context, service string, ch chan *mvEve
 
 		eq.lg.Info("ev received", zap.String("ev", ev.String()))
 
-		// TODO 同一service需要保证只有一个goroutine在计算，否则没有意义
-		switch ev.Type {
-		case tShardUpdate:
-			// TODO 解析load，确定shard的load超出阈值，触发shard move
-		case tShardDel:
-			// TODO 检查shard是否都处于有container的状态
-		case tContainerUpdate:
-			// TODO
-		case tContainerDel:
-			// TODO
+		key := nodeAppTask(eq.parent.service)
+		if _, err := eq.parent.Client.CompareAndSwap(ctx, key, ev.Value, "", -1); err != nil {
+			eq.lg.Error("failed to CompareAndSwap",
+				zap.Error(err),
+				zap.String("key", key),
+				zap.String("value", ev.Value),
+			)
+
 		}
+
+		// // TODO 同一service需要保证只有一个goroutine在计算，否则没有意义
+		// switch ev.Type {
+		// case tShardUpdate:
+		// 	// TODO 解析load，确定shard的load超出阈值，触发shard move
+		// case tShardDel:
+		// 	// TODO 检查shard是否都处于有container的状态
+		// case tContainerUpdate:
+		// 	// TODO
+		// case tContainerDel:
+		// 	// TODO
+		// }
 	}
 }

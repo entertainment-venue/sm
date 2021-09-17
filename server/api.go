@@ -58,8 +58,8 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 		nodes  []string
 		values []string
 	)
-	nodes = append(nodes, ss.cr.ew.nodeAppSpec(req.Service))
-	nodes = append(nodes, ss.cr.ew.nodeAppTask(req.Service))
+	nodes = append(nodes, nodeAppSpec(req.Service))
+	nodes = append(nodes, nodeAppTask(req.Service))
 	values = append(values, req.String())
 	values = append(values, "")
 	if err := ss.cr.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {

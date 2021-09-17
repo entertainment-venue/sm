@@ -30,6 +30,6 @@ func TestEventQueue_push(t *testing.T) {
 		Priority: 0,
 	}
 
-	eq := newEventQueue(context.TODO(), ttLogger)
+	eq := newEventQueue(context.TODO(), ttLogger, nil)
 	eq.push(&item, true)
 }

@@ -55,7 +55,7 @@ func (w *maintenanceWorker) Start() {
 				defaultShardLoopInterval,
 				fmt.Sprintf("[mtWorker] service %s ShardAllocateLoop exit", w.service),
 				func(ctx context.Context) error {
-					return w.allocateChecker(ctx, w.parent.ew, w.service, w.parent.eq)
+					return w.allocateChecker(ctx, w.service, w.parent.eq)
 				},
 			)
 		})
@@ -66,7 +66,7 @@ func (w *maintenanceWorker) Start() {
 				w.ctx,
 				w.lg,
 				w.parent.Client.Client,
-				w.parent.ew.nodeAppShardHb(w.service),
+				nodeAppShardHb(w.service),
 				fmt.Sprintf("[mtWorker] service %s ShardLoadLoop exit", w.service),
 				func(ctx context.Context, ev *clientv3.Event) error {
 					return shardLoadChecker(ctx, w.service, w.parent.eq, ev)
@@ -80,7 +80,7 @@ func (w *maintenanceWorker) Start() {
 				w.ctx,
 				w.lg,
 				w.parent.Client.Client,
-				w.parent.ew.nodeAppContainerHb(w.service),
+				nodeAppContainerHb(w.service),
 				fmt.Sprintf("[mtWorker] service %s ContainerLoadLoop exit", w.service),
 				func(ctx context.Context, ev *clientv3.Event) error {
 					return containerLoadChecker(ctx, w.service, w.parent.eq, ev)
@@ -96,9 +96,9 @@ func (w *maintenanceWorker) Close() {
 
 // 1 serverContainer 的增加/减少是优先级最高，目前可能涉及大量shard move
 // 2 serverShard 被漏掉作为container检测的补充，最后校验，这种情况只涉及到漏掉的shard任务下发下去
-func (w *maintenanceWorker) allocateChecker(ctx context.Context, ew *etcdWrapper, service string, eq *eventQueue) error {
+func (w *maintenanceWorker) allocateChecker(ctx context.Context, service string, eq *eventQueue) error {
 	// 获取当前的shard分配关系
-	fixShardIdAndValue, err := w.parent.Client.GetKVs(ctx, ew.nodeAppShard(service))
+	fixShardIdAndValue, err := w.parent.Client.GetKVs(ctx, nodeAppShard(service))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -115,7 +115,7 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context, ew *etcdWrapper
 
 	// 现有存活containers
 	var surviveContainerIdAndValue ArmorMap
-	surviveContainerIdAndValue, err = w.parent.Client.GetKVs(ctx, ew.nodeAppHbContainer(service))
+	surviveContainerIdAndValue, err = w.parent.Client.GetKVs(ctx, nodeAppHbContainer(service))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -141,7 +141,7 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context, ew *etcdWrapper
 
 	// serverContainer hb和固定分配关系一致，下面检查shard存活
 	var surviveShardIdAndValue ArmorMap
-	surviveShardIdAndValue, err = w.parent.Client.GetKVs(ctx, ew.nodeAppShardHb(service))
+	surviveShardIdAndValue, err = w.parent.Client.GetKVs(ctx, nodeAppShardHb(service))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}

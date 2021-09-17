@@ -37,13 +37,11 @@ type serverContainer struct {
 	// 管理自己的goroutine
 	stopper *apputil.GoroutineStopper
 
-	ew *etcdWrapper
-
-	mu     sync.Mutex
-	shards map[string]*serverShard
+	mu         sync.Mutex
+	serviceSds map[string]*serverShard
 	// serverShard sm管理很多业务app，不同业务app有不同的task节点，这块做个map，可能出现单container负责多个app的场景
-	srvOps  map[string]*operator
-	stopped bool // container进入stopped状态
+	serviceOps map[string]*operator
+	stopped    bool // container进入stopped状态
 
 	eq *eventQueue
 
@@ -61,11 +59,13 @@ func launchServerContainer(ctx context.Context, lg *zap.Logger, id, service stri
 
 	// Container只关注通用部分，所以service和id还是要保留一份到数据结构
 	sc := serverContainer{
-		lg:      lg,
-		service: service,
-		id:      id,
-		cancel:  cancel,
-		ew:      newEtcdWrapper(),
+		id:         id,
+		service:    service,
+		cancel:     cancel,
+		stopper:    &apputil.GoroutineStopper{},
+		serviceSds: make(map[string]*serverShard),
+		serviceOps: make(map[string]*operator),
+		lg:         lg,
 	}
 
 	sc.eq = newEventQueue(ctx, lg, &sc)
@@ -85,12 +85,12 @@ func (c *serverContainer) Close() {
 	c.mu.Unlock()
 
 	// stop serverShard
-	for _, s := range c.shards {
+	for _, s := range c.serviceSds {
 		s.Close()
 	}
 
 	// stop operator
-	for _, o := range c.srvOps {
+	for _, o := range c.serviceOps {
 		o.Close()
 	}
 
@@ -112,7 +112,7 @@ func (c *serverContainer) Add(ctx context.Context, id string, spec *apputil.Shar
 		return nil
 	}
 
-	if _, ok := c.shards[id]; ok {
+	if _, ok := c.serviceSds[id]; ok {
 		c.lg.Info("shard existed",
 			zap.String("id", id),
 			zap.String("service", c.service),
@@ -124,7 +124,7 @@ func (c *serverContainer) Add(ctx context.Context, id string, spec *apputil.Shar
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
-	c.shards[id] = shard
+	c.serviceSds[id] = shard
 	return nil
 }
 
@@ -140,7 +140,7 @@ func (c *serverContainer) Drop(_ context.Context, id string) error {
 		return nil
 	}
 
-	sd, ok := c.shards[id]
+	sd, ok := c.serviceSds[id]
 	if !ok {
 		return errNotExist
 	}
@@ -160,7 +160,7 @@ func (c *serverContainer) Load(ctx context.Context, id string) (string, error) {
 		return "", nil
 	}
 
-	sd, ok := c.shards[id]
+	sd, ok := c.serviceSds[id]
 	if !ok {
 		return "", errNotExist
 	}
@@ -178,12 +178,12 @@ func (c *serverContainer) NewOp(service string) error {
 		return nil
 	}
 
-	if _, ok := c.srvOps[service]; !ok {
-		op, err := newOperator(c, service)
+	if _, ok := c.serviceOps[service]; !ok {
+		op, err := newOperator(c.lg, c, service)
 		if err != nil {
 			return errors.Wrap(err, "")
 		}
-		c.srvOps[service] = op
+		c.serviceOps[service] = op
 	}
 	return nil
 }
@@ -208,7 +208,7 @@ func (c *serverContainer) campaignLeader(ctx context.Context) {
 		default:
 		}
 
-		leaderNodePrefix := c.ew.leaderNode(c.service)
+		leaderNodePrefix := nodeLeader(c.service)
 		lvalue := leaderEtcdValue{ContainerId: c.id, CreateTime: time.Now().String()}
 		election := concurrency.NewElection(c.Session, leaderNodePrefix)
 		if err := election.Campaign(ctx, lvalue.String()); err != nil {
@@ -234,7 +234,7 @@ func (c *serverContainer) campaignLeader(ctx context.Context) {
 
 		// leader需要处理shard move的任务
 		var err error
-		c.op, err = newOperator(c, c.service)
+		c.op, err = newOperator(c.lg, c, c.service)
 		if err != nil {
 			c.lg.Error("leader failed to newOperator", zap.Error(err))
 			time.Sleep(defaultSleepTimeout)
@@ -259,7 +259,7 @@ func (c *serverContainer) leaderStartDistribution(ctx context.Context) error {
 	// 先把当前的分配关系下发下去，和static membership，不过我们场景是由单点完成的，由性能瓶颈，但是不像LRMF场景下serverless难以判断正确性
 	// 分配关系下发，解决的是先把现有分配关系搞下去，然后再通过shardAllocateLoop检验是否需要整体进行shard move，相当于init
 	// TODO app接入数量一个公司可控，所以方案可行
-	bdShardNode := c.ew.nodeAppShard(c.service)
+	bdShardNode := nodeAppShard(c.service)
 	curShardIdAndValue, err := c.Client.GetKVs(ctx, bdShardNode)
 	if err != nil {
 		return errors.Wrap(err, "")

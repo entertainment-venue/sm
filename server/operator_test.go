@@ -16,9 +16,13 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"reflect"
+	"sort"
 	"testing"
 	"time"
 
+	"github.com/entertainment-venue/sm/pkg/apputil"
 	"go.uber.org/zap"
 )
 
@@ -26,64 +30,140 @@ var (
 	ttLogger, _ = zap.NewProduction()
 )
 
-func Test_newOperator(t *testing.T) {
-	ctr, err := launchServerContainer(context.TODO(), ttLogger, "127.0.0.1:8888", "foo.bar")
+func newTestOperator() (*operator, context.CancelFunc) {
+	id := "127.0.0.1:8888"
+	service := "foo.bar"
+	ctx, cancel := context.WithCancel(context.TODO())
+
+	c, err := apputil.NewContainer(
+		apputil.ContainerWithContext(ctx),
+		apputil.ContainerWithId(id),
+		apputil.ContainerWithService(service),
+		apputil.ContainerWithEndpoints([]string{"127.0.0.1:2379"}),
+		apputil.ContainerWithLogger(ttLogger))
 	if err != nil {
-		t.Errorf("err: %+v", err)
-		t.SkipNow()
+		panic(err)
 	}
 
-	op, err := newOperator(ctr, "foo.bar")
-	if err != nil {
-		t.Errorf("err: %+v", err)
-		t.SkipNow()
-	}
+	sc := serverContainer{Container: c, service: service}
 
-	go func() {
-		time.Sleep(60 * time.Second)
-		op.Close()
-	}()
+	o := operator{lg: ttLogger, parent: &sc, service: service}
+	return &o, cancel
 }
 
-func Test_remove(t *testing.T) {
-	ctr, err := launchServerContainer(context.TODO(), ttLogger, "127.0.0.1:8888", "foo.bar")
-	if err != nil {
+func Test_operator_moveActionList_sort(t *testing.T) {
+	var tests = []struct {
+		actual moveActionList
+		expect moveActionList
+	}{
+		{
+			actual: moveActionList{
+				&moveAction{ShardId: "1"},
+				&moveAction{ShardId: "2"},
+			},
+			expect: moveActionList{
+				&moveAction{ShardId: "1"},
+				&moveAction{ShardId: "2"},
+			},
+		},
+		{
+			actual: moveActionList{
+				&moveAction{ShardId: "2"},
+				&moveAction{ShardId: "1"},
+			},
+			expect: moveActionList{
+				&moveAction{ShardId: "1"},
+				&moveAction{ShardId: "2"},
+			},
+		},
+	}
+	for idx, tt := range tests {
+		sort.Sort(tt.actual)
+		if !reflect.DeepEqual(tt.actual, tt.expect) {
+			fmt.Println(tt.actual)
+			t.Errorf("idx %d unexpected", idx)
+			t.SkipNow()
+		}
+	}
+}
+
+func Test_operator_moveLoop(t *testing.T) {
+	o, cancel := newTestOperator()
+
+	o.moveLoop(context.TODO())
+
+	stopch := make(chan struct{})
+	<-stopch
+	cancel()
+}
+
+func Test_operator_move(t *testing.T) {
+	c, _, _ := newTestShardServer()
+	sc := serverContainer{Container: c}
+
+	o := operator{lg: ttLogger, service: "foo.bar"}
+	o.parent = &sc
+	o.hc = newHttpClient()
+
+	time.Sleep(3 * time.Second)
+
+	// ./etcdctl put /bd/app/foo.bar/task '[{"service":"foo.bar","shardId":"1","dropEndpoint":"","addEndpoint":"127.0.0.1:8889","allowDrop":false}]'
+	value := `[{"service":"foo.bar","shardId":"1","dropEndpoint":"","addEndpoint":"127.0.0.1:8889","allowDrop":false}]`
+	o.move(context.TODO(), []byte(value))
+
+	stopch := make(chan struct{})
+	<-stopch
+}
+
+func Test_operator_dropOrAdd(t *testing.T) {
+	c, _, _ := newTestShardServer()
+	sc := serverContainer{Container: c}
+
+	o := operator{lg: ttLogger}
+	o.parent = &sc
+	o.hc = newHttpClient()
+
+	ma := moveAction{
+		Service:     "foo.bar",
+		ShardId:     "1",
+		AddEndpoint: "127.0.0.1:8889",
+		AllowDrop:   true,
+	}
+	o.dropOrAdd(context.TODO(), &ma)
+
+	stopch := make(chan struct{})
+	<-stopch
+}
+
+func Test_operator_send(t *testing.T) {
+	c, _, _ := newTestShardServer()
+	sc := serverContainer{Container: c}
+
+	o := operator{lg: ttLogger}
+	o.parent = &sc
+	o.hc = newHttpClient()
+
+	if err := o.send(context.TODO(), "1", "127.0.0.1:8889", "add"); err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
 	}
 
-	o := operator{}
-	o.parent = ctr
+	stopch := make(chan struct{})
+	<-stopch
+}
+
+func Test_operator_remove(t *testing.T) {
+	c, _, _ := newTestShardServer()
+	sc := serverContainer{Container: c}
+
+	o := operator{lg: ttLogger}
+	o.parent = &sc
 
 	if err := o.remove(context.TODO(), "1", "foo.bar"); err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
 	}
-}
 
-func Test_dropAndAdd(t *testing.T) {
-	ctr, err := launchServerContainer(context.TODO(), ttLogger, "127.0.0.1:8888", "foo.bar")
-	if err != nil {
-		t.Errorf("err: %+v", err)
-		t.SkipNow()
-	}
-
-	o := operator{}
-	o.parent = ctr
-	o.hc = newHttpClient()
-
-	// ma := moveAction{
-	// 	Service:     "foo.bar",
-	// 	ShardId:     "1",
-	// 	AddEndpoint: "127.0.0.1:8888",
-	// }
-	// o.dropAndAdd(&ma)
-
-	ma := moveAction{
-		Service:     "foo.bar",
-		ShardId:     "1",
-		AddEndpoint: "127.0.0.1:8888",
-		AllowDrop:   true,
-	}
-	o.dropAndAdd(context.TODO(), &ma)
+	stopch := make(chan struct{})
+	<-stopch
 }

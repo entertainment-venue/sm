@@ -31,22 +31,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type moveActionList []*moveAction
-
-func (l *moveActionList) String() string {
-	b, _ := json.Marshal(l)
-	return string(b)
-}
-
-// 4 unit test
-func (l moveActionList) Len() int { return len(l) }
-func (l moveActionList) Less(i, j int) bool {
-	return l[i].ShardId > l[j].ShardId
-}
-func (l moveActionList) Swap(i, j int) {
-	l[i], l[j] = l[j], l[i]
-}
-
 type moveAction struct {
 	Service      string `json:"service"`
 	ShardId      string `json:"shardId"`
@@ -62,18 +46,42 @@ func (action *moveAction) String() string {
 	return string(b)
 }
 
+type moveActionList []*moveAction
+
+func (l *moveActionList) String() string {
+	b, _ := json.Marshal(l)
+	return string(b)
+}
+
+// 4 unit test
+func (l moveActionList) Len() int { return len(l) }
+func (l moveActionList) Less(i, j int) bool {
+	return l[i].ShardId < l[j].ShardId
+}
+func (l moveActionList) Swap(i, j int) {
+	l[i], l[j] = l[j], l[i]
+}
+
 // container和shard上报两个维度的load，leader(sm)或者shard(app)探测到异常，会发布任务出来，operator就是这个任务的执行者
 type operator struct {
-	parent    *serverContainer
+	lg      *zap.Logger
+	parent  *serverContainer
+	service string
+
 	stopper   *apputil.GoroutineStopper
-	service   string
-	lg        *zap.Logger
 	hc        *http.Client
 	prevValue string
 }
 
-func newOperator(sc *serverContainer, service string) (*operator, error) {
-	op := operator{service: service, parent: sc, hc: newHttpClient()}
+func newOperator(lg *zap.Logger, sc *serverContainer, service string) (*operator, error) {
+	op := operator{
+		lg:      lg,
+		parent:  sc,
+		service: service,
+
+		stopper: &apputil.GoroutineStopper{},
+		hc:      newHttpClient(),
+	}
 
 	op.stopper.Wrap(
 		func(ctx context.Context) {
@@ -89,11 +97,11 @@ func (o *operator) Close() {
 	if o.stopper != nil {
 		o.stopper.Close()
 	}
-	o.lg.Info("operator closed", zap.String("service", o.parent.service))
+	o.lg.Info("operator closed", zap.String("service", o.service))
 }
 
 func (o *operator) moveLoop(ctx context.Context) {
-	key := o.parent.ew.nodeAppTask(o.parent.service)
+	key := nodeAppTask(o.service)
 
 	// Move只有对特定app负责的operator
 	// 当前如果存在任务，直接开始执行
@@ -108,15 +116,21 @@ dealWithLatestTask:
 		goto dealWithLatestTask
 	}
 	if resp.Count > 0 && string(resp.Kvs[0].Value) != "" {
+		o.lg.Info("got task",
+			zap.String("service", o.service),
+			zap.String("value", string(resp.Kvs[0].Value)),
+		)
 		if err := o.move(ctx, resp.Kvs[0].Value); err != nil {
 			o.lg.Error("failed to move",
-				zap.ByteString("value", resp.Kvs[0].Value),
 				zap.Error(err),
+				zap.ByteString("value", resp.Kvs[0].Value),
 			)
 
 			time.Sleep(defaultSleepTimeout)
 			goto dealWithLatestTask
 		}
+	} else {
+		o.lg.Info("no task", zap.String("service", o.service))
 	}
 
 	fn := func(ctx context.Context, ev *clientv3.Event) error {
@@ -162,7 +176,7 @@ move:
 	for _, ma := range mal {
 		ma := ma
 		g.Go(func() error {
-			return o.dropAndAdd(ctx, ma)
+			return o.dropOrAdd(ctx, ma)
 		})
 	}
 	if err := g.Wait(); err != nil {
@@ -175,13 +189,13 @@ move:
 
 	// 利用etcd tx清空任务节点，任务节点已经空就停止
 ack:
-	key := o.parent.ew.nodeAppTask(o.parent.service)
+	key := nodeAppTask(o.service)
 	if _, err := o.parent.Client.CompareAndSwap(ctx, key, string(value), "", -1); err != nil {
 		// 节点数据被破坏，需要人工介入
 		o.lg.Error("failed to CompareAndSwap",
+			zap.Error(err),
 			zap.String("key", key),
 			zap.ByteString("value", value),
-			zap.Error(err),
 		)
 		time.Sleep(defaultSleepTimeout)
 		goto ack
@@ -190,14 +204,14 @@ ack:
 	return nil
 }
 
-func (o *operator) dropAndAdd(ctx context.Context, ma *moveAction) error {
+func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 	var (
 		onlyAdd  bool
 		onlyDrop bool
 	)
 
 	if ma.DropEndpoint != "" {
-		if err := o.send(ma.ShardId, ma.DropEndpoint, "drop"); err != nil {
+		if err := o.send(ctx, ma.ShardId, ma.DropEndpoint, "drop"); err != nil {
 			return errors.Wrap(err, "")
 		}
 	} else {
@@ -205,7 +219,7 @@ func (o *operator) dropAndAdd(ctx context.Context, ma *moveAction) error {
 	}
 
 	if ma.AddEndpoint != "" {
-		if err := o.send(ma.ShardId, ma.AddEndpoint, "add"); err != nil {
+		if err := o.send(ctx, ma.ShardId, ma.AddEndpoint, "add"); err != nil {
 			if !ma.AllowDrop {
 				return errors.Wrap(err, "")
 			}
@@ -240,7 +254,7 @@ func (o *operator) dropAndAdd(ctx context.Context, ma *moveAction) error {
 	return nil
 }
 
-func (o *operator) send(id string, endpoint string, action string) error {
+func (o *operator) send(_ context.Context, id string, endpoint string, action string) error {
 	param := make(map[string]string)
 	param["shardId"] = id
 	b, err := json.Marshal(param)
@@ -259,11 +273,17 @@ func (o *operator) send(id string, endpoint string, action string) error {
 		return errors.Wrap(err, "")
 	}
 	defer resp.Body.Close()
-	ioutil.ReadAll(resp.Body)
+	rb, _ := ioutil.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return errors.Errorf("[operator] FAILED to %s serverShard %s, not 200", action, id)
+		return errors.Errorf("[operator] FAILED to %s move shard %s, not 200", action, id)
 	}
+
+	o.lg.Info("send success",
+		zap.String("urlStr", urlStr),
+		zap.String("action", action),
+		zap.String("response", string(rb)),
+	)
 	return nil
 }
 
@@ -274,7 +294,7 @@ func (o *operator) remove(ctx context.Context, id, service string) error {
 		return errors.Wrap(err, "")
 	}
 	if resp.Count == 0 {
-		o.lg.Warn("key not exist when remove", zap.String("key", key))
+		o.lg.Warn("failed to remove, key not exist", zap.String("key", key))
 		return nil
 	}
 
@@ -283,12 +303,19 @@ func (o *operator) remove(ctx context.Context, id, service string) error {
 		return errors.Wrap(err, "")
 	}
 	if ss.ContainerId == "" {
+		o.lg.Info("container already removed", zap.String("key", key))
 		return nil
 	}
 	ss.ContainerId = ""
-	if _, err := o.parent.Client.CompareAndSwap(ctx, key, string(resp.Kvs[0].Value), ss.String(), -1); err != nil {
+
+	value := ss.String()
+	if _, err := o.parent.Client.CompareAndSwap(ctx, key, string(resp.Kvs[0].Value), value, -1); err != nil {
 		return errors.Wrap(err, "")
 	}
+	o.lg.Info("container removed",
+		zap.String("key", key),
+		zap.String("value", value),
+	)
 	return nil
 }
 
