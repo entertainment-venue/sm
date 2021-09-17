@@ -52,7 +52,7 @@ func (w *maintenanceWorker) Start() {
 			apputil.TickerLoop(
 				w.ctx,
 				w.lg,
-				defaultShardLoopInterval,
+				defaultLoopInterval,
 				fmt.Sprintf("[mtWorker] service %s ShardAllocateLoop exit", w.service),
 				func(ctx context.Context) error {
 					return w.allocateChecker(ctx, w.service, w.parent.eq)

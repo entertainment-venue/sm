@@ -21,11 +21,9 @@ import (
 
 const (
 	defaultSleepTimeout = 3 * time.Second
-
-	defaultShardLoopInterval = 3 * time.Second
+	defaultLoopInterval = 3 * time.Second
 )
 
 var (
 	errNotExist = errors.New("not exist")
-	errParam    = errors.New("param err")
 )

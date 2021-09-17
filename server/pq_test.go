@@ -20,7 +20,7 @@ import (
 	"testing"
 )
 
-func TestPriorityQueue(t *testing.T) {
+func Test_PriorityQueue(t *testing.T) {
 	var evPQ PriorityQueue
 	heap.Init(&evPQ)
 
