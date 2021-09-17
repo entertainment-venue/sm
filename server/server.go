@@ -108,7 +108,7 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 	}
 	srv.c = c
 
-	sc, err := launchServerContainer(ctx, logger, ops.id, ops.service)
+	sc, err := launchContainer(ctx, logger, ops.id, ops.service, c)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
