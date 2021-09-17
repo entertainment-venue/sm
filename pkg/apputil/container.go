@@ -113,6 +113,7 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
+	// FIXME etcd不启动，这里会hang住，127.0.0.1.2379
 	s, err := concurrency.NewSession(ec.Client, concurrency.WithTTL(5))
 	if err != nil {
 		return nil, errors.Wrap(err, "")

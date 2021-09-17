@@ -69,6 +69,11 @@ const (
 	OpTypeDrop
 )
 
+type ShardOpReceiver interface {
+	AddShard(c *gin.Context)
+	DropShard(c *gin.Context)
+}
+
 // 直接帮助接入方把服务器端启动好，引入gin框架，和sarama sdk的接入方式相似，提供消息的chan或者callback func给到接入app的业务逻辑
 type ShardServer struct {
 	stopper  *GoroutineStopper
@@ -96,6 +101,7 @@ type shardServerOptions struct {
 	impl      ShardInterface
 	container *Container
 	lg        *zap.Logger
+	sor       ShardOpReceiver
 }
 
 type ShardServerOption func(options *shardServerOptions)
@@ -124,15 +130,21 @@ func ShardServerWithContext(v context.Context) ShardServerOption {
 	}
 }
 
-func ShardServerWithApiHandler(routeAndHandler map[string]func(c *gin.Context)) ShardServerOption {
+func ShardServerWithApiHandler(v map[string]func(c *gin.Context)) ShardServerOption {
 	return func(sso *shardServerOptions) {
-		sso.routeAndHandler = routeAndHandler
+		sso.routeAndHandler = v
 	}
 }
 
-func ShardServerWithLogger(lg *zap.Logger) ShardServerOption {
+func ShardServerWithLogger(v *zap.Logger) ShardServerOption {
 	return func(sso *shardServerOptions) {
-		sso.lg = lg
+		sso.lg = v
+	}
+}
+
+func ShardServerWithShardOpReceiver(v ShardOpReceiver) ShardServerOption {
+	return func(sso *shardServerOptions) {
+		sso.sor = v
 	}
 }
 
@@ -189,11 +201,19 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 	})
 
 	router := gin.Default()
+
+	var receiver ShardOpReceiver
+	if ops.sor != nil {
+		receiver = ops.sor
+	} else {
+		receiver = &ss
+	}
 	ssg := router.Group("/sm/admin")
 	{
-		ssg.POST("/add-shard", ss.GinAddShard)
-		ssg.POST("/drop-shard", ss.GinDropShard)
+		ssg.POST("/add-shard", receiver.AddShard)
+		ssg.POST("/drop-shard", receiver.DropShard)
 	}
+
 	if ops.routeAndHandler != nil {
 		for route, handler := range ops.routeAndHandler {
 			router.POST(route, handler)
@@ -259,7 +279,7 @@ func (ss *ShardServer) Done() <-chan struct{} {
 	return ss.donec
 }
 
-func (ss *ShardServer) GinAddShard(c *gin.Context) {
+func (ss *ShardServer) AddShard(c *gin.Context) {
 	var req ShardOpMessage
 	if err := c.ShouldBind(&req); err != nil {
 		ss.lg.Error("ShouldBind err", zap.Error(err))
@@ -311,7 +331,7 @@ func (ss *ShardServer) GinAddShard(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{})
 }
 
-func (ss *ShardServer) GinDropShard(c *gin.Context) {
+func (ss *ShardServer) DropShard(c *gin.Context) {
 	var req ShardOpMessage
 	if err := c.ShouldBind(&req); err != nil {
 		ss.lg.Error("ShouldBind err", zap.Error(err))
