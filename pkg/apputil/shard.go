@@ -178,6 +178,7 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 		taskNode:  EtcdPathAppShardId(ops.container.Service(), ops.container.Id()),
 		lg:        ops.lg,
 		ctx:       ops.ctx,
+		donec:     make(chan struct{}),
 	}
 
 	// 上传shard的load，load是从接入服务拿到
@@ -277,6 +278,10 @@ func (ss *ShardServer) Close() {
 
 func (ss *ShardServer) Done() <-chan struct{} {
 	return ss.donec
+}
+
+func (ss *ShardServer) Container() *Container {
+	return ss.container
 }
 
 func (ss *ShardServer) AddShard(c *gin.Context) {
