@@ -175,7 +175,7 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 		container: ops.container,
 		shards:    make(map[string]struct{}),
 		hbNode:    EtcdPathAppShardHbId(ops.container.Service(), ops.container.Id()),
-		taskNode:  EtcdPathAppShardId(ops.container.Service(), ops.container.Id()),
+		taskNode:  EtcdPathAppShardTask(ops.container.Service()),
 		lg:        ops.lg,
 		ctx:       ops.ctx,
 		donec:     make(chan struct{}),
