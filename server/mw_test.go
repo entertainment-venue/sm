@@ -33,7 +33,7 @@ func Test_Start(t *testing.T) {
 		t.SkipNow()
 	}
 
-	mw := newMaintenanceWorker(context.TODO(), ctr, "foo.bar")
+	mw := newMaintenanceWorker(context.TODO(), ttLogger, ctr, "foo.bar")
 	mw.Start()
 
 	go func() {

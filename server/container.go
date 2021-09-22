@@ -71,7 +71,7 @@ func launchContainer(ctx context.Context, lg *zap.Logger, id, service string, c 
 	}
 
 	sc.eq = newEventQueue(ctx, lg, &sc)
-	sc.mtWorker = newMaintenanceWorker(ctx, &sc, sc.service)
+	sc.mtWorker = newMaintenanceWorker(ctx, lg, &sc, sc.service)
 
 	sc.stopper.Wrap(
 		func(ctx context.Context) {
