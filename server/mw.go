@@ -42,7 +42,7 @@ type maintenanceWorker struct {
 	lg *zap.Logger
 }
 
-func newMaintenanceWorker(container *serverContainer, service string) *maintenanceWorker {
+func newMaintenanceWorker(ctx context.Context, container *serverContainer, service string) *maintenanceWorker {
 	return &maintenanceWorker{parent: container, service: service, stopper: &apputil.GoroutineStopper{}}
 }
 

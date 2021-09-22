@@ -42,7 +42,7 @@ type serverShard struct {
 	lg *zap.Logger
 }
 
-func startShard(_ context.Context, lg *zap.Logger, sc *serverContainer, id string, spec *apputil.ShardSpec) (*serverShard, error) {
+func startShard(ctx context.Context, lg *zap.Logger, sc *serverContainer, id string, spec *apputil.ShardSpec) (*serverShard, error) {
 	s := serverShard{parent: sc, id: id, lg: lg}
 
 	var st shardTask
@@ -56,7 +56,7 @@ func startShard(_ context.Context, lg *zap.Logger, sc *serverContainer, id strin
 		return nil, errors.Wrap(err, "")
 	}
 
-	s.mtWorker = newMaintenanceWorker(s.parent, s.service)
+	s.mtWorker = newMaintenanceWorker(ctx, s.parent, s.service)
 	s.mtWorker.Start()
 
 	return &s, nil
