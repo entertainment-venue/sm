@@ -294,30 +294,22 @@ func (ss *ShardServer) AddShard(c *gin.Context) {
 	req.Type = OpTypeAdd
 	ss.lg.Info("add shard request", zap.Reflect("request", req))
 
-	resp, err := ss.container.Client.GetKV(context.TODO(), ss.taskNode, nil)
+	shardNode := EtcdPathAppShardId(ss.container.Service(), req.Id)
+	sresp, err := ss.container.Client.GetKV(context.TODO(), shardNode, nil)
 	if err != nil {
 		ss.lg.Error("GetKV err",
 			zap.Error(err),
-			zap.String("taskNode", ss.taskNode),
-		)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if resp.Count == 0 {
-		err = errors.Errorf("Failed to get shard %s content", req.Id)
-		ss.lg.Error("no shard exist",
-			zap.String("id", req.Id),
-			zap.Error(err),
+			zap.String("shardNode", shardNode),
 		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	var spec ShardSpec
-	if err := json.Unmarshal(resp.Kvs[0].Value, &spec); err != nil {
+	if err := json.Unmarshal(sresp.Kvs[0].Value, &spec); err != nil {
 		ss.lg.Error("Unmarshal err",
 			zap.Error(err),
-			zap.ByteString("value", resp.Kvs[0].Value),
+			zap.ByteString("value", sresp.Kvs[0].Value),
 		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
