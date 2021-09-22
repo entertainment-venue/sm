@@ -2,7 +2,14 @@ module github.com/entertainment-venue/sm
 
 go 1.14
 
-require github.com/entertainment-venue/sm/server v0.0.0-20210917135636-100049647066
+require (
+	github.com/entertainment-venue/sm/pkg v0.0.0-20210922102859-36578cb12d43 // indirect
+	github.com/entertainment-venue/sm/server v0.0.0-20210922102859-36578cb12d43
+	golang.org/x/crypto v0.0.0-20210921155107-089bfa567519 // indirect
+	golang.org/x/net v0.0.0-20210917221730-978cfadd31cf // indirect
+	golang.org/x/sys v0.0.0-20210921065528-437939a70204 // indirect
+	google.golang.org/genproto v0.0.0-20210921142501-181ce0d877f6 // indirect
+)
 
 replace github.com/coreos/go-systemd => github.com/coreos/go-systemd/v22 v22.1.0
 

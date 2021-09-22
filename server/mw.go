@@ -43,7 +43,7 @@ type maintenanceWorker struct {
 }
 
 func newMaintenanceWorker(ctx context.Context, container *serverContainer, service string) *maintenanceWorker {
-	return &maintenanceWorker{parent: container, service: service, stopper: &apputil.GoroutineStopper{}}
+	return &maintenanceWorker{ctx: ctx, parent: container, service: service, stopper: &apputil.GoroutineStopper{}}
 }
 
 func (w *maintenanceWorker) Start() {
