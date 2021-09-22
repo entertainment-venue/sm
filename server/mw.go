@@ -129,7 +129,12 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context, service string,
 	if containerChanged(fixShardIdAndContainerId.ValueList(), surviveContainerIdAndValue.KeyList()) {
 		r := w.reallocate(service, surviveContainerIdAndValue, fixShardIdAndContainerId)
 		if len(r) > 0 {
-			ev := mvEvent{Service: service, EnqueueTime: time.Now().Unix(), Value: r.String()}
+			ev := mvEvent{
+				Service:     service,
+				Type:        tContainerUpdate,
+				EnqueueTime: time.Now().Unix(),
+				Value:       r.String(),
+			}
 			item := Item{
 				Value:    ev.String(),
 				Priority: time.Now().Unix(),
@@ -155,7 +160,12 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context, service string,
 	if shardChanged(fixShardIdAndContainerId.KeyList(), surviveShardIdAndValue.KeyMap()) {
 		r := w.reallocate(service, surviveContainerIdAndValue, fixShardIdAndContainerId)
 		if len(r) > 0 {
-			ev := mvEvent{Service: service, EnqueueTime: time.Now().Unix(), Value: r.String()}
+			ev := mvEvent{
+				Service:     service,
+				Type:        tShardUpdate,
+				EnqueueTime: time.Now().Unix(),
+				Value:       r.String(),
+			}
 			item := Item{
 				Value:    ev.String(),
 				Priority: time.Now().Unix(),
@@ -235,7 +245,12 @@ func shardLoadChecker(_ context.Context, service string, eq *eventQueue, ev *cli
 	}
 
 	start := time.Now()
-	qev := mvEvent{Service: service, EnqueueTime: start.Unix(), Value: string(ev.Kv.Value)}
+	qev := mvEvent{
+		Service:     service,
+		Type:        tShardUpdate,
+		EnqueueTime: start.Unix(),
+		Value:       string(ev.Kv.Value),
+	}
 
 	var item Item
 	if ev.IsModify() {
@@ -258,7 +273,12 @@ func containerLoadChecker(_ context.Context, service string, eq *eventQueue, ev 
 	}
 
 	start := time.Now()
-	qev := mvEvent{Service: service, EnqueueTime: start.Unix(), Value: string(ev.Kv.Value)}
+	qev := mvEvent{
+		Service:     service,
+		Type:        tContainerUpdate,
+		EnqueueTime: start.Unix(),
+		Value:       string(ev.Kv.Value),
+	}
 
 	var item Item
 	if ev.IsModify() {

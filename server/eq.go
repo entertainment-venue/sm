@@ -67,6 +67,7 @@ func newEventQueue(_ context.Context, lg *zap.Logger, sc *serverContainer) *even
 	eq := eventQueue{
 		parent:  sc,
 		buffer:  make(map[string]chan *mvEvent),
+		curEvs:  make(map[string]struct{}),
 		stopper: &apputil.GoroutineStopper{},
 		lg:      lg,
 	}
@@ -136,6 +137,8 @@ func (eq *eventQueue) push(item *Item, checkDup bool) {
 
 		eq.lg.Info("item enqueue", zap.String("item", item.String()))
 		heap.Push(&eq.pq, item)
+	default:
+		eq.lg.Panic(fmt.Sprintf("unknown ev type %d", ev.Type))
 	}
 }
 
@@ -171,15 +174,19 @@ func (eq *eventQueue) evLoop(ctx context.Context, service string, ch chan *mvEve
 
 		eq.lg.Info("ev received", zap.String("ev", ev.String()))
 
-		key := nodeAppTask(eq.parent.service)
-		if _, err := eq.parent.Client.CompareAndSwap(ctx, key, ev.Value, "", -1); err != nil {
+		key := apputil.EtcdPathAppShardTask(eq.parent.service)
+		if _, err := eq.parent.Client.CompareAndSwap(ctx, key, "", ev.Value, -1); err != nil {
 			eq.lg.Error("failed to CompareAndSwap",
 				zap.Error(err),
 				zap.String("key", key),
 				zap.String("value", ev.Value),
 			)
-
 		}
+
+		// 清理掉service的站位，允许该service的下一个event进来
+		eq.mu.Lock()
+		delete(eq.curEvs, ev.Service)
+		eq.mu.Unlock()
 
 		// // TODO 同一service需要保证只有一个goroutine在计算，否则没有意义
 		// switch ev.Type {

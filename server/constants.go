@@ -25,5 +25,6 @@ const (
 )
 
 var (
+	errParam    = errors.New("param err")
 	errNotExist = errors.New("not exist")
 )

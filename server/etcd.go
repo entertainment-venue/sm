@@ -31,17 +31,11 @@ func nodeAppContainerHb(service string) string {
 
 // 存储分配当前关系
 func nodeAppShard(service string) string {
-	return fmt.Sprintf("%s/serverShard/", apputil.EtcdPathAppPrefix(service))
+	return fmt.Sprintf("%s/shard/", apputil.EtcdPathAppPrefix(service))
 }
 
 func nodeAppShardHb(service string) string {
 	return fmt.Sprintf("%s/shardhb/", apputil.EtcdPathAppPrefix(service))
-}
-
-// /sm/proxy/task
-// 如果app的task节点存在任务，不能产生新的新的任务，必须等待ack完成
-func nodeAppTask(service string) string {
-	return fmt.Sprintf("%s/task", apputil.EtcdPathAppPrefix(service))
 }
 
 // /sm/proxy/admin/containerhb/

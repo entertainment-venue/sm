@@ -34,9 +34,9 @@ type shardServer struct {
 
 type addSpecRequest struct {
 	// 目前app的spec更多承担的是管理职能，shard配置的一个起点，先只配置上service，可以唯一标记一个app
-	Service string `json:"service"`
+	Service string `json:"service" binding:"required"`
 
-	CreateTime int64 `json:"createTime"`
+	CreateTime int64 `json:"createTime" binding:"required"`
 }
 
 func (s *addSpecRequest) String() string {
@@ -59,7 +59,7 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 		values []string
 	)
 	nodes = append(nodes, nodeAppSpec(req.Service))
-	nodes = append(nodes, nodeAppTask(req.Service))
+	nodes = append(nodes, apputil.EtcdPathAppShardTask(req.Service))
 	values = append(values, req.String())
 	values = append(values, "")
 	if err := ss.cr.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
@@ -76,13 +76,13 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 }
 
 type addShardRequest struct {
-	ShardId string `json:"shardId"`
+	ShardId string `json:"shardId" binding:"required"`
 
 	// 为哪个业务app增加shard
-	Service string `json:"service"`
+	Service string `json:"service" binding:"required"`
 
 	// 业务app自己定义task内容
-	Task string `json:"task"`
+	Task string `json:"task" binding:"required"`
 }
 
 func (r *addShardRequest) String() string {

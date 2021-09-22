@@ -101,7 +101,7 @@ func (o *operator) Close() {
 }
 
 func (o *operator) moveLoop(ctx context.Context) {
-	key := nodeAppTask(o.service)
+	key := apputil.EtcdPathAppShardTask(o.service)
 
 	// Move只有对特定app负责的operator
 	// 当前如果存在任务，直接开始执行
@@ -168,6 +168,7 @@ func (o *operator) move(ctx context.Context, value []byte) error {
 		// return ASAP unmarshal失败重试没意义，需要人工接入进行数据修正
 		return errors.Wrap(err, "")
 	}
+	o.lg.Info("receive move action list", zap.Reflect("mal", mal))
 
 	// https://engineering.fb.com/2020/08/24/production-engineering/scaling-services-with-shard-manager/
 	// 单shard维度，先drop，再add，多个shard可以并行移动
@@ -189,7 +190,7 @@ move:
 
 	// 利用etcd tx清空任务节点，任务节点已经空就停止
 ack:
-	key := nodeAppTask(o.service)
+	key := apputil.EtcdPathAppShardTask(o.service)
 	if _, err := o.parent.Client.CompareAndSwap(ctx, key, string(value), "", -1); err != nil {
 		// 节点数据被破坏，需要人工介入
 		o.lg.Error("failed to CompareAndSwap",
@@ -255,9 +256,8 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 }
 
 func (o *operator) send(_ context.Context, id string, endpoint string, action string) error {
-	param := make(map[string]string)
-	param["shardId"] = id
-	b, err := json.Marshal(param)
+	msg := apputil.ShardOpMessage{Id: id}
+	b, err := json.Marshal(msg)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -267,6 +267,7 @@ func (o *operator) send(_ context.Context, id string, endpoint string, action st
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
+	req.Header.Add("Content-Type", "application/json")
 
 	resp, err := o.hc.Do(req)
 	if err != nil {
