@@ -127,6 +127,11 @@ func (c *serverContainer) Add(ctx context.Context, id string, spec *apputil.Shar
 		return errors.Wrap(err, "")
 	}
 	c.serviceSds[id] = shard
+
+	c.lg.Info("serverContainer Add success",
+		zap.String("id", id),
+		zap.Reflect("spec", *spec),
+	)
 	return nil
 }
 
@@ -170,9 +175,7 @@ func (c *serverContainer) Load(ctx context.Context, id string) (string, error) {
 }
 
 func (c *serverContainer) NewOp(service string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	// lock不需要，在Add中调用该方法
 	if c.stopped {
 		c.lg.Info("container stopped",
 			zap.String("service", service),

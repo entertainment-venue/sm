@@ -205,10 +205,10 @@ func (w *maintenanceWorker) reallocate(service string, surviveContainerIdAndValu
 	surviveContainerIds := surviveContainerIdAndValue.KeyList()
 	newContainerIdAndShardIds := performAssignment(shardIds, surviveContainerIds)
 
-	w.lg.Info("performAssignment",
+	w.lg.Info("perform assignment start",
 		zap.Strings("shardIds", shardIds),
 		zap.Strings("surviveContainerIds", surviveContainerIds),
-		zap.Reflect("result", newContainerIdAndShardIds),
+		zap.Reflect("expect", newContainerIdAndShardIds),
 	)
 
 	var result moveActionList
@@ -236,6 +236,12 @@ func (w *maintenanceWorker) reallocate(service string, surviveContainerIdAndValu
 			result = append(result, &moveAction{Service: service, ShardId: shardId, DropEndpoint: curContainerId, AddEndpoint: newId, AllowDrop: allowDrop})
 		}
 	}
+
+	w.lg.Info("perform assignment complete",
+		zap.Strings("shardIds", shardIds),
+		zap.Strings("surviveContainerIds", surviveContainerIds),
+		zap.Reflect("result", result),
+	)
 	return result
 }
 

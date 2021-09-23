@@ -5,7 +5,7 @@ go 1.14
 require (
 	github.com/coreos/etcd v3.3.25+incompatible
 	github.com/coreos/go-systemd v0.0.0-00010101000000-000000000000 // indirect
-	github.com/entertainment-venue/sm/pkg v0.0.0-20210922135209-fbc993d3325d
+	github.com/entertainment-venue/sm/pkg v0.0.0-20210923083313-f788059bede2
 	github.com/gin-gonic/gin v1.7.4
 	github.com/go-playground/validator/v10 v10.9.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect

@@ -68,9 +68,8 @@ type operator struct {
 	parent  *serverContainer
 	service string
 
-	stopper   *apputil.GoroutineStopper
-	hc        *http.Client
-	prevValue string
+	stopper *apputil.GoroutineStopper
+	hc      *http.Client
 }
 
 func newOperator(lg *zap.Logger, sc *serverContainer, service string) (*operator, error) {
@@ -130,7 +129,10 @@ dealWithLatestTask:
 			goto dealWithLatestTask
 		}
 	} else {
-		o.lg.Info("no task", zap.String("service", o.service))
+		o.lg.Info("empty shard move task",
+			zap.String("key", key),
+			zap.String("service", o.service),
+		)
 	}
 
 	fn := func(ctx context.Context, ev *clientv3.Event) error {
@@ -139,18 +141,21 @@ dealWithLatestTask:
 			return nil
 		}
 
+		// 任务被清空，会出发一次时间
+		if string(ev.Kv.Value) == "" {
+			o.lg.Warn("got task erased event", zap.String("service", o.service))
+			return nil
+		}
+
 		// 不接受重复的任务，在一个任务运行时，eq提交任务也会失败
-		if string(ev.Kv.Value) == o.prevValue {
-			o.lg.Warn("duplicate event", zap.String("prevValue", o.prevValue))
+		if ev.PrevKv != nil && string(ev.Kv.Value) == string(ev.PrevKv.Value) {
+			o.lg.Warn("duplicate event", zap.ByteString("prevValue", ev.PrevKv.Value))
 			return nil
 		}
 
 		if err := o.move(ctx, ev.Kv.Value); err != nil {
 			return errors.Wrap(err, "")
 		}
-
-		o.prevValue = string(ev.Kv.Value)
-
 		return nil
 	}
 
@@ -181,7 +186,7 @@ move:
 		})
 	}
 	if err := g.Wait(); err != nil {
-		o.lg.Error("failed to Wait", zap.Error(err))
+		o.lg.Error("dropOrAdd err", zap.Error(err))
 		time.Sleep(defaultSleepTimeout)
 		goto move
 	}
@@ -190,17 +195,21 @@ move:
 
 	// 利用etcd tx清空任务节点，任务节点已经空就停止
 ack:
-	key := apputil.EtcdPathAppShardTask(o.service)
-	if _, err := o.parent.Client.CompareAndSwap(ctx, key, string(value), "", -1); err != nil {
+	taskKey := apputil.EtcdPathAppShardTask(o.service)
+	if _, err := o.parent.Client.CompareAndSwap(ctx, taskKey, string(value), "", -1); err != nil {
 		// 节点数据被破坏，需要人工介入
 		o.lg.Error("failed to CompareAndSwap",
 			zap.Error(err),
-			zap.String("key", key),
+			zap.String("key", taskKey),
 			zap.ByteString("value", value),
 		)
 		time.Sleep(defaultSleepTimeout)
 		goto ack
 	}
+	o.lg.Info("remove task",
+		zap.String("key", taskKey),
+		zap.String("value", string(value)),
+	)
 
 	return nil
 }
@@ -237,6 +246,7 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 			}
 			return nil
 		}
+
 	} else {
 		onlyDrop = true
 
@@ -245,11 +255,31 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 			return errors.Wrap(err, "")
 		}
 	}
-
-	o.lg.Info("move shard success",
+	o.lg.Info("move shard request success",
 		zap.Reflect("ma", ma),
 		zap.Bool("onlyAdd", onlyAdd),
 		zap.Bool("onlyDrop", onlyDrop),
+	)
+
+	// 标记shard分配信息到shard节点
+	shardKey := apputil.EtcdPathAppShardId(ma.Service, ma.ShardId)
+	resp, err := o.parent.Client.GetKV(ctx, shardKey, nil)
+	if err != nil {
+		return errors.Wrap(err, "")
+	}
+	var ss apputil.ShardSpec
+	if err := json.Unmarshal(resp.Kvs[0].Value, &ss); err != nil {
+		return errors.Wrap(err, "")
+	}
+	ss.ContainerId = o.parent.id
+	value := ss.String()
+	if _, err := o.parent.Client.CompareAndSwap(ctx, shardKey, string(resp.Kvs[0].Value), value, -1); err != nil {
+		return errors.Wrap(err, "")
+	}
+	o.lg.Info("move shard etcd CompareAndSwap success",
+		zap.String("key", shardKey),
+		zap.String("cur", string(resp.Kvs[0].Value)),
+		zap.String("new", value),
 	)
 
 	return nil
