@@ -115,7 +115,7 @@ dealWithLatestTask:
 		goto dealWithLatestTask
 	}
 	if resp.Count > 0 && string(resp.Kvs[0].Value) != "" {
-		o.lg.Info("got task",
+		o.lg.Info("got shard move task",
 			zap.String("service", o.service),
 			zap.String("value", string(resp.Kvs[0].Value)),
 		)

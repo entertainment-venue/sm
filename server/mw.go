@@ -93,6 +93,8 @@ func (w *maintenanceWorker) Start() {
 				},
 			)
 		})
+
+	w.lg.Info("maintenanceWorker started", zap.String("service", w.service))
 }
 
 func (w *maintenanceWorker) Close() {
@@ -104,9 +106,14 @@ func (w *maintenanceWorker) Close() {
 // 2 serverShard 被漏掉作为container检测的补充，最后校验，这种情况只涉及到漏掉的shard任务下发下去
 func (w *maintenanceWorker) allocateChecker(ctx context.Context, service string, eq *eventQueue) error {
 	// 获取当前的shard分配关系
-	fixShardIdAndValue, err := w.parent.Client.GetKVs(ctx, nodeAppShard(service))
+	shardKey := nodeAppShard(service)
+	fixShardIdAndValue, err := w.parent.Client.GetKVs(ctx, shardKey)
 	if err != nil {
 		return errors.Wrap(err, "")
+	}
+	if len(fixShardIdAndValue) == 0 {
+		w.lg.Info("service not init yet", zap.String("service", service))
+		return nil
 	}
 
 	// 检查是否有shard没有在健康的container上
@@ -206,6 +213,7 @@ func (w *maintenanceWorker) reallocate(service string, surviveContainerIdAndValu
 	newContainerIdAndShardIds := performAssignment(shardIds, surviveContainerIds)
 
 	w.lg.Info("perform assignment start",
+		zap.String("service", w.service),
 		zap.Strings("shardIds", shardIds),
 		zap.Strings("surviveContainerIds", surviveContainerIds),
 		zap.Reflect("expect", newContainerIdAndShardIds),
@@ -238,6 +246,7 @@ func (w *maintenanceWorker) reallocate(service string, surviveContainerIdAndValu
 	}
 
 	w.lg.Info("perform assignment complete",
+		zap.String("service", w.service),
 		zap.Strings("shardIds", shardIds),
 		zap.Strings("surviveContainerIds", surviveContainerIds),
 		zap.Reflect("result", result),

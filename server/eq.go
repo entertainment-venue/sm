@@ -176,7 +176,7 @@ func (eq *eventQueue) evLoop(ctx context.Context, service string, ch chan *mvEve
 
 		key := apputil.EtcdPathAppShardTask(eq.parent.service)
 		if _, err := eq.parent.Client.CompareAndSwap(ctx, key, "", ev.Value, -1); err != nil {
-			eq.lg.Error("failed to CompareAndSwap",
+			eq.lg.Error("failed to put task",
 				zap.Error(err),
 				zap.String("key", key),
 				zap.String("value", ev.Value),

@@ -221,7 +221,7 @@ func (c *serverContainer) campaignLeader(ctx context.Context) {
 			time.Sleep(defaultSleepTimeout)
 			goto loop
 		}
-		c.lg.Info("campaignLeader success",
+		c.lg.Info("campaign leader success",
 			zap.String("service", c.service),
 			zap.String("leaderNodePrefix", leaderNodePrefix),
 			zap.Int64("lease", int64(c.Session.Lease())),
