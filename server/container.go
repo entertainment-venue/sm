@@ -174,6 +174,17 @@ func (c *serverContainer) Load(ctx context.Context, id string) (string, error) {
 	return sd.getLoad(), nil
 }
 
+func (c *serverContainer) Shards(ctx context.Context) ([]string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var ids []string
+	for id := range c.serviceSds {
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
 func (c *serverContainer) NewOp(service string) error {
 	// lock不需要，在Add中调用该方法
 	if c.stopped {

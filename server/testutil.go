@@ -57,6 +57,10 @@ func (s *testShard) Load(ctx context.Context, id string) (string, error) {
 	return "", nil
 }
 
+func (s *testShard) Shards(ctx context.Context) ([]string, error) {
+	return nil, nil
+}
+
 func (s *testShard) AddShard(c *gin.Context) {
 	fmt.Println("receive add request")
 	return

@@ -53,6 +53,7 @@ type ShardInterface interface {
 	Add(ctx context.Context, id string, spec *ShardSpec) error
 	Drop(ctx context.Context, id string) error
 	Load(ctx context.Context, id string) (string, error)
+	Shards(ctx context.Context) ([]string, error)
 }
 
 type ShardOpMessage struct {
@@ -77,7 +78,6 @@ type ShardOpReceiver interface {
 // 直接帮助接入方把服务器端启动好，引入gin框架，和sarama sdk的接入方式相似，提供消息的chan或者callback func给到接入app的业务逻辑
 type ShardServer struct {
 	stopper  *GoroutineStopper
-	shards   map[string]struct{}
 	hbNode   string
 	taskNode string
 
@@ -172,7 +172,6 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 
 	ss := ShardServer{
 		stopper:  &GoroutineStopper{},
-		shards:   make(map[string]struct{}),
 		hbNode:   EtcdPathAppShardHbId(ops.container.Service(), ops.container.Id()),
 		taskNode: EtcdPathAppShardTask(ops.container.Service()),
 
@@ -188,7 +187,12 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 		TickerLoop(
 			ctx, ops.lg, 3*time.Second, fmt.Sprintf("shard server %s stop upload load", ss.hbNode),
 			func(ctx context.Context) error {
-				for id := range ss.shards {
+				shards, err := ss.impl.Shards(ctx)
+				if err != nil {
+					return errors.Wrap(err, "")
+				}
+
+				for _, id := range shards {
 					sl, err := ss.impl.Load(ctx, id)
 					if err != nil {
 						return errors.Wrap(err, "")
@@ -197,6 +201,8 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 					if _, err := ss.container.Client.Put(ctx, ss.hbNode, sl, clientv3.WithLease(ss.container.Session.Lease())); err != nil {
 						return errors.Wrap(err, "")
 					}
+
+					ops.lg.Debug("shard heartbeat", zap.String("hbNode", ss.hbNode))
 				}
 				return nil
 			},

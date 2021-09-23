@@ -23,7 +23,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// sm的任务
+// sm的任务: 管理governedService的container和shard监控
 type shardTask struct {
 	GovernedService string `json:"governedService"`
 }
