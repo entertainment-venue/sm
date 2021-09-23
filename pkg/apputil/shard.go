@@ -171,11 +171,13 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 	}
 
 	ss := ShardServer{
-		stopper:   &GoroutineStopper{},
+		stopper:  &GoroutineStopper{},
+		shards:   make(map[string]struct{}),
+		hbNode:   EtcdPathAppShardHbId(ops.container.Service(), ops.container.Id()),
+		taskNode: EtcdPathAppShardTask(ops.container.Service()),
+
+		impl:      ops.impl,
 		container: ops.container,
-		shards:    make(map[string]struct{}),
-		hbNode:    EtcdPathAppShardHbId(ops.container.Service(), ops.container.Id()),
-		taskNode:  EtcdPathAppShardTask(ops.container.Service()),
 		lg:        ops.lg,
 		ctx:       ops.ctx,
 		donec:     make(chan struct{}),
@@ -292,7 +294,6 @@ func (ss *ShardServer) AddShard(c *gin.Context) {
 		return
 	}
 	req.Type = OpTypeAdd
-	ss.lg.Info("add shard request", zap.Reflect("request", req))
 
 	shardNode := EtcdPathAppShardId(ss.container.Service(), req.Id)
 	sresp, err := ss.container.Client.GetKV(context.TODO(), shardNode, nil)
@@ -324,6 +325,8 @@ func (ss *ShardServer) AddShard(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	ss.lg.Info("add shard request success", zap.Reflect("request", req))
 
 	c.JSON(http.StatusOK, gin.H{})
 }
