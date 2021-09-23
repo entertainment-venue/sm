@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/coreos/etcd/clientv3"
 	"sync"
 	"time"
 
@@ -175,7 +176,7 @@ func (eq *eventQueue) evLoop(ctx context.Context, service string, ch chan *mvEve
 		eq.lg.Info("ev received", zap.String("ev", ev.String()))
 
 		key := apputil.EtcdPathAppShardTask(eq.parent.service)
-		if _, err := eq.parent.Client.CompareAndSwap(ctx, key, "", ev.Value, -1); err != nil {
+		if _, err := eq.parent.Client.CompareAndSwap(ctx, key, "", ev.Value, clientv3.NoLease); err != nil {
 			eq.lg.Error("failed to put task",
 				zap.Error(err),
 				zap.String("key", key),

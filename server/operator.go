@@ -196,7 +196,7 @@ move:
 	// 利用etcd tx清空任务节点，任务节点已经空就停止
 ack:
 	taskKey := apputil.EtcdPathAppShardTask(o.service)
-	if _, err := o.parent.Client.CompareAndSwap(ctx, taskKey, string(value), "", -1); err != nil {
+	if _, err := o.parent.Client.CompareAndSwap(ctx, taskKey, string(value), "", clientv3.NoLease); err != nil {
 		// 节点数据被破坏，需要人工介入
 		o.lg.Error("failed to CompareAndSwap",
 			zap.Error(err),
@@ -273,7 +273,7 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 	}
 	ss.ContainerId = o.parent.id
 	value := ss.String()
-	if _, err := o.parent.Client.CompareAndSwap(ctx, shardKey, string(resp.Kvs[0].Value), value, -1); err != nil {
+	if _, err := o.parent.Client.CompareAndSwap(ctx, shardKey, string(resp.Kvs[0].Value), value, clientv3.NoLease); err != nil {
 		return errors.Wrap(err, "")
 	}
 	o.lg.Info("move shard etcd CompareAndSwap success",
@@ -340,7 +340,7 @@ func (o *operator) remove(ctx context.Context, id, service string) error {
 	ss.ContainerId = ""
 
 	value := ss.String()
-	if _, err := o.parent.Client.CompareAndSwap(ctx, key, string(resp.Kvs[0].Value), value, -1); err != nil {
+	if _, err := o.parent.Client.CompareAndSwap(ctx, key, string(resp.Kvs[0].Value), value, clientv3.NoLease); err != nil {
 		return errors.Wrap(err, "")
 	}
 	o.lg.Info("container removed",

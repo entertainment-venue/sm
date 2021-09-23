@@ -87,5 +87,5 @@ func (s *shardLoad) String() string {
 
 func (s *serverShard) getLoad() string {
 	// TODO shardLoad
-	return ""
+	return "todo"
 }
