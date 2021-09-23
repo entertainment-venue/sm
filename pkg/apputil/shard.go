@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
+	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -46,6 +47,16 @@ type ShardSpec struct {
 
 func (ss *ShardSpec) String() string {
 	b, _ := json.Marshal(ss)
+	return string(b)
+}
+
+type shardHb struct {
+	Load string `json:"load"`
+	Id   string `json:"id"`
+}
+
+func (s *shardHb) String() string {
+	b, _ := json.Marshal(s)
 	return string(b)
 }
 
@@ -77,9 +88,10 @@ type ShardOpReceiver interface {
 
 // 直接帮助接入方把服务器端启动好，引入gin框架，和sarama sdk的接入方式相似，提供消息的chan或者callback func给到接入app的业务逻辑
 type ShardServer struct {
-	stopper  *GoroutineStopper
-	hbNode   string
-	taskNode string
+	stopper       *GoroutineStopper
+	hbNode        string
+	taskNode      string
+	shardLoadNode string
 
 	// 在Close方法中需要能被close掉
 	srv *http.Server
@@ -193,13 +205,38 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 				}
 
 				for _, id := range shards {
+					// 检测下心跳冲突，防止同一shard在多个container上: 没有要互斥创建 && 有要互斥更新
+					if err := ss.container.Client.CreateAndGet(ctx, []string{ss.hbNode}, []string{id}, ss.container.Session.Lease()); err != nil {
+						if err != etcdutil.ErrEtcdNodeExist {
+							ops.lg.Error("failed to shard heartbeat by create",
+								zap.Error(err),
+								zap.String("hbNode", ss.hbNode),
+							)
+							continue
+						}
+
+						if _, err := ss.container.Client.CompareAndSwap(ctx, ss.hbNode, id, id, ss.container.Session.Lease()); err != nil {
+							ops.lg.Error("failed to shard heartbeat by swap",
+								zap.Error(err),
+								zap.String("hbNode", ss.hbNode),
+								zap.String("id", id),
+							)
+							continue
+						}
+					}
+
 					sl, err := ss.impl.Load(ctx, id)
 					if err != nil {
 						return errors.Wrap(err, "")
 					}
 
-					if _, err := ss.container.Client.Put(ctx, ss.hbNode, sl, clientv3.WithLease(ss.container.Session.Lease())); err != nil {
-						return errors.Wrap(err, "")
+					key := EtcdPathAppShardLoadId(ss.container.Service(), id)
+					if _, err := ss.container.Client.Put(ctx, key, sl, clientv3.WithLease(ss.container.Session.Lease())); err != nil {
+						ops.lg.Error("failed to shard load",
+							zap.Error(err),
+							zap.String("key", key),
+							zap.String("load", sl),
+						)
 					}
 
 					ops.lg.Debug("shard heartbeat", zap.String("hbNode", ss.hbNode))

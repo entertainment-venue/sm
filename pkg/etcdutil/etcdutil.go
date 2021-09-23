@@ -27,9 +27,9 @@ import (
 var (
 	defaultOpTimeout = 3 * time.Second
 
-	errEtcdNodeExist     = errors.New("etcd: node exist")
-	errEtcdValueExist    = errors.New("etcd: value exist")
-	errEtcdValueNotMatch = errors.New("etcd: value not match")
+	ErrEtcdNodeExist     = errors.New("etcd: node exist")
+	ErrEtcdValueExist    = errors.New("etcd: value exist")
+	ErrEtcdValueNotMatch = errors.New("etcd: value not match")
 )
 
 type EtcdClient struct {
@@ -141,10 +141,10 @@ func (w *EtcdClient) CreateAndGet(_ context.Context, nodes []string, values []st
 		zap.Strings("nodes", nodes),
 		zap.Strings("values", values),
 	)
-	return errEtcdNodeExist
+	return ErrEtcdNodeExist
 }
 
-func (w *EtcdClient) CompareAndSwap(_ context.Context, node string, curValue string, newValue string, ttl int64) (string, error) {
+func (w *EtcdClient) CompareAndSwap(_ context.Context, node string, curValue string, newValue string, leaseID clientv3.LeaseID) (string, error) {
 	if curValue == "" && newValue == "" {
 		return "", errors.Errorf("FAILED node %s's curValue and newValue should not be empty both", node)
 	}
@@ -153,18 +153,10 @@ func (w *EtcdClient) CompareAndSwap(_ context.Context, node string, curValue str
 	defer cancel()
 
 	var put clientv3.Op
-	if ttl <= 0 {
+	if leaseID == clientv3.NoLease {
 		put = clientv3.OpPut(node, newValue)
 	} else {
-		timeoutCtx, cancel := context.WithTimeout(context.Background(), defaultOpTimeout)
-		defer cancel()
-
-		resp, err := w.Grant(timeoutCtx, ttl)
-		if err != nil {
-			return "", errors.Wrap(err, "")
-		}
-
-		put = clientv3.OpPut(node, newValue, clientv3.WithLease(resp.ID))
+		put = clientv3.OpPut(node, newValue, clientv3.WithLease(leaseID))
 	}
 
 	// leader会尝试保持自己的状态
@@ -191,16 +183,16 @@ func (w *EtcdClient) CompareAndSwap(_ context.Context, node string, curValue str
 			zap.String("node", node),
 			zap.String("realValue", realValue),
 			zap.String("newValue", newValue),
-			zap.Error(errEtcdNodeExist),
+			zap.Error(ErrEtcdNodeExist),
 		)
-		return realValue, errEtcdValueExist
+		return realValue, ErrEtcdValueExist
 	}
 	w.lg.Error("failed to swap node",
 		zap.String("node", node),
 		zap.String("realValue", realValue),
 		zap.String("curValue", curValue),
 		zap.String("newValue", newValue),
-		zap.Error(errEtcdValueNotMatch),
+		zap.Error(ErrEtcdValueNotMatch),
 	)
-	return realValue, errEtcdValueNotMatch
+	return realValue, ErrEtcdValueNotMatch
 }
