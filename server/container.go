@@ -231,8 +231,8 @@ func (c *serverContainer) campaignLeader(ctx context.Context) {
 		// etcd sdk中keepalive的请求发送时间时500ms，3s>>500ms，认为这个时间段内，所有container都会发heartbeat，不存在的就认为没有任务。
 		time.Sleep(5 * time.Second)
 
-		if err := c.leaderStartDistribution(ctx); err != nil {
-			c.lg.Error("leader failed to leaderStartDistribution", zap.Error(err))
+		if err := c.startDistribution(ctx); err != nil {
+			c.lg.Error("leader failed to startDistribution", zap.Error(err))
 			time.Sleep(defaultSleepTimeout)
 			goto loop
 		}
@@ -260,7 +260,7 @@ func (c *serverContainer) campaignLeader(ctx context.Context) {
 	}
 }
 
-func (c *serverContainer) leaderStartDistribution(ctx context.Context) error {
+func (c *serverContainer) startDistribution(ctx context.Context) error {
 	// 先把当前的分配关系下发下去，和static membership，不过我们场景是由单点完成的，由性能瓶颈，但是不像LRMF场景下serverless难以判断正确性
 	// 分配关系下发，解决的是先把现有分配关系搞下去，然后再通过shardAllocateLoop检验是否需要整体进行shard move，相当于init
 	// TODO app接入数量一个公司可控，所以方案可行
@@ -282,7 +282,7 @@ func (c *serverContainer) leaderStartDistribution(ctx context.Context) error {
 			ma := moveAction{Service: c.service, ShardId: shardId, AddEndpoint: ss.ContainerId, AllowDrop: true}
 			moveActions = append(moveActions, &ma)
 
-			c.lg.Info("leaderStartDistribution shard move action",
+			c.lg.Info("leader init shard move action",
 				zap.String("service", c.service),
 				zap.Reflect("action", ma),
 			)
@@ -290,12 +290,18 @@ func (c *serverContainer) leaderStartDistribution(ctx context.Context) error {
 	}
 	// 向自己的app任务节点发任务
 	if len(moveActions) == 0 {
-		c.lg.Info("leaderStartDistribution no move action created", zap.String("service", c.service))
+		c.lg.Info("startDistribution no move action created", zap.String("service", c.service))
 		return nil
 	}
 
+	ev := mvEvent{
+		Service:     c.service,
+		Type:        tShardUpdate,
+		EnqueueTime: time.Now().Unix(),
+		Value:       moveActions.String(),
+	}
 	item := Item{
-		Value:    moveActions.String(),
+		Value:    ev.String(),
 		Priority: time.Now().Unix(),
 	}
 	c.eq.push(&item, true)
