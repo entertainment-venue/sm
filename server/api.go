@@ -51,7 +51,7 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	ss.lg.Info("receive request", zap.String("request", req.String()))
+	ss.lg.Info("receive add spec request", zap.String("request", req.String()))
 
 	//  写入app spec和app task节点在一个tx
 	var (
@@ -97,7 +97,7 @@ func (ss *shardServer) GinAddShard(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	ss.lg.Info("receive request", zap.String("request", req.String()))
+	ss.lg.Info("receive add shard request", zap.String("request", req.String()))
 
 	spec := apputil.ShardSpec{
 		Service:    req.Service,
@@ -125,50 +125,67 @@ func (ss *shardServer) GinAddShard(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{})
 }
 
-/*
-type appDelShardRequest struct {
-	ShardId string `json:"shardId"`
-	Service string `json:"service"`
+type delShardRequest struct {
+	ShardId string `json:"shardId" binding:"required"`
+	Service string `json:"service" binding:"required"`
 }
 
-func (g *shardServer) GinAppDelShard(c *gin.Context) {
-	var req appDelShardRequest
+func (r *delShardRequest) String() string {
+	b, _ := json.Marshal(r)
+	return string(b)
+}
+
+func (ss *shardServer) GinAppDelShard(c *gin.Context) {
+	var req delShardRequest
 	if err := c.ShouldBind(&req); err != nil {
-		Logger.Printf("err: %v", err)
+		ss.lg.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	Logger.Printf("req: %v", req)
+	ss.lg.Info("receive del shard request", zap.String("request", req.String()))
 
-	resp, err := g.container.ew.get(context.Background(), g.container.ew.nodeAppShardId(req.Service, req.ShardId), nil)
+	// 获取shard当前的基本信息
+	key := apputil.EtcdPathAppShardId(req.Service, req.ShardId)
+	resp, err := ss.container.Client.Get(context.Background(), key, nil)
 	if err != nil {
-		Logger.Printf("err: %v", err)
+		ss.lg.Error("failed to get etcd node",
+			zap.Error(err),
+			zap.String("key", key),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	if resp.Count == 0 {
-		err = errors.Errorf("Failed to get serverShard %s content in service %s", req.ShardId, req.Service)
-		Logger.Printf("err: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ss.lg.Error("etcd node not exist", zap.String("key", key))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errNotExist})
 		return
 	}
 
-	var spec shardSpec
+	var spec apputil.ShardSpec
 	if err := json.Unmarshal(resp.Kvs[0].Value, &spec); err != nil {
-		Logger.Printf("err: %v", err)
+		ss.lg.Error("Unmarshal err",
+			zap.Error(err),
+			zap.ByteString("value", resp.Kvs[0].Value),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if !spec.Deleted {
-		spec.Deleted = true
 
-		if err := g.container.ew.update(context.Background(), g.container.ew.nodeAppShardId(req.Service, req.ShardId), spec.String()); err != nil {
-			Logger.Printf("err: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
+	// 要求特定服务drop某个shard，http请求
+	ma := moveAction{
+		Service:      req.Service,
+		ShardId:      req.ShardId,
+		DropEndpoint: spec.ContainerId,
+	}
+	if err := ss.container.op.dropOrAdd(context.TODO(), &ma); err != nil {
+		ss.lg.Error("failed to dropOrAdd",
+			zap.Error(err),
+			zap.Reflect("ma", ma),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
+	ss.lg.Info("delete shard success", zap.Reflect("req", req))
 	c.JSON(http.StatusOK, gin.H{})
 }
-*/

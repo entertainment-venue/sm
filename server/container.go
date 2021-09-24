@@ -127,7 +127,7 @@ func (c *serverContainer) Add(ctx context.Context, id string, spec *apputil.Shar
 		// 判断是否需要更新shard的工作内容，task有变更停掉当前shard，重新启动
 		if ss.Spec().Task != spec.Task {
 			ss.Close()
-			c.lg.Info("new shard content, close cur shard",
+			c.lg.Info("shard task updated, close cur shard",
 				zap.String("id", id),
 				zap.String("cur", ss.Spec().Task),
 				zap.String("new", spec.Task),
