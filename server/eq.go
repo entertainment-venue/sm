@@ -183,7 +183,6 @@ func (eq *eventQueue) evLoop(ctx context.Context, service string, ch chan *mvEve
 				zap.String("value", ev.Value),
 			)
 		}
-
 		// 清理掉service的站位，允许该service的下一个event进来
 		eq.mu.Lock()
 		delete(eq.curEvs, ev.Service)

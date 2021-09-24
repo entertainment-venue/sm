@@ -40,10 +40,12 @@ type serverShard struct {
 	mtWorker *maintenanceWorker
 
 	lg *zap.Logger
+
+	shardSpec *apputil.ShardSpec
 }
 
 func startShard(ctx context.Context, lg *zap.Logger, sc *serverContainer, id string, spec *apputil.ShardSpec) (*serverShard, error) {
-	s := serverShard{parent: sc, id: id, lg: lg}
+	s := serverShard{parent: sc, id: id, lg: lg, shardSpec: spec}
 
 	var st shardTask
 	if err := json.Unmarshal([]byte(spec.Task), &st); err != nil {
@@ -73,6 +75,10 @@ func (s *serverShard) Close() {
 		zap.String("id", s.id),
 		zap.String("service", s.service),
 	)
+}
+
+func (s *serverShard) Spec() *apputil.ShardSpec {
+	return s.shardSpec
 }
 
 type shardLoad struct {

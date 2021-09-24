@@ -27,7 +27,7 @@ import (
 )
 
 type shardServer struct {
-	cr *serverContainer
+	container *serverContainer
 
 	lg *zap.Logger
 }
@@ -62,7 +62,7 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 	nodes = append(nodes, apputil.EtcdPathAppShardTask(req.Service))
 	values = append(values, req.String())
 	values = append(values, "")
-	if err := ss.cr.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
+	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
 		ss.lg.Error("CreateAndGet err",
 			zap.Error(err),
 			zap.Strings("nodes", nodes),
@@ -112,8 +112,8 @@ func (ss *shardServer) GinAddShard(c *gin.Context) {
 		nodes  = []string{apputil.EtcdPathAppShardId(req.Service, req.ShardId)}
 		values = []string{spec.String()}
 	)
-	if err := ss.cr.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
-		ss.lg.Error("CreateAndGet err",
+	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
+		ss.lg.Error("failed to add shard",
 			zap.Error(err),
 			zap.Strings("nodes", nodes),
 			zap.Strings("values", values),
@@ -140,7 +140,7 @@ func (g *shardServer) GinAppDelShard(c *gin.Context) {
 	}
 	Logger.Printf("req: %v", req)
 
-	resp, err := g.cr.ew.get(context.Background(), g.cr.ew.nodeAppShardId(req.Service, req.ShardId), nil)
+	resp, err := g.container.ew.get(context.Background(), g.container.ew.nodeAppShardId(req.Service, req.ShardId), nil)
 	if err != nil {
 		Logger.Printf("err: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -162,7 +162,7 @@ func (g *shardServer) GinAppDelShard(c *gin.Context) {
 	if !spec.Deleted {
 		spec.Deleted = true
 
-		if err := g.cr.ew.update(context.Background(), g.cr.ew.nodeAppShardId(req.Service, req.ShardId), spec.String()); err != nil {
+		if err := g.container.ew.update(context.Background(), g.container.ew.nodeAppShardId(req.Service, req.ShardId), spec.String()); err != nil {
 			Logger.Printf("err: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return

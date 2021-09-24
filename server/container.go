@@ -37,8 +37,8 @@ type serverContainer struct {
 	// 管理自己的goroutine
 	stopper *apputil.GoroutineStopper
 
-	mu         sync.Mutex
-	serviceSds map[string]*serverShard
+	mu        sync.Mutex
+	serviceSS map[string]*serverShard
 	// serverShard sm管理很多业务app，不同业务app有不同的task节点，这块做个map，可能出现单container负责多个app的场景
 	serviceOps map[string]*operator
 	stopped    bool // container进入stopped状态
@@ -65,7 +65,7 @@ func launchContainer(ctx context.Context, lg *zap.Logger, id, service string, c 
 		service:    service,
 		cancel:     cancel,
 		stopper:    &apputil.GoroutineStopper{},
-		serviceSds: make(map[string]*serverShard),
+		serviceSS:  make(map[string]*serverShard),
 		serviceOps: make(map[string]*operator),
 		lg:         lg,
 	}
@@ -87,7 +87,7 @@ func (c *serverContainer) Close() {
 	c.mu.Unlock()
 
 	// stop serverShard
-	for _, s := range c.serviceSds {
+	for _, s := range c.serviceSS {
 		s.Close()
 	}
 
@@ -114,21 +114,34 @@ func (c *serverContainer) Add(ctx context.Context, id string, spec *apputil.Shar
 		return nil
 	}
 
-	if _, ok := c.serviceSds[id]; ok {
-		c.lg.Info("shard existed",
-			zap.String("id", id),
-			zap.String("service", c.service),
-		)
-		return nil
+	ss, ok := c.serviceSS[id]
+	if ok {
+		if ss.Spec().Task == spec.Task {
+			c.lg.Info("shard existed",
+				zap.String("id", id),
+				zap.String("service", c.service),
+			)
+			return nil
+		}
+
+		// 判断是否需要更新shard的工作内容，task有变更停掉当前shard，重新启动
+		if ss.Spec().Task != spec.Task {
+			ss.Close()
+			c.lg.Info("new shard content, close cur shard",
+				zap.String("id", id),
+				zap.String("cur", ss.Spec().Task),
+				zap.String("new", spec.Task),
+			)
+		}
 	}
 
 	shard, err := startShard(ctx, c.lg, c, id, spec)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
-	c.serviceSds[id] = shard
+	c.serviceSS[id] = shard
 
-	c.lg.Info("serverContainer Add success",
+	c.lg.Info("shard started",
 		zap.String("id", id),
 		zap.Reflect("spec", *spec),
 	)
@@ -139,19 +152,21 @@ func (c *serverContainer) Drop(_ context.Context, id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	sd, ok := c.serviceSS[id]
+	if !ok {
+		c.lg.Info("shard not existed", zap.String("id", id))
+		return errNotExist
+	}
+	sd.Close()
+
 	if c.stopped {
-		c.lg.Info("container stopped",
+		c.lg.Info("shard stopped",
 			zap.String("id", id),
 			zap.String("service", c.service),
 		)
 		return nil
 	}
 
-	sd, ok := c.serviceSds[id]
-	if !ok {
-		return errNotExist
-	}
-	sd.Close()
 	return nil
 }
 
@@ -167,7 +182,7 @@ func (c *serverContainer) Load(ctx context.Context, id string) (string, error) {
 		return "", nil
 	}
 
-	sd, ok := c.serviceSds[id]
+	sd, ok := c.serviceSS[id]
 	if !ok {
 		return "", errNotExist
 	}
@@ -179,7 +194,7 @@ func (c *serverContainer) Shards(ctx context.Context) ([]string, error) {
 	defer c.mu.Unlock()
 
 	var ids []string
-	for id := range c.serviceSds {
+	for id := range c.serviceSS {
 		ids = append(ids, id)
 	}
 	return ids, nil
