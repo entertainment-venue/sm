@@ -3,8 +3,8 @@ module github.com/entertainment-venue/sm
 go 1.14
 
 require (
-	github.com/entertainment-venue/sm/pkg v0.0.0-20210922102859-36578cb12d43 // indirect
-	github.com/entertainment-venue/sm/server v0.0.0-20210922133204-b931731b37dd
+	github.com/entertainment-venue/sm/pkg v0.0.0-20210924044901-38dd8631e4d6 // indirect
+	github.com/entertainment-venue/sm/server v0.0.0-20210924044901-38dd8631e4d6
 	golang.org/x/crypto v0.0.0-20210921155107-089bfa567519 // indirect
 	golang.org/x/net v0.0.0-20210917221730-978cfadd31cf // indirect
 	golang.org/x/sys v0.0.0-20210921065528-437939a70204 // indirect

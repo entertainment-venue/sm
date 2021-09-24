@@ -88,10 +88,8 @@ type ShardOpReceiver interface {
 
 // 直接帮助接入方把服务器端启动好，引入gin框架，和sarama sdk的接入方式相似，提供消息的chan或者callback func给到接入app的业务逻辑
 type ShardServer struct {
-	stopper       *GoroutineStopper
-	hbNode        string
-	taskNode      string
-	shardLoadNode string
+	stopper  *GoroutineStopper
+	taskNode string
 
 	// 在Close方法中需要能被close掉
 	srv *http.Server
@@ -184,7 +182,6 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 
 	ss := ShardServer{
 		stopper:  &GoroutineStopper{},
-		hbNode:   EtcdPathAppShardHbId(ops.container.Service(), ops.container.Id()),
 		taskNode: EtcdPathAppShardTask(ops.container.Service()),
 
 		impl:      ops.impl,
@@ -197,7 +194,7 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 	// 上传shard的load，load是从接入服务拿到
 	ss.stopper.Wrap(func(ctx context.Context) {
 		TickerLoop(
-			ctx, ops.lg, 3*time.Second, fmt.Sprintf("shard server %s stop upload load", ss.hbNode),
+			ctx, ops.lg, 3*time.Second, fmt.Sprintf("shard server stop upload load"),
 			func(ctx context.Context) error {
 				shards, err := ss.impl.Shards(ctx)
 				if err != nil {
@@ -205,20 +202,21 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 				}
 
 				for _, id := range shards {
+					hbNode := EtcdPathAppShardHbId(ss.container.Service(), id)
 					// 检测下心跳冲突，防止同一shard在多个container上: 没有要互斥创建 && 有要互斥更新
-					if err := ss.container.Client.CreateAndGet(ctx, []string{ss.hbNode}, []string{id}, ss.container.Session.Lease()); err != nil {
+					if err := ss.container.Client.CreateAndGet(ctx, []string{hbNode}, []string{id}, ss.container.Session.Lease()); err != nil {
 						if err != etcdutil.ErrEtcdNodeExist {
 							ops.lg.Error("failed to shard heartbeat by create",
 								zap.Error(err),
-								zap.String("hbNode", ss.hbNode),
+								zap.String("hbNode", hbNode),
 							)
 							continue
 						}
 
-						if _, err := ss.container.Client.CompareAndSwap(ctx, ss.hbNode, id, id, ss.container.Session.Lease()); err != nil {
+						if _, err := ss.container.Client.CompareAndSwap(ctx, hbNode, id, id, ss.container.Session.Lease()); err != nil {
 							ops.lg.Error("failed to shard heartbeat by swap",
 								zap.Error(err),
-								zap.String("hbNode", ss.hbNode),
+								zap.String("hbNode", hbNode),
 								zap.String("id", id),
 							)
 							continue
@@ -239,7 +237,7 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 						)
 					}
 
-					ops.lg.Debug("shard heartbeat", zap.String("hbNode", ss.hbNode))
+					ops.lg.Debug("shard heartbeat", zap.String("hbNode", hbNode))
 				}
 				return nil
 			},
@@ -288,9 +286,9 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 		// shardserver使用container与etcd建立的session，回收心跳节点
 		select {
 		case <-ss.container.Session.Done():
-			ss.lg.Info("session closed", zap.String("hbNode", ss.hbNode))
+			ss.lg.Info("session closed", zap.String("service", ss.container.Service()))
 		case <-ops.ctx.Done():
-			ss.lg.Info("context done", zap.String("hbNode", ss.hbNode))
+			ss.lg.Info("context done", zap.String("service", ss.container.Service()))
 		}
 	}()
 
@@ -304,21 +302,18 @@ func (ss *ShardServer) Close() {
 		if err := ss.srv.Shutdown(ss.ctx); err != nil {
 			ss.lg.Error("failed to shutdown http srv",
 				zap.Error(err),
-				zap.String("hbNode", ss.hbNode),
+				zap.String("service", ss.container.Service()),
 			)
 
 		} else {
-			ss.lg.Info("shutdown http srv success", zap.String("hbNode", ss.hbNode))
+			ss.lg.Info("shutdown http srv success", zap.String("service", ss.container.Service()))
 		}
 	}
 	if ss.stopper != nil {
 		ss.stopper.Close()
 	}
 
-	ss.lg.Info("shard server closed",
-		zap.String("service", ss.container.Service()),
-		zap.String("hbNode", ss.hbNode),
-	)
+	ss.lg.Info("shard server closed", zap.String("service", ss.container.Service()))
 }
 
 func (ss *ShardServer) Done() <-chan struct{} {

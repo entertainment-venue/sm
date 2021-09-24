@@ -17,6 +17,9 @@ github.com/entertainment-venue/sm/pkg v0.0.0-20210917120223-49f8dd29a238 h1:9qYs
 github.com/entertainment-venue/sm/pkg v0.0.0-20210917120223-49f8dd29a238/go.mod h1:HFA5JE6rsmu6D1Om4SNhM3CCMZuCk2o8ui3xAFH2DA0=
 github.com/entertainment-venue/sm/pkg v0.0.0-20210922102859-36578cb12d43 h1:fVlqPFAAHrpNE1+lOmxlkaJF9jaKGNi9BoUC+xnLTmY=
 github.com/entertainment-venue/sm/pkg v0.0.0-20210922102859-36578cb12d43/go.mod h1:HFA5JE6rsmu6D1Om4SNhM3CCMZuCk2o8ui3xAFH2DA0=
+github.com/entertainment-venue/sm/pkg v0.0.0-20210923153147-2dac2ddee4e4/go.mod h1:HFA5JE6rsmu6D1Om4SNhM3CCMZuCk2o8ui3xAFH2DA0=
+github.com/entertainment-venue/sm/pkg v0.0.0-20210924044901-38dd8631e4d6 h1:nFigf/fio/CmwD1TXSV1VUN7F/jONWBolHODqGFo9cs=
+github.com/entertainment-venue/sm/pkg v0.0.0-20210924044901-38dd8631e4d6/go.mod h1:HFA5JE6rsmu6D1Om4SNhM3CCMZuCk2o8ui3xAFH2DA0=
 github.com/entertainment-venue/sm/server v0.0.0-20210917134120-0b960148e1b8 h1:iP5BBj4cjgiIo8f84GxgR44flOUIDtjV3OjPDkXWDhk=
 github.com/entertainment-venue/sm/server v0.0.0-20210917134120-0b960148e1b8/go.mod h1:QTz9fUV9+84XMiFD4RfNS02X389bQbQzVosMNoQlGPo=
 github.com/entertainment-venue/sm/server v0.0.0-20210917135636-100049647066 h1:PPQFaRSnMD6KI1ld8MF5KYb2WGktg3bH/22GIkcq9LQ=
@@ -29,6 +32,8 @@ github.com/entertainment-venue/sm/server v0.0.0-20210922112709-12eb95383dea h1:E
 github.com/entertainment-venue/sm/server v0.0.0-20210922112709-12eb95383dea/go.mod h1:QTz9fUV9+84XMiFD4RfNS02X389bQbQzVosMNoQlGPo=
 github.com/entertainment-venue/sm/server v0.0.0-20210922133204-b931731b37dd h1:fqMshvVZFRJOjhqmaApS26rjXWt3Od889TYTrG4z308=
 github.com/entertainment-venue/sm/server v0.0.0-20210922133204-b931731b37dd/go.mod h1:QTz9fUV9+84XMiFD4RfNS02X389bQbQzVosMNoQlGPo=
+github.com/entertainment-venue/sm/server v0.0.0-20210924044901-38dd8631e4d6 h1:fNxsN46h+JhLhnw0Gu/fWq7j7x/4qoWGJlmINADc6Uc=
+github.com/entertainment-venue/sm/server v0.0.0-20210924044901-38dd8631e4d6/go.mod h1:lsWf1fW0M20jVofTPrBtYaaKEY/9wuXAlAA58EBCdJ4=
 github.com/envoyproxy/go-control-plane v0.9.1-0.20191026205805-5f8ba28d4473/go.mod h1:YTl/9mNaCwkRvm6d1a2C3ymFceY/DCBVvsKhRF0iEA4=
 github.com/envoyproxy/protoc-gen-validate v0.1.0/go.mod h1:iSmxcyjqTsJpI2R4NaDN7+kN2VEUnK/pcBlmesArF7c=
 github.com/gin-contrib/sse v0.1.0 h1:Y/yl/+YNO8GZSjAhjMsSuLt29uWRFHdHYUb5lYOV9qE=
