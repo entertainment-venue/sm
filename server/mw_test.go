@@ -27,7 +27,7 @@ import (
 )
 
 func Test_Start(t *testing.T) {
-	ctr, err := launchContainer(context.TODO(), ttLogger, "127.0.0.1:8888", "foo.bar", nil)
+	ctr, err := newContainer(context.TODO(), ttLogger, "127.0.0.1:8888", "foo.bar", nil)
 	if err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()

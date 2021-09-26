@@ -39,10 +39,6 @@ type ShardSpec struct {
 
 	// 所属container，在任务分配场景设置
 	ContainerId string `json:"containerId"`
-
-	// TODO 提供后台移动shard的能力，但是该能力开发较复杂，暂时不提供
-	// 软删除：borderland的shard会检查shard是否都分配给了健康的container，已经存在goroutine，直接在这个goroutine中处理删除
-	// Deleted bool `json:"deleted"`
 }
 
 func (ss *ShardSpec) String() string {

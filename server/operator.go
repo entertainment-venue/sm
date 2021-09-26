@@ -65,14 +65,14 @@ func (l moveActionList) Swap(i, j int) {
 // container和shard上报两个维度的load，leader(sm)或者shard(app)探测到异常，会发布任务出来，operator就是这个任务的执行者
 type operator struct {
 	lg      *zap.Logger
-	parent  *serverContainer
+	parent  *smContainer
 	service string
 
 	stopper *apputil.GoroutineStopper
 	hc      *http.Client
 }
 
-func newOperator(lg *zap.Logger, sc *serverContainer, service string) (*operator, error) {
+func newOperator(lg *zap.Logger, sc *smContainer, service string) (*operator, error) {
 	op := operator{
 		lg:      lg,
 		parent:  sc,
@@ -81,15 +81,15 @@ func newOperator(lg *zap.Logger, sc *serverContainer, service string) (*operator
 		stopper: &apputil.GoroutineStopper{},
 		hc:      newHttpClient(),
 	}
-
-	op.stopper.Wrap(
-		func(ctx context.Context) {
-			op.moveLoop(ctx)
-		})
-
 	// TODO scale
-
 	return &op, nil
+}
+
+func (o *operator) Start() {
+	o.stopper.Wrap(
+		func(ctx context.Context) {
+			o.moveLoop(ctx)
+		})
 }
 
 func (o *operator) Close() {

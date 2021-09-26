@@ -29,7 +29,7 @@ type Server struct {
 
 	c  *apputil.Container
 	ss *apputil.ShardServer
-	sc *serverContainer
+	sc *smContainer
 
 	lg *zap.Logger
 }
@@ -108,7 +108,7 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 	}
 	srv.c = c
 
-	sc, err := launchContainer(ctx, logger, ops.id, ops.service, c)
+	sc, err := newContainer(ctx, logger, ops.id, ops.service, c)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}

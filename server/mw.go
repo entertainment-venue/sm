@@ -30,19 +30,19 @@ import (
 
 // 管理某个sm app的shard
 type maintenanceWorker struct {
-	parent *serverContainer
+	parent *smContainer
 
 	ctx context.Context
 
 	stopper *apputil.GoroutineStopper
 
-	// 从属于leader或者sm serverShard，service和container不一定一样
+	// 从属于leader或者sm smShard，service和container不一定一样
 	service string
 
 	lg *zap.Logger
 }
 
-func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *serverContainer, service string) *maintenanceWorker {
+func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smContainer, service string) *maintenanceWorker {
 	return &maintenanceWorker{
 		ctx:     ctx,
 		lg:      lg,
@@ -59,7 +59,7 @@ func (w *maintenanceWorker) Start() {
 				w.ctx,
 				w.lg,
 				defaultLoopInterval,
-				fmt.Sprintf("[mtWorker] service %s ShardAllocateLoop exit", w.service),
+				fmt.Sprintf("[leaderWorker] service %s ShardAllocateLoop exit", w.service),
 				func(ctx context.Context) error {
 					return w.allocateChecker(ctx, w.service, w.parent.eq)
 				},
@@ -73,7 +73,7 @@ func (w *maintenanceWorker) Start() {
 				w.lg,
 				w.parent.Client.Client,
 				nodeAppShardHb(w.service),
-				fmt.Sprintf("[mtWorker] service %s ShardLoadLoop exit", w.service),
+				fmt.Sprintf("[leaderWorker] service %s ShardLoadLoop exit", w.service),
 				func(ctx context.Context, ev *clientv3.Event) error {
 					return shardLoadChecker(ctx, w.service, w.parent.eq, ev)
 				},
@@ -87,7 +87,7 @@ func (w *maintenanceWorker) Start() {
 				w.lg,
 				w.parent.Client.Client,
 				nodeAppContainerHb(w.service),
-				fmt.Sprintf("[mtWorker] service %s ContainerLoadLoop exit", w.service),
+				fmt.Sprintf("[leaderWorker] service %s ContainerLoadLoop exit", w.service),
 				func(ctx context.Context, ev *clientv3.Event) error {
 					return containerLoadChecker(ctx, w.service, w.parent.eq, ev)
 				},
@@ -102,8 +102,8 @@ func (w *maintenanceWorker) Close() {
 	w.lg.Info("maintenanceWorker stopped", zap.String("service", w.service))
 }
 
-// 1 serverContainer 的增加/减少是优先级最高，目前可能涉及大量shard move
-// 2 serverShard 被漏掉作为container检测的补充，最后校验，这种情况只涉及到漏掉的shard任务下发下去
+// 1 smContainer 的增加/减少是优先级最高，目前可能涉及大量shard move
+// 2 smShard 被漏掉作为container检测的补充，最后校验，这种情况只涉及到漏掉的shard任务下发下去
 func (w *maintenanceWorker) allocateChecker(ctx context.Context, service string, eq *eventQueue) error {
 	// 获取当前的shard分配关系
 	shardKey := nodeAppShard(service)
@@ -157,7 +157,7 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context, service string,
 	}
 	w.lg.Debug("container not changed", zap.String("service", service))
 
-	// serverContainer hb和固定分配关系一致，下面检查shard存活
+	// smContainer hb和固定分配关系一致，下面检查shard存活
 	var surviveShardIdAndValue ArmorMap
 	surviveShardIdAndValue, err = w.parent.Client.GetKVs(ctx, nodeAppShardHb(service))
 	if err != nil {

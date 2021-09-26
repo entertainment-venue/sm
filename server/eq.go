@@ -51,7 +51,7 @@ func (i *mvEvent) String() string {
 }
 
 type eventQueue struct {
-	parent  *serverContainer
+	parent  *smContainer
 	stopper *apputil.GoroutineStopper
 
 	// 延迟队列: 不能立即处理的先放这里，启动单独的goroutine把event根据时间拿出来，再放到异步队列中
@@ -64,7 +64,7 @@ type eventQueue struct {
 	lg *zap.Logger
 }
 
-func newEventQueue(_ context.Context, lg *zap.Logger, sc *serverContainer) *eventQueue {
+func newEventQueue(_ context.Context, lg *zap.Logger, sc *smContainer) *eventQueue {
 	eq := eventQueue{
 		parent:  sc,
 		buffer:  make(map[string]chan *mvEvent),

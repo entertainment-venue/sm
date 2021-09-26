@@ -45,7 +45,7 @@ func newTestOperator() (*operator, context.CancelFunc) {
 		panic(err)
 	}
 
-	sc := serverContainer{Container: c, service: service}
+	sc := smContainer{Container: c, service: service}
 
 	o := operator{lg: ttLogger, parent: &sc, service: service}
 	return &o, cancel
@@ -99,7 +99,7 @@ func Test_operator_moveLoop(t *testing.T) {
 
 func Test_operator_move(t *testing.T) {
 	c, _, _ := newTestShardServer()
-	sc := serverContainer{Container: c}
+	sc := smContainer{Container: c}
 
 	o := operator{lg: ttLogger, service: "foo.bar"}
 	o.parent = &sc
@@ -117,7 +117,7 @@ func Test_operator_move(t *testing.T) {
 
 func Test_operator_dropOrAdd(t *testing.T) {
 	c, _, _ := newTestShardServer()
-	sc := serverContainer{Container: c}
+	sc := smContainer{Container: c}
 
 	o := operator{lg: ttLogger}
 	o.parent = &sc
@@ -137,7 +137,7 @@ func Test_operator_dropOrAdd(t *testing.T) {
 
 func Test_operator_send(t *testing.T) {
 	c, _, _ := newTestShardServer()
-	sc := serverContainer{Container: c}
+	sc := smContainer{Container: c}
 
 	o := operator{lg: ttLogger}
 	o.parent = &sc
@@ -154,7 +154,7 @@ func Test_operator_send(t *testing.T) {
 
 func Test_operator_remove(t *testing.T) {
 	c, _, _ := newTestShardServer()
-	sc := serverContainer{Container: c}
+	sc := smContainer{Container: c}
 
 	o := operator{lg: ttLogger}
 	o.parent = &sc

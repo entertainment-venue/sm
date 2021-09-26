@@ -27,7 +27,7 @@ import (
 )
 
 type shardServer struct {
-	container *serverContainer
+	container *smContainer
 
 	lg *zap.Logger
 }
