@@ -17,6 +17,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -28,47 +29,50 @@ type shardTask struct {
 }
 
 type smShard struct {
-	stopper *apputil.GoroutineStopper
-
-	// smContainer 是真实的资源，etcd client、http client
+	// smContainer 是真实的资源，包括：etcd client
 	parent *smContainer
 
-	// 特定于sm业务的分片，service是sm集群的name
-	id, service string
+	// 通过sm的管理接口录入，业务可以自己指定
+	id string
 
-	mtWorker *maintenanceWorker
+	// 说明当前shard属于哪个业务或者哪种user case
+	service string
 
 	lg *zap.Logger
 
 	shardSpec *apputil.ShardSpec
+
+	worker *maintenanceWorker
 }
 
 func newShard(ctx context.Context, lg *zap.Logger, sc *smContainer, id string, spec *apputil.ShardSpec) (*smShard, error) {
-	s := smShard{parent: sc, id: id, lg: lg, shardSpec: spec}
-
 	var st shardTask
 	if err := json.Unmarshal([]byte(spec.Task), &st); err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	s.service = st.GovernedService
 
-	// shard和op的数量相关
+	s := smShard{
+		parent:    sc,
+		id:        id,
+		lg:        lg,
+		shardSpec: spec,
+		service:   st.GovernedService,
+	}
+
+	// 每个service共用一个operator，防止无意义的重复计算和下发任务，也保证逻辑简单
 	if err := s.parent.RegisterOperator(s.service); err != nil {
 		return nil, errors.Wrap(err, "")
 	}
 
-	s.mtWorker = newMaintenanceWorker(ctx, lg, s.parent, s.service)
-	s.mtWorker.Start()
+	s.worker = newMaintenanceWorker(ctx, lg, s.parent, s.service)
+	s.worker.Start()
 
 	return &s, nil
 }
 
 func (s *smShard) Close() {
 	// 关闭自己孩子的goroutine
-	s.mtWorker.Close()
-
-	// 关闭自己的
-	s.stopper.Close()
+	s.worker.Close()
 
 	s.lg.Info("smShard closed",
 		zap.String("id", s.id),
@@ -82,16 +86,9 @@ func (s *smShard) Spec() *apputil.ShardSpec {
 }
 
 func (s *smShard) GetLoad() string {
-	// TODO shardLoad
+	// TODO
+	// 记录当前shard负责的工作单位时间内所需要的指令数量（程序的qps），多个shard的峰值qps叠加后可能导致cpu（这块我们只关注cpu）超出阈值，这种组合很多
+	// 简单处理：不允许>=2的计算任务峰值qps导致的cpu负载超过我们设定的阈值，计算任务和cpu负载的关系要提前针对算法探测出来，这里的算法是指shard分配算法
+	// 接入app本身也要参考这个提供load信息给sm，也可以根据自身情况抽象，例如：分布式计数器可以用每个shard的访问次数作为load，把cpu的问题抽象一下
 	return "todo"
-}
-
-type shardLoad struct {
-	RPS     int `json:"rps"`
-	AvgTime int `json:"avgTime"`
-}
-
-func (s *shardLoad) String() string {
-	b, _ := json.Marshal(s)
-	return string(b)
 }

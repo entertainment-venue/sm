@@ -31,15 +31,12 @@ import (
 // 管理某个sm app的shard
 type maintenanceWorker struct {
 	parent *smContainer
-
-	ctx context.Context
-
-	stopper *apputil.GoroutineStopper
+	lg     *zap.Logger
+	ctx    context.Context
+	gs     *apputil.GoroutineStopper
 
 	// 从属于leader或者sm smShard，service和container不一定一样
 	service string
-
-	lg *zap.Logger
 }
 
 func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smContainer, service string) *maintenanceWorker {
@@ -48,12 +45,12 @@ func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smCont
 		lg:      lg,
 		parent:  container,
 		service: service,
-		stopper: &apputil.GoroutineStopper{},
+		gs:      &apputil.GoroutineStopper{},
 	}
 }
 
 func (w *maintenanceWorker) Start() {
-	w.stopper.Wrap(
+	w.gs.Wrap(
 		func(ctx context.Context) {
 			apputil.TickerLoop(
 				w.ctx,
@@ -61,12 +58,12 @@ func (w *maintenanceWorker) Start() {
 				defaultLoopInterval,
 				fmt.Sprintf("[leaderWorker] service %s ShardAllocateLoop exit", w.service),
 				func(ctx context.Context) error {
-					return w.allocateChecker(ctx, w.service, w.parent.eq)
+					return w.allocateChecker(ctx)
 				},
 			)
 		})
 
-	w.stopper.Wrap(
+	w.gs.Wrap(
 		func(ctx context.Context) {
 			apputil.WatchLoop(
 				w.ctx,
@@ -75,12 +72,12 @@ func (w *maintenanceWorker) Start() {
 				nodeAppShardHb(w.service),
 				fmt.Sprintf("[leaderWorker] service %s ShardLoadLoop exit", w.service),
 				func(ctx context.Context, ev *clientv3.Event) error {
-					return shardLoadChecker(ctx, w.service, w.parent.eq, ev)
+					return w.shardLoadChecker(ctx, ev)
 				},
 			)
 		})
 
-	w.stopper.Wrap(
+	w.gs.Wrap(
 		func(ctx context.Context) {
 			apputil.WatchLoop(
 				w.ctx,
@@ -89,7 +86,7 @@ func (w *maintenanceWorker) Start() {
 				nodeAppContainerHb(w.service),
 				fmt.Sprintf("[leaderWorker] service %s ContainerLoadLoop exit", w.service),
 				func(ctx context.Context, ev *clientv3.Event) error {
-					return containerLoadChecker(ctx, w.service, w.parent.eq, ev)
+					return w.containerLoadChecker(ctx, ev)
 				},
 			)
 		})
@@ -98,21 +95,21 @@ func (w *maintenanceWorker) Start() {
 }
 
 func (w *maintenanceWorker) Close() {
-	w.stopper.Close()
+	w.gs.Close()
 	w.lg.Info("maintenanceWorker stopped", zap.String("service", w.service))
 }
 
 // 1 smContainer 的增加/减少是优先级最高，目前可能涉及大量shard move
 // 2 smShard 被漏掉作为container检测的补充，最后校验，这种情况只涉及到漏掉的shard任务下发下去
-func (w *maintenanceWorker) allocateChecker(ctx context.Context, service string, eq *eventQueue) error {
+func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 	// 获取当前的shard分配关系
-	shardKey := nodeAppShard(service)
+	shardKey := nodeAppShard(w.service)
 	fixShardIdAndValue, err := w.parent.Client.GetKVs(ctx, shardKey)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
 	if len(fixShardIdAndValue) == 0 {
-		w.lg.Info("service not init yet", zap.String("service", service))
+		w.lg.Info("service not init yet", zap.String("service", w.service))
 		return nil
 	}
 
@@ -128,16 +125,16 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context, service string,
 
 	// 现有存活containers
 	var surviveContainerIdAndValue ArmorMap
-	surviveContainerIdAndValue, err = w.parent.Client.GetKVs(ctx, nodeAppHbContainer(service))
+	surviveContainerIdAndValue, err = w.parent.Client.GetKVs(ctx, nodeAppHbContainer(w.service))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
 
-	if containerChanged(fixShardIdAndContainerId.ValueList(), surviveContainerIdAndValue.KeyList()) {
-		r := w.reallocate(service, surviveContainerIdAndValue, fixShardIdAndContainerId)
+	if w.containerChanged(fixShardIdAndContainerId.ValueList(), surviveContainerIdAndValue.KeyList()) {
+		r := w.reallocate(surviveContainerIdAndValue, fixShardIdAndContainerId)
 		if len(r) > 0 {
 			ev := mvEvent{
-				Service:     service,
+				Service:     w.service,
 				Type:        tContainerUpdate,
 				EnqueueTime: time.Now().Unix(),
 				Value:       r.String(),
@@ -146,29 +143,29 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context, service string,
 				Value:    ev.String(),
 				Priority: time.Now().Unix(),
 			}
-			eq.push(&item, true)
+			w.parent.eq.push(&item, true)
 
 			w.lg.Info("container changed cause item enqueue",
-				zap.String("service", service),
+				zap.String("service", w.service),
 				zap.String("item", item.String()),
 			)
 			return nil
 		}
 	}
-	w.lg.Debug("container not changed", zap.String("service", service))
+	w.lg.Debug("container not changed", zap.String("service", w.service))
 
 	// smContainer hb和固定分配关系一致，下面检查shard存活
 	var surviveShardIdAndValue ArmorMap
-	surviveShardIdAndValue, err = w.parent.Client.GetKVs(ctx, nodeAppShardHb(service))
+	surviveShardIdAndValue, err = w.parent.Client.GetKVs(ctx, nodeAppShardHb(w.service))
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
 
-	if shardChanged(fixShardIdAndContainerId.KeyList(), surviveShardIdAndValue.KeyMap()) {
-		r := w.reallocate(service, surviveContainerIdAndValue, fixShardIdAndContainerId)
+	if w.shardChanged(fixShardIdAndContainerId.KeyList(), surviveShardIdAndValue.KeyMap()) {
+		r := w.reallocate(surviveContainerIdAndValue, fixShardIdAndContainerId)
 		if len(r) > 0 {
 			ev := mvEvent{
-				Service:     service,
+				Service:     w.service,
 				Type:        tShardUpdate,
 				EnqueueTime: time.Now().Unix(),
 				Value:       r.String(),
@@ -177,28 +174,28 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context, service string,
 				Value:    ev.String(),
 				Priority: time.Now().Unix(),
 			}
-			eq.push(&item, true)
+			w.parent.eq.push(&item, true)
 
 			w.lg.Info("shard changed cause item enqueue",
-				zap.String("service", service),
+				zap.String("service", w.service),
 				zap.String("item", item.String()),
 			)
 
 			return nil
 		}
 	}
-	w.lg.Debug("shard not changed", zap.String("service", service))
+	w.lg.Debug("shard not changed", zap.String("service", w.service))
 
 	return nil
 }
 
-func containerChanged(fixContainerIds []string, surviveContainerIds []string) bool {
+func (w *maintenanceWorker) containerChanged(fixContainerIds []string, surviveContainerIds []string) bool {
 	sort.Strings(fixContainerIds)
 	sort.Strings(surviveContainerIds)
 	return !reflect.DeepEqual(fixContainerIds, surviveContainerIds)
 }
 
-func shardChanged(fixShardIds []string, surviveShardIdMap map[string]struct{}) bool {
+func (w *maintenanceWorker) shardChanged(fixShardIds []string, surviveShardIdMap map[string]struct{}) bool {
 	for _, fixShardId := range fixShardIds {
 		if _, ok := surviveShardIdMap[fixShardId]; !ok {
 			return true
@@ -207,7 +204,7 @@ func shardChanged(fixShardIds []string, surviveShardIdMap map[string]struct{}) b
 	return false
 }
 
-func (w *maintenanceWorker) reallocate(service string, surviveContainerIdAndValue ArmorMap, fixShardIdAndContainerId ArmorMap) moveActionList {
+func (w *maintenanceWorker) reallocate(surviveContainerIdAndValue ArmorMap, fixShardIdAndContainerId ArmorMap) moveActionList {
 	shardIds := fixShardIdAndContainerId.KeyList()
 	surviveContainerIds := surviveContainerIdAndValue.KeyList()
 	newContainerIdAndShardIds := performAssignment(shardIds, surviveContainerIds)
@@ -226,7 +223,7 @@ func (w *maintenanceWorker) reallocate(service string, surviveContainerIdAndValu
 
 			// shardId没有被分配到container，可以直接增加moveAction
 			if curContainerId == "" {
-				result = append(result, &moveAction{Service: service, ShardId: shardId, AddEndpoint: newId})
+				result = append(result, &moveAction{Service: w.service, ShardId: shardId, AddEndpoint: newId})
 				continue
 			}
 
@@ -241,7 +238,7 @@ func (w *maintenanceWorker) reallocate(service string, surviveContainerIdAndValu
 				allowDrop = true
 			}
 
-			result = append(result, &moveAction{Service: service, ShardId: shardId, DropEndpoint: curContainerId, AddEndpoint: newId, AllowDrop: allowDrop})
+			result = append(result, &moveAction{Service: w.service, ShardId: shardId, DropEndpoint: curContainerId, AddEndpoint: newId, AllowDrop: allowDrop})
 		}
 	}
 
@@ -254,14 +251,14 @@ func (w *maintenanceWorker) reallocate(service string, surviveContainerIdAndValu
 	return result
 }
 
-func shardLoadChecker(_ context.Context, service string, eq *eventQueue, ev *clientv3.Event) error {
+func (w *maintenanceWorker) shardLoadChecker(_ context.Context, ev *clientv3.Event) error {
 	if ev.IsCreate() {
 		return nil
 	}
 
 	start := time.Now()
 	qev := mvEvent{
-		Service:     service,
+		Service:     w.service,
 		Type:        tShardUpdate,
 		EnqueueTime: start.Unix(),
 		Value:       string(ev.Kv.Value),
@@ -278,18 +275,18 @@ func shardLoadChecker(_ context.Context, service string, eq *eventQueue, ev *cli
 	}
 	item.Value = qev.String()
 
-	eq.push(&item, true)
+	w.parent.eq.push(&item, true)
 	return nil
 }
 
-func containerLoadChecker(_ context.Context, service string, eq *eventQueue, ev *clientv3.Event) error {
+func (w *maintenanceWorker) containerLoadChecker(_ context.Context, ev *clientv3.Event) error {
 	if ev.IsCreate() {
 		return nil
 	}
 
 	start := time.Now()
 	qev := mvEvent{
-		Service:     service,
+		Service:     w.service,
 		Type:        tContainerUpdate,
 		EnqueueTime: start.Unix(),
 		Value:       string(ev.Kv.Value),
@@ -305,6 +302,6 @@ func containerLoadChecker(_ context.Context, service string, eq *eventQueue, ev 
 	}
 	item.Value = qev.String()
 
-	eq.push(&item, true)
+	w.parent.eq.push(&item, true)
 	return nil
 }

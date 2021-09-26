@@ -74,8 +74,10 @@ func Test_containerChanged(t *testing.T) {
 		},
 	}
 
+	mw := maintenanceWorker{}
+
 	for idx, tt := range tests {
-		if tt.expect != containerChanged(tt.fixContainerIds, tt.surviveContainerIds) {
+		if tt.expect != mw.containerChanged(tt.fixContainerIds, tt.surviveContainerIds) {
 			t.Errorf("idx %d expect %t", idx, tt.expect)
 			t.SkipNow()
 		}
@@ -114,8 +116,11 @@ func Test_shardChanged(t *testing.T) {
 			expect: false,
 		},
 	}
+
+	mw := maintenanceWorker{}
+
 	for idx, tt := range tests {
-		if tt.expect != shardChanged(tt.fixShardIds, tt.surviveShardIdMap) {
+		if tt.expect != mw.shardChanged(tt.fixShardIds, tt.surviveShardIdMap) {
 			t.Errorf("idx %d expect %t", idx, tt.expect)
 			t.SkipNow()
 		}
@@ -191,7 +196,7 @@ func Test_reallocate(t *testing.T) {
 	w := maintenanceWorker{}
 
 	for idx, tt := range tests {
-		r := w.reallocate(service, tt.surviveContainerIdAndValue, tt.fixShardIdAndContainerId)
+		r := w.reallocate(tt.surviveContainerIdAndValue, tt.fixShardIdAndContainerId)
 		sort.Sort(r)
 		sort.Sort(tt.expect)
 		if !reflect.DeepEqual(r, tt.expect) {
@@ -209,7 +214,9 @@ func Test_shardLoadChecker(t *testing.T) {
 		Kv:   &mvccpb.KeyValue{},
 	}
 
-	if err := shardLoadChecker(context.TODO(), "foo.bar", eq, &ev); err != nil {
+	mw := maintenanceWorker{}
+
+	if err := mw.shardLoadChecker(context.TODO(), &ev); err != nil {
 		t.Errorf("err: %v", err)
 		t.SkipNow()
 	}
@@ -227,7 +234,9 @@ func Test_containerLoadChecker(t *testing.T) {
 		Kv:   &mvccpb.KeyValue{},
 	}
 
-	if err := containerLoadChecker(context.TODO(), "foo.bar", eq, &ev); err != nil {
+	mw := maintenanceWorker{}
+
+	if err := mw.containerLoadChecker(context.TODO(), &ev); err != nil {
 		t.Errorf("err: %v", err)
 		t.SkipNow()
 	}
