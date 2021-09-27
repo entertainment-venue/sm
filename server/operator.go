@@ -64,12 +64,14 @@ func (l moveActionList) Swap(i, j int) {
 
 // container和shard上报两个维度的load，leader(sm)或者shard(app)探测到异常，会发布任务出来，operator就是这个任务的执行者
 type operator struct {
-	lg      *zap.Logger
-	parent  *smContainer
+	parent *smContainer
+	lg     *zap.Logger
+
+	// operator 属于接入业务的service
 	service string
 
-	stopper *apputil.GoroutineStopper
-	hc      *http.Client
+	gs *apputil.GoroutineStopper
+	hc *http.Client
 }
 
 func newOperator(lg *zap.Logger, sc *smContainer, service string) (*operator, error) {
@@ -78,23 +80,23 @@ func newOperator(lg *zap.Logger, sc *smContainer, service string) (*operator, er
 		parent:  sc,
 		service: service,
 
-		stopper: &apputil.GoroutineStopper{},
-		hc:      newHttpClient(),
+		gs: &apputil.GoroutineStopper{},
+		hc: newHttpClient(),
 	}
 	// TODO scale
 	return &op, nil
 }
 
 func (o *operator) Start() {
-	o.stopper.Wrap(
+	o.gs.Wrap(
 		func(ctx context.Context) {
 			o.moveLoop(ctx)
 		})
 }
 
 func (o *operator) Close() {
-	if o.stopper != nil {
-		o.stopper.Close()
+	if o.gs != nil {
+		o.gs.Close()
 	}
 	o.lg.Info("operator closed", zap.String("service", o.service))
 }
@@ -104,7 +106,7 @@ func (o *operator) moveLoop(ctx context.Context) {
 
 	// Move只有对特定app负责的operator
 	// 当前如果存在任务，直接开始执行
-dealWithLatestTask:
+handleLatestTask:
 	resp, err := o.parent.Client.GetKV(ctx, key, []clientv3.OpOption{})
 	if err != nil {
 		o.lg.Error("failed to GetKV",
@@ -112,7 +114,7 @@ dealWithLatestTask:
 			zap.Error(err),
 		)
 		time.Sleep(defaultSleepTimeout)
-		goto dealWithLatestTask
+		goto handleLatestTask
 	}
 	if resp.Count > 0 && string(resp.Kvs[0].Value) != "" {
 		o.lg.Info("got shard move task",
@@ -126,7 +128,7 @@ dealWithLatestTask:
 			)
 
 			time.Sleep(defaultSleepTimeout)
-			goto dealWithLatestTask
+			goto handleLatestTask
 		}
 	} else {
 		o.lg.Info("empty shard move task",
@@ -135,31 +137,36 @@ dealWithLatestTask:
 		)
 	}
 
-	fn := func(ctx context.Context, ev *clientv3.Event) error {
-		if ev.Type == mvccpb.DELETE {
-			o.lg.Error("unexpected event", zap.Reflect("ev", ev))
+	apputil.WatchLoop(
+		ctx,
+		o.lg,
+		o.parent.Client.Client,
+		key,
+		"[operator] service %s moveLoop exit",
+		func(ctx context.Context, ev *clientv3.Event) error {
+			if ev.Type == mvccpb.DELETE {
+				o.lg.Error("unexpected event", zap.Reflect("ev", ev))
+				return nil
+			}
+
+			// 任务被清空，会出发一次时间
+			if string(ev.Kv.Value) == "" {
+				o.lg.Warn("got task erased event", zap.String("service", o.service))
+				return nil
+			}
+
+			// 不接受重复的任务，在一个任务运行时，eq提交任务也会失败
+			if ev.PrevKv != nil && string(ev.Kv.Value) == string(ev.PrevKv.Value) {
+				o.lg.Warn("duplicate event", zap.ByteString("prevValue", ev.PrevKv.Value))
+				return nil
+			}
+
+			if err := o.move(ctx, ev.Kv.Value); err != nil {
+				return errors.Wrap(err, "")
+			}
 			return nil
-		}
-
-		// 任务被清空，会出发一次时间
-		if string(ev.Kv.Value) == "" {
-			o.lg.Warn("got task erased event", zap.String("service", o.service))
-			return nil
-		}
-
-		// 不接受重复的任务，在一个任务运行时，eq提交任务也会失败
-		if ev.PrevKv != nil && string(ev.Kv.Value) == string(ev.PrevKv.Value) {
-			o.lg.Warn("duplicate event", zap.ByteString("prevValue", ev.PrevKv.Value))
-			return nil
-		}
-
-		if err := o.move(ctx, ev.Kv.Value); err != nil {
-			return errors.Wrap(err, "")
-		}
-		return nil
-	}
-
-	apputil.WatchLoop(ctx, o.lg, o.parent.Client.Client, key, "[operator] service %s moveLoop exit", fn)
+		},
+	)
 }
 
 // 保证at least once
