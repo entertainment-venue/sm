@@ -2,7 +2,11 @@ module github.com/entertainment-venue/sm/server
 
 go 1.17
 
-require github.com/entertainment-venue/sm/server/smserver v0.0.0-20210928074133-7c6e544b0f47
+require (
+	github.com/entertainment-venue/sm/server/smserver v0.0.0-20210928092925-934d3ae13d9f
+	github.com/pkg/errors v0.9.1
+	gopkg.in/yaml.v2 v2.4.0
+)
 
 require (
 	github.com/StackExchange/wmi v1.2.1 // indirect
@@ -35,7 +39,6 @@ require (
 	github.com/mattn/go-isatty v0.0.14 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/client_golang v1.11.0 // indirect
 	github.com/shirou/gopsutil/v3 v3.21.8 // indirect
 	github.com/soheilhy/cmux v0.1.5 // indirect
@@ -56,7 +59,6 @@ require (
 	google.golang.org/genproto v0.0.0-20210921142501-181ce0d877f6 // indirect
 	google.golang.org/grpc v1.40.0 // indirect
 	google.golang.org/protobuf v1.27.1 // indirect
-	gopkg.in/yaml.v2 v2.4.0 // indirect
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
 
