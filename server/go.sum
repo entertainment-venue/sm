@@ -34,10 +34,6 @@ github.com/dustin/go-humanize v1.0.0 h1:VSnTsYCnlFHaM2/igO1h6X3HA71jcobQuxemgkq4
 github.com/dustin/go-humanize v1.0.0/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
 github.com/entertainment-venue/sm/pkg v0.0.0-20210923153147-2dac2ddee4e4 h1:hM84/xwsyKD2cdjBF4YZAZPit6xUg6viuTvFcFlmCCY=
 github.com/entertainment-venue/sm/pkg v0.0.0-20210923153147-2dac2ddee4e4/go.mod h1:HFA5JE6rsmu6D1Om4SNhM3CCMZuCk2o8ui3xAFH2DA0=
-github.com/entertainment-venue/sm/server/smserver v0.0.0-20210928074133-7c6e544b0f47 h1:kPLE9YNhqNUEbb6ERE1LpooGh+ladoXb/isG8LCv22A=
-github.com/entertainment-venue/sm/server/smserver v0.0.0-20210928074133-7c6e544b0f47/go.mod h1:FiG0meDVGuheDd2UVOmMStKFSnCrOsLN02iKRz+DiZM=
-github.com/entertainment-venue/sm/server/smserver v0.0.0-20210928092925-934d3ae13d9f h1:8K0fs3cUxPN+y5F/dd1JFIFvUT6+UwGPXn32Z1es4hc=
-github.com/entertainment-venue/sm/server/smserver v0.0.0-20210928092925-934d3ae13d9f/go.mod h1:FiG0meDVGuheDd2UVOmMStKFSnCrOsLN02iKRz+DiZM=
 github.com/envoyproxy/go-control-plane v0.9.1-0.20191026205805-5f8ba28d4473/go.mod h1:YTl/9mNaCwkRvm6d1a2C3ymFceY/DCBVvsKhRF0iEA4=
 github.com/envoyproxy/protoc-gen-validate v0.1.0/go.mod h1:iSmxcyjqTsJpI2R4NaDN7+kN2VEUnK/pcBlmesArF7c=
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=

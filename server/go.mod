@@ -3,23 +3,24 @@ module github.com/entertainment-venue/sm/server
 go 1.17
 
 require (
-	github.com/entertainment-venue/sm/server/smserver v0.0.0-20210928092925-934d3ae13d9f
+	github.com/coreos/etcd v3.3.25+incompatible
+	github.com/entertainment-venue/sm/pkg v0.0.0-20210923153147-2dac2ddee4e4
+	github.com/gin-gonic/gin v1.7.4
 	github.com/pkg/errors v0.9.1
+	go.uber.org/zap v1.19.1
+	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
 	gopkg.in/yaml.v2 v2.4.0
 )
 
 require (
 	github.com/StackExchange/wmi v1.2.1 // indirect
 	github.com/coreos/bbolt v0.0.0-00010101000000-000000000000 // indirect
-	github.com/coreos/etcd v3.3.25+incompatible // indirect
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd v0.0.0-00010101000000-000000000000 // indirect
 	github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f // indirect
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible // indirect
 	github.com/dustin/go-humanize v1.0.0 // indirect
-	github.com/entertainment-venue/sm/pkg v0.0.0-20210923153147-2dac2ddee4e4 // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
-	github.com/gin-gonic/gin v1.7.4 // indirect
 	github.com/go-ole/go-ole v1.2.5 // indirect
 	github.com/go-playground/locales v0.14.0 // indirect
 	github.com/go-playground/universal-translator v0.18.0 // indirect
@@ -49,10 +50,8 @@ require (
 	github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.7.0 // indirect
-	go.uber.org/zap v1.19.1 // indirect
 	golang.org/x/crypto v0.0.0-20210921155107-089bfa567519 // indirect
 	golang.org/x/net v0.0.0-20210917221730-978cfadd31cf // indirect
-	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c // indirect
 	golang.org/x/sys v0.0.0-20210921065528-437939a70204 // indirect
 	golang.org/x/text v0.3.7 // indirect
 	golang.org/x/time v0.0.0-20210723032227-1f47c861a9ac // indirect
