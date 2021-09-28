@@ -1,4 +1,4 @@
-module github.com/entertainment-venue/sm/server
+module github.com/entertainment-venue/sm/server/smserver
 
 go 1.14
 
