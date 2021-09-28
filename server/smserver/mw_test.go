@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package smserver
 
 import (
 	"context"
@@ -131,8 +131,8 @@ func Test_reallocate(t *testing.T) {
 	service := "foo.bar"
 	var tests = []struct {
 		surviveContainerIdAndValue map[string]string
-		fixShardIdAndContainerId   map[string]string
-		expect                     moveActionList
+		fixShardIdAndContainerId map[string]string
+		expect                   moveActionList
 	}{
 		// container存活，没有shard需要移动
 		{
