@@ -31,7 +31,8 @@ type Server struct {
 	ss *apputil.ShardServer
 	sc *smContainer
 
-	lg *zap.Logger
+	lg      *zap.Logger
+	stopped chan error
 }
 
 type serverOptions struct {
@@ -46,6 +47,11 @@ type serverOptions struct {
 
 	// 监听端口: 提供管理职能，add、drop
 	addr string
+
+	// 可以接受调用方的主动停止
+	ctx context.Context
+	// 内部有问题要通知调用方
+	stopped chan error
 }
 
 type ServerOption func(options *serverOptions)
@@ -74,6 +80,18 @@ func WithAddr(v string) ServerOption {
 	}
 }
 
+func WithCtx(v context.Context) ServerOption {
+	return func(options *serverOptions) {
+		options.ctx = v
+	}
+}
+
+func WithStopped(v chan error) ServerOption {
+	return func(options *serverOptions) {
+		options.stopped = v
+	}
+}
+
 func NewServer(fn ...ServerOption) (*Server, error) {
 	ops := serverOptions{}
 	for _, f := range fn {
@@ -93,9 +111,19 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 		return nil, errors.New("endpoints err")
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// 允许调用方对server进行控制
+	var (
+		ctx    context.Context
+		cancel context.CancelFunc
+	)
+	if ops.ctx == nil {
+		ctx, cancel = context.WithCancel(context.Background())
+	} else {
+		ctx, cancel = context.WithCancel(ops.ctx)
+	}
+
 	logger, _ := zap.NewProduction()
-	srv := Server{cancel: cancel, lg: logger}
+	srv := Server{cancel: cancel, lg: logger, stopped: ops.stopped}
 
 	c, err := apputil.NewContainer(
 		apputil.ContainerWithContext(ctx),
@@ -139,6 +167,8 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 			logger.Info("container done")
 		case <-ss.Done():
 			logger.Info("shard server done")
+		case <-ctx.Done():
+			logger.Info("main exit server")
 		}
 	}()
 
@@ -151,4 +181,7 @@ func (s *Server) Close() {
 	if s.cancel != nil {
 		s.cancel()
 	}
+
+	// 通知上游，保留像上游传递error的能力
+	close(s.stopped)
 }
