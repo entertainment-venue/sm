@@ -113,8 +113,8 @@ func (eq *eventQueue) push(item *Item, checkDup bool) {
 		eq.curEvs[ev.Service] = struct{}{}
 	}
 
-	ch, ok := eq.buffer[ev.Service]
-	if !ok {
+	ch := eq.buffer[ev.Service]
+	if ch == nil {
 		ch = make(chan *mvEvent, defaultEventChanLength)
 		eq.buffer[ev.Service] = ch
 

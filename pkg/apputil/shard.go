@@ -71,7 +71,7 @@ type ShardOpMessage struct {
 type OpType int
 
 const (
-	// 0保留，因为go默认int的值是0，防止无意识的错误
+	// OpTypeAdd 0保留，因为go默认int的值是0，防止无意识的错误
 	// 参考：https://github.com/etcd-io/etcd/blob/main/client/v3/op.go#L22
 	OpTypeAdd OpType = iota + 1
 	OpTypeDrop
@@ -82,7 +82,7 @@ type ShardOpReceiver interface {
 	DropShard(c *gin.Context)
 }
 
-// 直接帮助接入方把服务器端启动好，引入gin框架，和sarama sdk的接入方式相似，提供消息的chan或者callback func给到接入app的业务逻辑
+// ShardServer 直接帮助接入方把服务器端启动好，引入gin框架，和sarama sdk的接入方式相似，提供消息的chan或者callback func给到接入app的业务逻辑
 type ShardServer struct {
 	stopper  *GoroutineStopper
 	taskNode string

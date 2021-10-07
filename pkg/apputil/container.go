@@ -30,7 +30,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// 1 上报container的load信息，保证container的liveness，才能够参与shard的分配
+// Container 1 上报container的load信息，保证container的liveness，才能够参与shard的分配
 // 2 与sm交互，下发add和drop给到Shard
 type Container struct {
 	Client  *etcdutil.EtcdClient
