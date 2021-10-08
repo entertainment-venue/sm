@@ -32,10 +32,6 @@ func EtcdPathAppShardId(service, id string) string {
 	return fmt.Sprintf("%s/shard/%s", EtcdPathAppPrefix(service), id)
 }
 
-func EtcdPathAppShardLoadId(service, id string) string {
-	return fmt.Sprintf("%s/shardload/%s", EtcdPathAppPrefix(service), id)
-}
-
 func EtcdPathAppShardTask(service string) string {
 	return fmt.Sprintf("%s/task", EtcdPathAppPrefix(service))
 }

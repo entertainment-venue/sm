@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -36,9 +35,6 @@ type ShardSpec struct {
 	Task string `json:"task"`
 
 	UpdateTime int64 `json:"updateTime"`
-
-	// 所属container，在任务分配场景设置
-	ContainerId string `json:"containerId"`
 }
 
 func (ss *ShardSpec) String() string {
@@ -46,12 +42,12 @@ func (ss *ShardSpec) String() string {
 	return string(b)
 }
 
-type shardHb struct {
-	Load string `json:"load"`
-	Id   string `json:"id"`
+type ShardHbData struct {
+	Load        string `json:"load"`
+	ContainerId string `json:"containerId"`
 }
 
-func (s *shardHb) String() string {
+func (s *ShardHbData) String() string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
@@ -198,42 +194,26 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 				}
 
 				for _, id := range shards {
-					hbNode := EtcdPathAppShardHbId(ss.container.Service(), id)
-					// 检测下心跳冲突，防止同一shard在多个container上: 没有要互斥创建 && 有要互斥更新
-					if err := ss.container.Client.CreateAndGet(ctx, []string{hbNode}, []string{id}, ss.container.Session.Lease()); err != nil {
-						if err != etcdutil.ErrEtcdNodeExist {
-							ops.lg.Error("failed to shard heartbeat by create",
-								zap.Error(err),
-								zap.String("hbNode", hbNode),
-							)
-							continue
-						}
-
-						if _, err := ss.container.Client.CompareAndSwap(ctx, hbNode, id, id, ss.container.Session.Lease()); err != nil {
-							ops.lg.Error("failed to shard heartbeat by swap",
-								zap.Error(err),
-								zap.String("hbNode", hbNode),
-								zap.String("id", id),
-							)
-							continue
-						}
-					}
-
-					sl, err := ss.impl.Load(ctx, id)
+					load, err := ss.impl.Load(ctx, id)
 					if err != nil {
 						return errors.Wrap(err, "")
 					}
 
-					key := EtcdPathAppShardLoadId(ss.container.Service(), id)
-					if _, err := ss.container.Client.Put(ctx, key, sl, clientv3.WithLease(ss.container.Session.Lease())); err != nil {
+					hb := ShardHbData{
+						Load:        load,
+						ContainerId: ss.container.Id(),
+					}
+
+					key := EtcdPathAppShardHbId(ss.container.Service(), id)
+					if _, err := ss.container.Client.Put(ctx, key, hb.String(), clientv3.WithLease(ss.container.Session.Lease())); err != nil {
 						ops.lg.Error("failed to shard load",
 							zap.Error(err),
 							zap.String("key", key),
-							zap.String("load", sl),
+							zap.Reflect("hb", hb),
 						)
+						return errors.Wrap(err, "")
 					}
-
-					ops.lg.Debug("shard heartbeat", zap.String("hbNode", hbNode))
+					ops.lg.Debug("shard heartbeat", zap.String("hbNode", key))
 				}
 				return nil
 			},

@@ -20,6 +20,9 @@ func (impl *testShardImpl) Drop(ctx context.Context, id string) error {
 func (impl *testShardImpl) Load(ctx context.Context, id string) (string, error) {
 	return "", nil
 }
+func (impl *testShardImpl) Shards(ctx context.Context) ([]string, error) {
+	return nil, nil
+}
 
 func TestShardServer_NewShardServer_ParamError(t *testing.T) {
 	var tests = []struct {
