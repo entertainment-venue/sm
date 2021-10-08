@@ -136,11 +136,6 @@ func (w *EtcdClient) CreateAndGet(_ context.Context, nodes []string, values []st
 		)
 		return nil
 	}
-	// 创建失败，不需要再继续，业务认定自己是创建的场景，curValue不能走下面的compare and swap
-	w.lg.Error("failed to create node (already exist)",
-		zap.Strings("nodes", nodes),
-		zap.Strings("values", values),
-	)
 	return ErrEtcdNodeExist
 }
 
