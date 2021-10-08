@@ -187,17 +187,5 @@ func (eq *eventQueue) evLoop(ctx context.Context, service string, ch chan *mvEve
 		eq.mu.Lock()
 		delete(eq.curEvs, ev.Service)
 		eq.mu.Unlock()
-
-		// // TODO 同一service需要保证只有一个goroutine在计算，否则没有意义
-		// switch ev.Type {
-		// case tShardUpdate:
-		// 	// TODO 解析load，确定shard的load超出阈值，触发shard move
-		// case tShardDel:
-		// 	// TODO 检查shard是否都处于有container的状态
-		// case tContainerUpdate:
-		// 	// TODO
-		// case tContainerDel:
-		// 	// TODO
-		// }
 	}
 }

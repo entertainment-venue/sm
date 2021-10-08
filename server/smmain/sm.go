@@ -33,7 +33,7 @@ func startSM() error {
 		checkSettings()
 	}
 
-	lg, zapError := zap.NewProduction()
+	lg, zapError := NewSMLogger()
 	if zapError != nil {
 		fmt.Printf("error creating zap logger %v", zapError)
 		os.Exit(1)
@@ -49,12 +49,11 @@ func startSM() error {
 		smserver.WithAddr(cfg.Addr),
 		smserver.WithEndpoints(cfg.Endpoints),
 		smserver.WithCtx(ctx),
-		smserver.WithStopped(stopped)); err != nil {
-		cancel()
-		return errors.Wrap(err, "")
+		smserver.WithStopped(stopped),
+		smserver.WithLogger(lg)); err != nil {
+		lg.Panic("failed to start sm server", zap.Reflect("cfg", cfg))
 	}
 
-	// 等待server推出
 	<-stopped
 	lg.Info("sm exit", zap.Reflect("cfg", cfg))
 

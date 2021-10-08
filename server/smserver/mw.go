@@ -40,23 +40,21 @@ type maintenanceWorker struct {
 }
 
 func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smContainer, service string) *maintenanceWorker {
-	return &maintenanceWorker{
+	w := &maintenanceWorker{
 		ctx:     ctx,
 		lg:      lg,
 		parent:  container,
 		service: service,
 		gs:      &apputil.GoroutineStopper{},
 	}
-}
 
-func (w *maintenanceWorker) Start() {
 	w.gs.Wrap(
 		func(ctx context.Context) {
 			apputil.TickerLoop(
 				w.ctx,
 				w.lg,
 				defaultLoopInterval,
-				fmt.Sprintf("[leaderWorker] service %s ShardAllocateLoop exit", w.service),
+				fmt.Sprintf("[lw] service %s ShardAllocateLoop exit", w.service),
 				func(ctx context.Context) error {
 					return w.allocateChecker(ctx)
 				},
@@ -70,7 +68,7 @@ func (w *maintenanceWorker) Start() {
 				w.lg,
 				w.parent.Client.Client,
 				nodeAppShardHb(w.service),
-				fmt.Sprintf("[leaderWorker] service %s ShardLoadLoop exit", w.service),
+				fmt.Sprintf("[lw] service %s ShardLoadLoop exit", w.service),
 				func(ctx context.Context, ev *clientv3.Event) error {
 					return w.shardLoadChecker(ctx, ev)
 				},
@@ -84,7 +82,7 @@ func (w *maintenanceWorker) Start() {
 				w.lg,
 				w.parent.Client.Client,
 				nodeAppContainerHb(w.service),
-				fmt.Sprintf("[leaderWorker] service %s ContainerLoadLoop exit", w.service),
+				fmt.Sprintf("[lw] service %s ContainerLoadLoop exit", w.service),
 				func(ctx context.Context, ev *clientv3.Event) error {
 					return w.containerLoadChecker(ctx, ev)
 				},
@@ -92,6 +90,7 @@ func (w *maintenanceWorker) Start() {
 		})
 
 	w.lg.Info("maintenanceWorker started", zap.String("service", w.service))
+	return w
 }
 
 func (w *maintenanceWorker) Close() {

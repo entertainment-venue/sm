@@ -16,7 +16,6 @@ package smserver
 
 import (
 	"context"
-
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -27,9 +26,9 @@ type Server struct {
 	// 管理sm server内部的goroutine
 	cancel context.CancelFunc
 
-	c  *apputil.Container
-	ss *apputil.ShardServer
-	sc *smContainer
+	c   *apputil.Container
+	ss  *apputil.ShardServer
+	smc *smContainer
 
 	lg      *zap.Logger
 	stopped chan error
@@ -52,6 +51,8 @@ type serverOptions struct {
 	ctx context.Context
 	// 内部有问题要通知调用方
 	stopped chan error
+
+	lg *zap.Logger
 }
 
 type ServerOption func(options *serverOptions)
@@ -92,6 +93,12 @@ func WithStopped(v chan error) ServerOption {
 	}
 }
 
+func WithLogger(v *zap.Logger) ServerOption {
+	return func(options *serverOptions) {
+		options.lg = v
+	}
+}
+
 func NewServer(fn ...ServerOption) (*Server, error) {
 	ops := serverOptions{}
 	for _, f := range fn {
@@ -110,6 +117,9 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 	if len(ops.endpoints) == 0 {
 		return nil, errors.New("endpoints err")
 	}
+	if ops.lg == nil {
+		return nil, errors.New("logger err")
+	}
 
 	// 允许调用方对server进行控制
 	var (
@@ -122,7 +132,7 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 		ctx, cancel = context.WithCancel(ops.ctx)
 	}
 
-	logger, _ := zap.NewProduction()
+	logger := ops.lg
 	srv := Server{cancel: cancel, lg: logger, stopped: ops.stopped}
 
 	c, err := apputil.NewContainer(
@@ -136,11 +146,11 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 	}
 	srv.c = c
 
-	sc, err := newContainer(ctx, logger, ops.id, ops.service, c)
+	sc, err := newSMContainer(ctx, logger, ops.id, ops.service, c)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	srv.sc = sc
+	srv.smc = sc
 
 	apiSrv := shardServer{sc, logger}
 	routeAndHandler := make(map[string]func(c *gin.Context))

@@ -42,7 +42,7 @@ type smContainer struct {
 	lg *zap.Logger
 
 	// 保证sm运行健康的goroutine，通过task节点下发任务给op
-	leaderWorker *maintenanceWorker
+	lw *maintenanceWorker
 
 	eq *eventQueue
 
@@ -59,7 +59,7 @@ type smContainer struct {
 	stopped bool
 }
 
-func newContainer(ctx context.Context, lg *zap.Logger, id, service string, c *apputil.Container) (*smContainer, error) {
+func newSMContainer(ctx context.Context, lg *zap.Logger, id, service string, c *apputil.Container) (*smContainer, error) {
 	sc := smContainer{
 		lg:        lg,
 		id:        id,
@@ -72,7 +72,7 @@ func newContainer(ctx context.Context, lg *zap.Logger, id, service string, c *ap
 	}
 
 	sc.eq = newEventQueue(ctx, lg, &sc)
-	sc.leaderWorker = newMaintenanceWorker(ctx, lg, &sc, sc.service)
+	sc.lw = newMaintenanceWorker(ctx, lg, &sc, sc.service)
 
 	sc.gs.Wrap(
 		func(ctx context.Context) {
@@ -92,8 +92,13 @@ func (c *smContainer) EventQueue() *eventQueue {
 
 func (c *smContainer) Close() {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	c.stopped = true
-	c.mu.Unlock()
+
+	if c.lw != nil {
+		c.lw.Close()
+	}
 
 	// stop smShard
 	for _, s := range c.idAndShard {
@@ -294,13 +299,14 @@ func (c *smContainer) campaign(ctx context.Context) {
 
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/sm/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
-		go c.leaderWorker.Start()
+		c.lw = newMaintenanceWorker(ctx, c.lg, c, c.service)
 
 		// block until出现需要放弃leader职权的事件
 		c.lg.Info("leader completed op", zap.String("service", c.service))
 		select {
 		case <-ctx.Done():
 			c.lg.Info("leader exit", zap.String("service", c.service))
+			c.lw = nil
 			return
 		}
 	}

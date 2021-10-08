@@ -65,7 +65,6 @@ func newShard(ctx context.Context, lg *zap.Logger, sc *smContainer, id string, s
 	}
 
 	s.worker = newMaintenanceWorker(ctx, lg, s.parent, s.service)
-	s.worker.Start()
 
 	return &s, nil
 }

@@ -12,7 +12,7 @@ require (
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/pkg/errors v0.9.1
 	github.com/shirou/gopsutil/v3 v3.21.8
-	go.uber.org/zap v1.19.1 // indirect
+	go.uber.org/zap v1.19.1
 	google.golang.org/genproto v0.0.0-20210903162649-d08c68adba83 // indirect
 )
 
