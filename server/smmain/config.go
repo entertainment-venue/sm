@@ -39,6 +39,7 @@ func usage() {
 
 func init() {
 	flag.Usage = usage
+	flag.StringVar(&cfg.ConfigFile, "config-file", "", "You can use config file to save your common config.")
 	flag.StringVar(&cfg.Id, "id", "", "Identify current container, should changed after container restarted.")
 	flag.StringVar(&cfg.Service, "service", "", "The sharded application service name, should be used in service discovery")
 	flag.StringVar(&cfg.Addr, "addr", "", "Http server listen port like ':8888'")

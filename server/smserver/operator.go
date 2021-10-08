@@ -53,7 +53,7 @@ func (l *moveActionList) String() string {
 	return string(b)
 }
 
-// 4 unit test
+// Len 4 unit test
 func (l moveActionList) Len() int { return len(l) }
 func (l moveActionList) Less(i, j int) bool {
 	return l[i].ShardId < l[j].ShardId

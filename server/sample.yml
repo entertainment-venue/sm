@@ -1,0 +1,5 @@
+id: 127.0.0.1:8888
+service: foo.bar
+addr: :8888
+endpoints: 
+    - 127.0.0.1:2379
