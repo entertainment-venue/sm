@@ -162,7 +162,7 @@ func (w *EtcdClient) CompareAndSwap(_ context.Context, node string, curValue str
 		return "", errors.Wrapf(err, "FAILED to swap node %s from %s to %s", node, curValue, newValue)
 	}
 	if resp.Succeeded {
-		w.lg.Info("swap node success",
+		w.lg.Debug("swap node success",
 			zap.String("node", node),
 			zap.String("curValue", curValue),
 			zap.String("newValue", newValue),
