@@ -1,5 +1,5 @@
-id: 127.0.0.1:8888
+id: 127.0.0.1:8801
 service: foo.bar
-addr: :8888
+addr: :8801
 endpoints: 
     - 127.0.0.1:2379

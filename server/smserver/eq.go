@@ -89,6 +89,10 @@ func newEventQueue(_ context.Context, lg *zap.Logger, sc *smContainer) *eventQue
 }
 
 func (eq *eventQueue) Close() {
+	if eq.lg != nil {
+		defer eq.lg.Sync()
+	}
+
 	if eq.stopper != nil {
 		eq.stopper.Close()
 	}
@@ -173,7 +177,7 @@ func (eq *eventQueue) evLoop(ctx context.Context, service string, ch chan *mvEve
 		case ev = <-ch:
 		}
 
-		eq.lg.Info("ev received", zap.String("ev", ev.String()))
+		eq.lg.Info("ev received", zap.Reflect("ev", ev))
 
 		key := apputil.EtcdPathAppShardTask(eq.parent.service)
 		if _, err := eq.parent.Client.CompareAndSwap(ctx, key, "", ev.Value, clientv3.NoLease); err != nil {

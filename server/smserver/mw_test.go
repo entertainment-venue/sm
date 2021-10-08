@@ -34,7 +34,6 @@ func Test_Start(t *testing.T) {
 	}
 
 	mw := newMaintenanceWorker(context.TODO(), ttLogger, ctr, "foo.bar")
-	mw.Start()
 
 	go func() {
 		time.Sleep(5 * time.Second)
@@ -131,8 +130,8 @@ func Test_reallocate(t *testing.T) {
 	service := "foo.bar"
 	var tests = []struct {
 		surviveContainerIdAndValue map[string]string
-		fixShardIdAndContainerId map[string]string
-		expect                   moveActionList
+		fixShardIdAndContainerId   map[string]string
+		expect                     moveActionList
 	}{
 		// container存活，没有shard需要移动
 		{
@@ -196,7 +195,8 @@ func Test_reallocate(t *testing.T) {
 	w := maintenanceWorker{}
 
 	for idx, tt := range tests {
-		r := w.reallocate(tt.surviveContainerIdAndValue, tt.fixShardIdAndContainerId)
+		// TODO 修正test case
+		r := w.reallocate(nil, tt.surviveContainerIdAndValue, tt.fixShardIdAndContainerId)
 		sort.Sort(r)
 		sort.Sort(tt.expect)
 		if !reflect.DeepEqual(r, tt.expect) {

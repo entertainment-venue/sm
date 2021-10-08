@@ -83,15 +83,15 @@ func newOperator(lg *zap.Logger, sc *smContainer, service string) (*operator, er
 		gs: &apputil.GoroutineStopper{},
 		hc: newHttpClient(),
 	}
-	// TODO scale
-	return &op, nil
-}
 
-func (o *operator) Start() {
-	o.gs.Wrap(
+	op.gs.Wrap(
 		func(ctx context.Context) {
-			o.moveLoop(ctx)
+			op.moveLoop(ctx)
 		})
+
+	// TODO support scale
+
+	return &op, nil
 }
 
 func (o *operator) Close() {
@@ -151,7 +151,7 @@ handleLatestTask:
 
 			// 任务被清空，会出发一次时间
 			if string(ev.Kv.Value) == "" {
-				o.lg.Warn("got task erased event", zap.String("service", o.service))
+				o.lg.Warn("got task erase event", zap.String("service", o.service))
 				return nil
 			}
 
@@ -241,16 +241,10 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 				return errors.Wrap(err, "")
 			}
 
-			o.lg.Error("failed to send",
+			o.lg.Error("failed to add",
 				zap.Error(err),
 				zap.Reflect("value", ma),
 			)
-
-			// 只在leader竞选成功场景下会下发分配指令，没有Drop动作，这里允许放弃当前动作，后续有shardAllocateLoop和shardLoadLoop兜底
-			// 如果下发失败，就必须去掉分配关系，以便shardAllocateLoop拿到的分配关系是比较真实的（这块即便下发都成功，shard可能因为异常停止工作）
-			if err := o.remove(ctx, ma.ShardId, ma.Service); err != nil {
-				return errors.Wrap(err, "")
-			}
 			return nil
 		}
 
@@ -267,28 +261,6 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 		zap.Bool("onlyAdd", onlyAdd),
 		zap.Bool("onlyDrop", onlyDrop),
 	)
-
-	// 标记shard分配信息到shard节点
-	shardKey := apputil.EtcdPathAppShardId(ma.Service, ma.ShardId)
-	resp, err := o.parent.Client.GetKV(ctx, shardKey, nil)
-	if err != nil {
-		return errors.Wrap(err, "")
-	}
-	var ss apputil.ShardSpec
-	if err := json.Unmarshal(resp.Kvs[0].Value, &ss); err != nil {
-		return errors.Wrap(err, "")
-	}
-	ss.ContainerId = o.parent.id
-	value := ss.String()
-	if _, err := o.parent.Client.CompareAndSwap(ctx, shardKey, string(resp.Kvs[0].Value), value, clientv3.NoLease); err != nil {
-		return errors.Wrap(err, "")
-	}
-	o.lg.Info("move shard etcd CompareAndSwap success",
-		zap.String("key", shardKey),
-		zap.String("cur", string(resp.Kvs[0].Value)),
-		zap.String("new", value),
-	)
-
 	return nil
 }
 
@@ -321,38 +293,6 @@ func (o *operator) send(_ context.Context, id string, endpoint string, action st
 		zap.String("urlStr", urlStr),
 		zap.String("action", action),
 		zap.String("response", string(rb)),
-	)
-	return nil
-}
-
-func (o *operator) remove(ctx context.Context, id, service string) error {
-	key := apputil.EtcdPathAppShardId(service, id)
-	resp, err := o.parent.Client.GetKV(ctx, key, nil)
-	if err != nil {
-		return errors.Wrap(err, "")
-	}
-	if resp.Count == 0 {
-		o.lg.Warn("failed to remove, key not exist", zap.String("key", key))
-		return nil
-	}
-
-	var ss apputil.ShardSpec
-	if err := json.Unmarshal(resp.Kvs[0].Value, &ss); err != nil {
-		return errors.Wrap(err, "")
-	}
-	if ss.ContainerId == "" {
-		o.lg.Info("container already removed", zap.String("key", key))
-		return nil
-	}
-	ss.ContainerId = ""
-
-	value := ss.String()
-	if _, err := o.parent.Client.CompareAndSwap(ctx, key, string(resp.Kvs[0].Value), value, clientv3.NoLease); err != nil {
-		return errors.Wrap(err, "")
-	}
-	o.lg.Info("container removed",
-		zap.String("key", key),
-		zap.String("value", value),
 	)
 	return nil
 }

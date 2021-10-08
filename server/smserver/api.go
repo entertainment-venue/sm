@@ -145,7 +145,7 @@ func (ss *shardServer) GinAppDelShard(c *gin.Context) {
 	ss.lg.Info("receive del shard request", zap.String("request", req.String()))
 
 	// 获取shard当前的基本信息
-	key := apputil.EtcdPathAppShardId(req.Service, req.ShardId)
+	key := apputil.EtcdPathAppShardHbId(req.Service, req.ShardId)
 	resp, err := ss.container.Client.Get(context.Background(), key, nil)
 	if err != nil {
 		ss.lg.Error("failed to get etcd node",
@@ -161,8 +161,8 @@ func (ss *shardServer) GinAppDelShard(c *gin.Context) {
 		return
 	}
 
-	var spec apputil.ShardSpec
-	if err := json.Unmarshal(resp.Kvs[0].Value, &spec); err != nil {
+	var data apputil.ShardHbData
+	if err := json.Unmarshal(resp.Kvs[0].Value, &data); err != nil {
 		ss.lg.Error("Unmarshal err",
 			zap.Error(err),
 			zap.ByteString("value", resp.Kvs[0].Value),
@@ -175,7 +175,7 @@ func (ss *shardServer) GinAppDelShard(c *gin.Context) {
 	ma := moveAction{
 		Service:      req.Service,
 		ShardId:      req.ShardId,
-		DropEndpoint: spec.ContainerId,
+		DropEndpoint: data.ContainerId,
 	}
 	if err := ss.container.op.dropOrAdd(context.TODO(), &ma); err != nil {
 		ss.lg.Error("failed to dropOrAdd",

@@ -101,26 +101,38 @@ func (w *maintenanceWorker) Close() {
 // 1 smContainer 的增加/减少是优先级最高，目前可能涉及大量shard move
 // 2 smShard 被漏掉作为container检测的补充，最后校验，这种情况只涉及到漏掉的shard任务下发下去
 func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
-	// 获取当前的shard分配关系
+	// 获取当前所有shard
+	var (
+		etcdFixShardIdAndValue ArmorMap
+		err                    error
+	)
 	shardKey := nodeAppShard(w.service)
-	fixShardIdAndValue, err := w.parent.Client.GetKVs(ctx, shardKey)
+	etcdFixShardIdAndValue, err = w.parent.Client.GetKVs(ctx, shardKey)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
-	if len(fixShardIdAndValue) == 0 {
-		w.lg.Info("service not init yet", zap.String("service", w.service))
+	if len(etcdFixShardIdAndValue) == 0 {
+		w.lg.Info("service not init yet",
+			zap.String("service", w.service),
+			zap.String("node", shardKey),
+		)
 		return nil
 	}
+	fixShardIds := etcdFixShardIdAndValue.KeyList()
 
-	// 检查是否有shard没有在健康的container上
-	fixShardIdAndContainerId := make(ArmorMap)
-	for id, value := range fixShardIdAndValue {
-		var ss apputil.ShardSpec
-		if err := json.Unmarshal([]byte(value), &ss); err != nil {
-			return errors.Wrap(err, "")
-		}
-		fixShardIdAndContainerId[id] = ss.ContainerId
+	// 获取当前存活shard，存活shard的container分配关系如果命中可以不生产moveAction
+	etcdSurviveShardIdAndValue, err := w.parent.Client.GetKVs(ctx, nodeAppShardHb(w.service))
+	if err != nil {
+		return errors.Wrap(err, "")
 	}
+	currentShardIdAndContainerId := make(ArmorMap)
+	for id, value := range etcdSurviveShardIdAndValue {
+		var data apputil.ShardHbData
+		json.Unmarshal([]byte(value), &data)
+		currentShardIdAndContainerId[id] = data.ContainerId
+	}
+	currentContainerIds := currentShardIdAndContainerId.ValueList()
+	currentShardIds := currentShardIdAndContainerId.KeyMap()
 
 	// 现有存活containers
 	var surviveContainerIdAndValue ArmorMap
@@ -128,9 +140,12 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
+	surviveContainerIds := surviveContainerIdAndValue.KeyList()
 
-	if w.containerChanged(fixShardIdAndContainerId.ValueList(), surviveContainerIdAndValue.KeyList()) {
-		r := w.reallocate(surviveContainerIdAndValue, fixShardIdAndContainerId)
+	containerChanged := w.containerChanged(currentContainerIds, surviveContainerIds)
+	shardChanged := w.shardChanged(fixShardIds, currentShardIds)
+	if containerChanged || shardChanged {
+		r := w.reallocate(fixShardIds, surviveContainerIdAndValue, currentShardIdAndContainerId)
 		if len(r) > 0 {
 			ev := mvEvent{
 				Service:     w.service,
@@ -144,47 +159,21 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 			}
 			w.parent.eq.push(&item, true)
 
-			w.lg.Info("container changed cause item enqueue",
+			w.lg.Info("item enqueue",
 				zap.String("service", w.service),
-				zap.String("item", item.String()),
+				zap.Reflect("item", item),
 			)
-			return nil
+		} else {
+			// 当survive的container为nil的时候，不能形成有效的分配，直接返回即可
+			w.lg.Warn("failed to reallocate",
+				zap.Bool("containerChanged", containerChanged),
+				zap.Bool("shardChanged", shardChanged),
+				zap.String("service", w.service),
+				zap.Reflect("survive", surviveContainerIdAndValue),
+				zap.Reflect("current", currentShardIdAndContainerId),
+			)
 		}
 	}
-	w.lg.Debug("container not changed", zap.String("service", w.service))
-
-	// smContainer hb和固定分配关系一致，下面检查shard存活
-	var surviveShardIdAndValue ArmorMap
-	surviveShardIdAndValue, err = w.parent.Client.GetKVs(ctx, nodeAppShardHb(w.service))
-	if err != nil {
-		return errors.Wrap(err, "")
-	}
-
-	if w.shardChanged(fixShardIdAndContainerId.KeyList(), surviveShardIdAndValue.KeyMap()) {
-		r := w.reallocate(surviveContainerIdAndValue, fixShardIdAndContainerId)
-		if len(r) > 0 {
-			ev := mvEvent{
-				Service:     w.service,
-				Type:        tShardUpdate,
-				EnqueueTime: time.Now().Unix(),
-				Value:       r.String(),
-			}
-			item := Item{
-				Value:    ev.String(),
-				Priority: time.Now().Unix(),
-			}
-			w.parent.eq.push(&item, true)
-
-			w.lg.Info("shard changed cause item enqueue",
-				zap.String("service", w.service),
-				zap.String("item", item.String()),
-			)
-
-			return nil
-		}
-	}
-	w.lg.Debug("shard not changed", zap.String("service", w.service))
-
 	return nil
 }
 
@@ -203,26 +192,36 @@ func (w *maintenanceWorker) shardChanged(fixShardIds []string, surviveShardIdMap
 	return false
 }
 
-func (w *maintenanceWorker) reallocate(surviveContainerIdAndValue ArmorMap, fixShardIdAndContainerId ArmorMap) moveActionList {
-	shardIds := fixShardIdAndContainerId.KeyList()
+func (w *maintenanceWorker) reallocate(fixShardIds []string, surviveContainerIdAndValue ArmorMap, surviveShardIdAndContainerId ArmorMap) moveActionList {
 	surviveContainerIds := surviveContainerIdAndValue.KeyList()
-	newContainerIdAndShardIds := performAssignment(shardIds, surviveContainerIds)
+	newContainerIdAndShardIds := performAssignment(fixShardIds, surviveContainerIds)
 
-	w.lg.Info("perform assignment start",
-		zap.String("service", w.service),
-		zap.Strings("shardIds", shardIds),
-		zap.Strings("surviveContainerIds", surviveContainerIds),
-		zap.Reflect("expect", newContainerIdAndShardIds),
-	)
+	if len(newContainerIdAndShardIds) > 0 {
+		w.lg.Debug("perform assignment start",
+			zap.String("service", w.service),
+			zap.Strings("fixShardIds", fixShardIds),
+			zap.Strings("surviveContainerIds", surviveContainerIds),
+			zap.Reflect("expect", newContainerIdAndShardIds),
+		)
+	}
 
+	// 新增 or 修改，删除操作通过api直接到达被管理服务，停掉后ShardServer不再有hb上传
 	var result moveActionList
 	for newId, shardIds := range newContainerIdAndShardIds {
 		for _, shardId := range shardIds {
-			curContainerId := fixShardIdAndContainerId[shardId]
-
-			// shardId没有被分配到container，可以直接增加moveAction
-			if curContainerId == "" {
+			curContainerId, ok := surviveShardIdAndContainerId[shardId]
+			if !ok {
+				// shard不再任何container内部
 				result = append(result, &moveAction{Service: w.service, ShardId: shardId, AddEndpoint: newId})
+				continue
+			}
+
+			// shardId没有被分配到container，不对这个shard做任何处理，应该是程序bug
+			if curContainerId == "" {
+				w.lg.Error("got empty container id in shard hb node",
+					zap.String("service", w.service),
+					zap.String("shardId", shardId),
+				)
 				continue
 			}
 
@@ -241,12 +240,14 @@ func (w *maintenanceWorker) reallocate(surviveContainerIdAndValue ArmorMap, fixS
 		}
 	}
 
-	w.lg.Info("perform assignment complete",
-		zap.String("service", w.service),
-		zap.Strings("shardIds", shardIds),
-		zap.Strings("surviveContainerIds", surviveContainerIds),
-		zap.Reflect("result", result),
-	)
+	if len(result) > 0 {
+		w.lg.Info("perform assignment complete",
+			zap.String("service", w.service),
+			zap.Reflect("newContainerIdAndShardIds", newContainerIdAndShardIds),
+			zap.Reflect("surviveShardIdAndContainerId", surviveShardIdAndContainerId),
+			zap.Reflect("result", result),
+		)
+	}
 	return result
 }
 

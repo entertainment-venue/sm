@@ -17,7 +17,6 @@ package smserver
 import (
 	"context"
 	"encoding/json"
-	"golang.org/x/sync/errgroup"
 	"sync"
 	"time"
 
@@ -202,7 +201,7 @@ func (c *smContainer) Load(_ context.Context, id string) (string, error) {
 		return "", errors.Wrap(errNotExist, "")
 	}
 	load := sd.GetLoad()
-	c.lg.Info("get load success",
+	c.lg.Debug("get load success",
 		zap.String("id", id),
 		zap.String("load", load),
 	)
@@ -217,7 +216,7 @@ func (c *smContainer) Shards(_ context.Context) ([]string, error) {
 	for id := range c.idAndShard {
 		ids = append(ids, id)
 	}
-	c.lg.Info("get shards success", zap.String("service", c.service))
+	c.lg.Debug("get shards success", zap.String("service", c.service))
 	return ids, nil
 }
 
@@ -288,15 +287,6 @@ func (c *smContainer) campaign(ctx context.Context) {
 			goto loop
 		}
 
-		if err := c.initDistribute(ctx); err != nil {
-			c.lg.Error("leader failed to initDistribute", zap.Error(err))
-			time.Sleep(defaultSleepTimeout)
-			goto loop
-		}
-
-		// 初始化完毕再开始处理其他的loop检测到的shard move action
-		c.op.Start()
-
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/sm/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
 		c.lw = newMaintenanceWorker(ctx, c.lg, c, c.service)
@@ -310,52 +300,4 @@ func (c *smContainer) campaign(ctx context.Context) {
 			return
 		}
 	}
-}
-
-func (c *smContainer) initDistribute(ctx context.Context) error {
-	// 先把当前的分配关系下发下去，和static membership，不过我们场景是由单点完成的，由性能瓶颈，但是不像LRMF场景下serverless难以判断正确性
-	// 需要交互的下游是sm的机器节点，需要根据负载来看，预估不会很多
-	bdShardNode := nodeAppShard(c.service)
-	curShardIdAndValue, err := c.Client.GetKVs(ctx, bdShardNode)
-	if err != nil {
-		return errors.Wrap(err, "")
-	}
-	var moveActions moveActionList
-	for shardId, value := range curShardIdAndValue {
-		var ss apputil.ShardSpec
-		if err := json.Unmarshal([]byte(value), &ss); err != nil {
-			return errors.Wrap(err, "")
-		}
-
-		// 未分配container的shard，不需要move指令下发
-		if ss.ContainerId != "" {
-			// 下发指令，接受不了的直接干掉当前的分配关系
-			ma := moveAction{Service: c.service, ShardId: shardId, AddEndpoint: ss.ContainerId, AllowDrop: true}
-			moveActions = append(moveActions, &ma)
-
-			c.lg.Info("leader init shard move action",
-				zap.String("service", c.service),
-				zap.Reflect("action", ma),
-			)
-		}
-	}
-	// 向自己的app任务节点发任务
-	if len(moveActions) == 0 {
-		c.lg.Info("initDistribute no move action created", zap.String("service", c.service))
-		return nil
-	}
-
-	// leader下发指令失败，在campaign中不断实验，重新走上面的逻辑，获得当前分片信息，存在人工接入修正分片spec的可能
-	g := new(errgroup.Group)
-	for _, ma := range moveActions {
-		ma := ma
-		g.Go(func() error {
-			return c.op.dropOrAdd(ctx, ma)
-		})
-	}
-	if err := g.Wait(); err != nil {
-		time.Sleep(defaultSleepTimeout)
-		return errors.Wrap(err, "")
-	}
-	return nil
 }

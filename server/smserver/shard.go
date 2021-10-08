@@ -73,6 +73,8 @@ func (s *smShard) Close() {
 	// 关闭自己孩子的goroutine
 	s.worker.Close()
 
+	// TODO operator也需要回收
+
 	s.lg.Info("smShard closed",
 		zap.String("id", s.id),
 		zap.String("service", s.service),

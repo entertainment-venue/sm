@@ -151,19 +151,3 @@ func Test_operator_send(t *testing.T) {
 	stopch := make(chan struct{})
 	<-stopch
 }
-
-func Test_operator_remove(t *testing.T) {
-	c, _, _ := newTestShardServer()
-	sc := smContainer{Container: c}
-
-	o := operator{lg: ttLogger}
-	o.parent = &sc
-
-	if err := o.remove(context.TODO(), "1", "foo.bar"); err != nil {
-		t.Errorf("err: %+v", err)
-		t.SkipNow()
-	}
-
-	stopch := make(chan struct{})
-	<-stopch
-}
