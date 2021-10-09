@@ -64,7 +64,6 @@ func handleSigs(cancel context.CancelFunc, lg *zap.Logger) {
 	sigChan := make(chan os.Signal)
 
 	signals := []os.Signal{
-		syscall.SIGHUP,
 		syscall.SIGINT,
 		syscall.SIGTERM,
 	}
@@ -74,12 +73,12 @@ func handleSigs(cancel context.CancelFunc, lg *zap.Logger) {
 	for {
 		sig := <-sigChan
 		switch sig {
-		case syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM:
+		case syscall.SIGINT, syscall.SIGTERM:
 			lg.Warn("Received exit signal", zap.String("sig", sig.String()))
 			cancel()
 			return
 		default:
-			lg.Warn("Received unknown signal", zap.String("sig", sig.String()))
+			lg.Warn("Received unexpected signal", zap.String("sig", sig.String()))
 		}
 	}
 }

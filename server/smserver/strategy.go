@@ -16,51 +16,81 @@ package smserver
 
 import (
 	"sort"
+
+	"github.com/pkg/errors"
 )
 
 // 参考 https://github.com/entertainment-venue/LRMF/blob/main/assignor.go
-func performAssignment(shardIds []string, instanceIds []string) map[string][]string {
-	result := make(map[string][]string)
-
-	plen := len(shardIds)
-	clen := len(instanceIds)
-	if plen == 0 || clen == 0 {
-		return result
+func performAssignment(totalLen int, shards []string, cws containerWeightList) (map[string][]string, []string, error) {
+	if cws.IsConflict(shards) {
+		return nil, nil, errors.New("conflict err")
+	}
+	if totalLen < len(shards) || totalLen == 0 {
+		return nil, nil, errors.New("len err")
 	}
 
-	sort.Strings(shardIds)
-	sort.Strings(instanceIds)
+	plen := len(shards)
+	clen := len(cws)
+	if plen == 0 || clen == 0 {
+		return nil, nil, nil
+	}
 
-	// debug
-	instanceIdAndTks := make(map[string][]string)
+	sort.Strings(shards)
+	sort.Sort(cws)
 
-	n := plen / clen
-	m := plen % clen
+	r := make(map[string][]string)
+
+	var twice []string
+
+	n := totalLen / clen
+	m := totalLen % clen
 	p := 0
-	for i, instanceId := range instanceIds {
+	for i, cw := range cws {
+		// 预计放到当前container的shard列表
 		first := p
 		last := first + n
+
+		// 前几个container都多放一个shard
 		if m > 0 && i < m {
 			last++
 		}
+
+		// 应该放多少
+		should := last - first
+
+		// 配合上面对于last的处理，修正last的数量，用于之后的翻页
 		if last > plen {
 			last = plen
 		}
 
-		for _, id := range shardIds[first:last] {
-			result[instanceId] = append(result[instanceId], id)
+		weight := len(cw.shards)
+		if should <= weight {
+			// cw承载的shard比预期的多，扩容时会发生，保留下来，等待二次分配
+			diff := weight - should
+			if diff > 0 {
+				twice = append(twice, cw.shards[0:diff]...)
+				cws[i].shards = cws[i].shards[diff:]
+			}
+			continue
+		} else {
+			idle := should - weight
+			if idle == 0 {
+				continue
+			}
+			end := first + idle
+			if end < last {
+				last = end
+			}
+		}
 
-			// debug
-			instanceIdAndTks[instanceId] = append(instanceIdAndTks[instanceId], id)
+		for _, id := range shards[first:last] {
+			r[cw.id] = append(r[cw.id], id)
+
+			// 鑫的分配给到cws，方便twice二次分配
+			cws[i].shards = append(cws[i].shards, id)
 		}
 		p = last
 	}
 
-	// debug
-	var ids []string
-	for _, id := range shardIds {
-		ids = append(ids, id)
-	}
-
-	return result
+	return r, twice, nil
 }

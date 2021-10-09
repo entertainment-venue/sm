@@ -4,7 +4,7 @@ go 1.17
 
 require (
 	github.com/coreos/etcd v3.3.25+incompatible
-	github.com/entertainment-venue/sm/pkg v0.0.0-20211008093314-f72118a8ba97
+	github.com/entertainment-venue/sm/pkg v0.0.0-20211009032118-1f6adfc16893
 	github.com/gin-gonic/gin v1.7.4
 	github.com/pkg/errors v0.9.1
 	go.uber.org/zap v1.19.1

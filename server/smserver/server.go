@@ -16,6 +16,7 @@ package smserver
 
 import (
 	"context"
+
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"

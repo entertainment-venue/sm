@@ -83,6 +83,8 @@ type addShardRequest struct {
 
 	// 业务app自己定义task内容
 	Task string `json:"task" binding:"required"`
+
+	ManualContainerId string `json:"manualContainerId"`
 }
 
 func (r *addShardRequest) String() string {
@@ -100,14 +102,15 @@ func (ss *shardServer) GinAddShard(c *gin.Context) {
 	ss.lg.Info("receive add shard request", zap.String("request", req.String()))
 
 	spec := apputil.ShardSpec{
-		Service:    req.Service,
-		Task:       req.Task,
-		UpdateTime: time.Now().Unix(),
+		Service:           req.Service,
+		Task:              req.Task,
+		UpdateTime:        time.Now().Unix(),
+		ManualContainerId: req.ManualContainerId,
 	}
 
 	// 区分更新和添加
-	// 如果是添加，等待负责该app的shard做探测即可
-	// 如果是更新，shard是不允许更新的，这种更新的相当于shard工作内容的调整
+	// 添加: 等待负责该app的shard做探测即可
+	// 更新: shard是不允许更新的，这种更新的相当于shard工作内容的调整
 	var (
 		nodes  = []string{apputil.EtcdPathAppShardId(req.Service, req.ShardId)}
 		values = []string{spec.String()}

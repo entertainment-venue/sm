@@ -245,3 +245,174 @@ func Test_containerLoadChecker(t *testing.T) {
 
 	eq.Close()
 }
+
+func Test_extractNeedAssignShardIds(t *testing.T) {
+	tests := []struct {
+		shardIdAndManualContainerId  ArmorMap
+		surviveContainerIdAndAny     ArmorMap
+		surviveShardIdAndContainerId ArmorMap
+		expectPrepare                []string
+		expectMAL                    moveActionList
+	}{
+		{
+			shardIdAndManualContainerId: ArmorMap{
+				"s1": "c1",
+			},
+			surviveContainerIdAndAny:     ArmorMap{},
+			surviveShardIdAndContainerId: ArmorMap{},
+			expectPrepare:                nil,
+			expectMAL: moveActionList{
+				&moveAction{
+					ShardId:     "s1",
+					AddEndpoint: "c1",
+				},
+			},
+		},
+		{
+			shardIdAndManualContainerId: ArmorMap{
+				"s1": "",
+			},
+			surviveContainerIdAndAny:     ArmorMap{},
+			surviveShardIdAndContainerId: ArmorMap{},
+			expectPrepare:                []string{"s1"},
+			expectMAL:                    nil,
+		},
+		{
+			shardIdAndManualContainerId: ArmorMap{
+				"s1": "c1",
+			},
+			surviveContainerIdAndAny: ArmorMap{},
+			surviveShardIdAndContainerId: ArmorMap{
+				"s1": "c2",
+			},
+			expectPrepare: nil,
+			expectMAL: moveActionList{
+				&moveAction{
+					ShardId:      "s1",
+					DropEndpoint: "c2",
+					AddEndpoint:  "c1",
+				},
+			},
+		},
+		{
+			shardIdAndManualContainerId: ArmorMap{
+				"s1": "c1",
+			},
+			surviveContainerIdAndAny: ArmorMap{},
+			surviveShardIdAndContainerId: ArmorMap{
+				"s1": "c2",
+			},
+			expectPrepare: nil,
+			expectMAL: moveActionList{
+				&moveAction{
+					ShardId:      "s1",
+					DropEndpoint: "c2",
+					AddEndpoint:  "c1",
+				},
+			},
+		},
+		{
+			shardIdAndManualContainerId: ArmorMap{
+				"s1": "",
+			},
+			surviveContainerIdAndAny: ArmorMap{},
+			surviveShardIdAndContainerId: ArmorMap{
+				// c1不存在于surviveContainerIdAndAny
+				"s1": "c1",
+			},
+			expectPrepare: []string{"s1"},
+			expectMAL:     nil,
+		},
+		{
+			shardIdAndManualContainerId: ArmorMap{
+				"s1": "",
+			},
+			surviveContainerIdAndAny: ArmorMap{
+				"c1": "",
+			},
+			surviveShardIdAndContainerId: ArmorMap{
+				// c2存在于surviveContainerIdAndAny
+				"s1": "c1",
+			},
+			expectPrepare: nil,
+			expectMAL:     nil,
+		},
+	}
+	mw := maintenanceWorker{}
+	for idx, tt := range tests {
+		actualPrepare, actualMAL := mw.extractNeedAssignShardIds(tt.shardIdAndManualContainerId, tt.surviveContainerIdAndAny, tt.surviveShardIdAndContainerId)
+		if !reflect.DeepEqual(actualPrepare, tt.expectPrepare) {
+			t.Errorf("idx %d expect %+v actual %+v", idx, tt.expectPrepare, actualPrepare)
+			t.SkipNow()
+		}
+		if !reflect.DeepEqual(actualMAL, tt.expectMAL) {
+			t.Errorf("idx %d expect %+v actual %+v", idx, tt.expectMAL, actualMAL)
+			t.SkipNow()
+		}
+	}
+}
+
+func Test_parseAssignment(t *testing.T) {
+	tests := []struct {
+		assignment                   map[string][]string
+		surviveContainerIdAndAny     ArmorMap
+		surviveShardIdAndContainerId ArmorMap
+		expectMAL                    moveActionList
+	}{
+		{
+			assignment: map[string][]string{
+				"c1": []string{"s1"},
+			},
+			surviveShardIdAndContainerId: ArmorMap{},
+			expectMAL: moveActionList{
+				&moveAction{
+					ShardId:     "s1",
+					AddEndpoint: "c1",
+				},
+			},
+		},
+		{
+			assignment: map[string][]string{
+				"c1": {"s1"},
+			},
+			surviveShardIdAndContainerId: ArmorMap{
+				"s1": "c2",
+			},
+			expectMAL: moveActionList{
+				&moveAction{
+					ShardId:      "s1",
+					DropEndpoint: "c2",
+					AddEndpoint:  "c1",
+					AllowDrop:    true,
+				},
+			},
+		},
+		{
+			assignment: map[string][]string{
+				"c1": {"s1"},
+			},
+			surviveContainerIdAndAny: ArmorMap{
+				"c2": "",
+			},
+			surviveShardIdAndContainerId: ArmorMap{
+				"s1": "c2",
+			},
+			expectMAL: moveActionList{
+				&moveAction{
+					ShardId:      "s1",
+					DropEndpoint: "c2",
+					AddEndpoint:  "c1",
+					AllowDrop:    false,
+				},
+			},
+		},
+	}
+	mw := maintenanceWorker{}
+	for idx, tt := range tests {
+		actualMAL := mw.parseAssignment(tt.assignment, tt.surviveContainerIdAndAny, tt.surviveShardIdAndContainerId)
+		if !reflect.DeepEqual(actualMAL, tt.expectMAL) {
+			t.Errorf("idx %d expect %+v actual %+v", idx, tt.expectMAL, actualMAL)
+			t.SkipNow()
+		}
+	}
+}

@@ -49,6 +49,23 @@ func (m ArmorMap) ValueList() []string {
 	return r
 }
 
+func (m ArmorMap) Exist(k string) bool {
+	_, ok := m[k]
+	return ok
+}
+
+func (m ArmorMap) SwapKV() map[string][]string {
+	r := make(map[string][]string)
+	for k, v := range m {
+		if _, ok := r[v]; !ok {
+			r[v] = []string{k}
+		} else {
+			r[v] = append(r[v], k)
+		}
+	}
+	return r
+}
+
 func newHttpClient() *http.Client {
 	httpDialContextFunc := (&net.Dialer{Timeout: 1 * time.Second, DualStack: true}).DialContext
 	return &http.Client{
