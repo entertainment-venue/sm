@@ -35,11 +35,27 @@ type ShardSpec struct {
 	Task string `json:"task"`
 
 	UpdateTime int64 `json:"updateTime"`
+
+	// 通过api可以给shard主动分配到某个container
+	ManualContainerId string `json:"manualContainerId"`
 }
 
 func (ss *ShardSpec) String() string {
 	b, _ := json.Marshal(ss)
 	return string(b)
+}
+
+func (ss *ShardSpec) Validate() error {
+	if ss.Service == "" {
+		return errors.New("Empty service")
+	}
+	if ss.Task == "" {
+		return errors.New("Empty task")
+	}
+	if ss.UpdateTime <= 0 {
+		return errors.New("Err updateTime")
+	}
+	return nil
 }
 
 type ShardHbData struct {
@@ -327,6 +343,26 @@ func (ss *ShardServer) AddShard(c *gin.Context) {
 			zap.ByteString("value", sresp.Kvs[0].Value),
 		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// shard属性校验
+	if err := spec.Validate(); err != nil {
+		ss.lg.Error("shard spec etcd value err",
+			zap.Error(err),
+			zap.String("value", string(sresp.Kvs[0].Value)),
+		)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// container校验
+	if spec.ManualContainerId != "" && spec.ManualContainerId != ss.container.Id() {
+		ss.lg.Error("unexpected container for shard",
+			zap.String("service", ss.container.Service()),
+			zap.String("actual", ss.container.Id()),
+			zap.String("expect", spec.ManualContainerId),
+		)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unexpected container"})
 		return
 	}
 
