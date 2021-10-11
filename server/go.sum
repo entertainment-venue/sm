@@ -34,8 +34,8 @@ github.com/dgrijalva/jwt-go v3.2.0+incompatible h1:7qlOGliEKZXTDg6OTjfoBKDXWrumC
 github.com/dgrijalva/jwt-go v3.2.0+incompatible/go.mod h1:E3ru+11k8xSBh+hMPgOLZmtrrCbhqsmaPHjLKYnJCaQ=
 github.com/dustin/go-humanize v1.0.0 h1:VSnTsYCnlFHaM2/igO1h6X3HA71jcobQuxemgkq4zYo=
 github.com/dustin/go-humanize v1.0.0/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
-github.com/entertainment-venue/sm/pkg v0.0.0-20211011124559-9dfe6642c21d h1:9vDUhuq6sLgvk5MJ1H438VDKIFhDlw+smDfJ3EyMfII=
-github.com/entertainment-venue/sm/pkg v0.0.0-20211011124559-9dfe6642c21d/go.mod h1:44b7D6n/K//u1i4s4JlUNg2jmdg+YWOOwOI3LsFBAzk=
+github.com/entertainment-venue/sm/pkg v0.0.0-20211011130334-3c1ed0ae2b90 h1:y9jW2R84t5IkDv8SNTSCqYHdyDIlZpvcZ+f3hnIgnaA=
+github.com/entertainment-venue/sm/pkg v0.0.0-20211011130334-3c1ed0ae2b90/go.mod h1:44b7D6n/K//u1i4s4JlUNg2jmdg+YWOOwOI3LsFBAzk=
 github.com/envoyproxy/go-control-plane v0.9.1-0.20191026205805-5f8ba28d4473/go.mod h1:YTl/9mNaCwkRvm6d1a2C3ymFceY/DCBVvsKhRF0iEA4=
 github.com/envoyproxy/protoc-gen-validate v0.1.0/go.mod h1:iSmxcyjqTsJpI2R4NaDN7+kN2VEUnK/pcBlmesArF7c=
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=

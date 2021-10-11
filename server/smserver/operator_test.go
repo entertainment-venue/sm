@@ -17,6 +17,7 @@ package smserver
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"reflect"
 	"sort"
 	"testing"
@@ -143,7 +144,7 @@ func Test_operator_send(t *testing.T) {
 	o.parent = &sc
 	o.hc = newHttpClient()
 
-	if err := o.send(context.TODO(), "1", "127.0.0.1:8889", "add"); err != nil {
+	if err := o.send(context.TODO(), "1", "127.0.0.1:8889", "add", uuid.NewString()); err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
 	}

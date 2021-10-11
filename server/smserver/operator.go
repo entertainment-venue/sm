@@ -231,7 +231,7 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 	)
 
 	if ma.DropEndpoint != "" {
-		if err := o.send(ctx, ma.ShardId, ma.DropEndpoint, "drop"); err != nil {
+		if err := o.send(ctx, ma.ShardId, ma.DropEndpoint, "drop", ma.TraceId); err != nil {
 			return errors.Wrap(err, "")
 		}
 	} else {
@@ -239,7 +239,7 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 	}
 
 	if ma.AddEndpoint != "" {
-		if err := o.send(ctx, ma.ShardId, ma.AddEndpoint, "add"); err != nil {
+		if err := o.send(ctx, ma.ShardId, ma.AddEndpoint, "add", ma.TraceId); err != nil {
 			if !ma.AllowDrop {
 				return errors.Wrap(err, "")
 			}
@@ -267,8 +267,8 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 	return nil
 }
 
-func (o *operator) send(_ context.Context, id string, endpoint string, action string) error {
-	msg := apputil.ShardOpMessage{Id: id}
+func (o *operator) send(_ context.Context, id string, endpoint string, action string, traceId string) error {
+	msg := apputil.ShardOpMessage{Id: id, TraceId: traceId}
 	b, err := json.Marshal(msg)
 	if err != nil {
 		return errors.Wrap(err, "")
@@ -292,10 +292,10 @@ func (o *operator) send(_ context.Context, id string, endpoint string, action st
 		return errors.Errorf("[operator] FAILED to %s move shard %s, not 200", action, id)
 	}
 
-	o.lg.Info("send success",
+	o.lg.Info("http request success",
 		zap.String("urlStr", urlStr),
-		zap.String("action", action),
-		zap.String("response", string(rb)),
+		zap.ByteString("request", b),
+		zap.ByteString("response", rb),
 	)
 	return nil
 }
