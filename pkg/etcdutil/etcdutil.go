@@ -182,11 +182,11 @@ func (w *EtcdClient) CompareAndSwap(_ context.Context, node string, curValue str
 		)
 		return realValue, ErrEtcdValueExist
 	}
-	w.lg.Error("failed to swap node",
+	w.lg.Warn("failed to swap node",
 		zap.String("node", node),
-		zap.String("realValue", realValue),
-		zap.String("curValue", curValue),
-		zap.String("newValue", newValue),
+		zap.String("etcd-value", realValue),
+		zap.String("expect-value", curValue),
+		zap.String("new-value", newValue),
 		zap.Error(ErrEtcdValueNotMatch),
 	)
 	return realValue, ErrEtcdValueNotMatch
