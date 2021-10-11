@@ -76,8 +76,9 @@ type ShardInterface interface {
 }
 
 type ShardOpMessage struct {
-	Id   string `json:"id"`
-	Type OpType `json:"type"`
+	Id      string `json:"id"`
+	Type    OpType `json:"type"`
+	TraceId string `json:"traceId"`
 }
 
 type OpType int
