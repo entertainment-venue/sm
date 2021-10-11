@@ -18,9 +18,14 @@ func (logRotationConfig) Sync() error { return nil }
 func NewSMLogger() (*zap.Logger, error) {
 	cfg := logRotationConfig{
 		&lumberjack.Logger{
-			MaxSize:    1024 * 1024 * 1024,
-			MaxBackups: 7,
-			MaxAge:     1,
+			// 每个文件1g
+			MaxSize: 1024,
+
+			// 50g文件
+			MaxBackups: 50,
+
+			// 最多保留3天
+			MaxAge: 3,
 		},
 	}
 	if err := zap.RegisterSink("rotate", func(u *url.URL) (zap.Sink, error) {
