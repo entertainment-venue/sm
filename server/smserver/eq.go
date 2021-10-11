@@ -19,11 +19,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/coreos/etcd/clientv3"
 	"sync"
 	"time"
 
+	"github.com/coreos/etcd/clientv3"
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"go.uber.org/zap"
 )
 
@@ -181,11 +182,20 @@ func (eq *eventQueue) evLoop(ctx context.Context, service string, ch chan *mvEve
 
 		key := apputil.EtcdPathAppShardTask(eq.parent.service)
 		if _, err := eq.parent.Client.CompareAndSwap(ctx, key, "", ev.Value, clientv3.NoLease); err != nil {
-			eq.lg.Error("failed to put task",
-				zap.Error(err),
-				zap.String("key", key),
-				zap.String("value", ev.Value),
-			)
+			if err == etcdutil.ErrEtcdValueNotMatch {
+				eq.lg.Warn("can not add task, etcd not got task now",
+					zap.String("service", eq.parent.service),
+					zap.String("key", key),
+					zap.String("value", ev.Value),
+				)
+			} else {
+				eq.lg.Error("failed to put task",
+					zap.String("service", eq.parent.service),
+					zap.String("key", key),
+					zap.String("value", ev.Value),
+					zap.Error(err),
+				)
+			}
 		}
 		// 清理掉service的站位，允许该service的下一个event进来
 		eq.mu.Lock()

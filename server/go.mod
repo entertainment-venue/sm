@@ -4,8 +4,9 @@ go 1.17
 
 require (
 	github.com/coreos/etcd v3.3.25+incompatible
-	github.com/entertainment-venue/sm/pkg v0.0.0-20211009032118-1f6adfc16893
+	github.com/entertainment-venue/sm/pkg v0.0.0-20211011124559-9dfe6642c21d
 	github.com/gin-gonic/gin v1.7.4
+	github.com/google/uuid v1.3.0
 	github.com/pkg/errors v0.9.1
 	go.uber.org/zap v1.19.1
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
@@ -14,6 +15,7 @@ require (
 )
 
 require (
+	github.com/BurntSushi/toml v0.4.1 // indirect
 	github.com/StackExchange/wmi v1.2.1 // indirect
 	github.com/coreos/bbolt v0.0.0-00010101000000-000000000000 // indirect
 	github.com/coreos/go-semver v0.3.0 // indirect
@@ -30,7 +32,6 @@ require (
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/google/btree v1.0.1 // indirect
-	github.com/google/uuid v1.3.0 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0 // indirect

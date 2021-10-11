@@ -98,7 +98,7 @@ func Test_operator_moveLoop(t *testing.T) {
 }
 
 func Test_operator_move(t *testing.T) {
-	c, _, _ := newTestShardServer()
+	c, _, _ := newTestShardServer("foo.bar2", "127.0.0.1:8802", []string{"127.0.0.1:2379"}, ":8802")
 	sc := smContainer{Container: c}
 
 	o := operator{lg: ttLogger, service: "foo.bar"}
@@ -116,7 +116,7 @@ func Test_operator_move(t *testing.T) {
 }
 
 func Test_operator_dropOrAdd(t *testing.T) {
-	c, _, _ := newTestShardServer()
+	c, _, _ := newTestShardServer("foo.bar2", "127.0.0.1:8802", []string{"127.0.0.1:2379"}, ":8802")
 	sc := smContainer{Container: c}
 
 	o := operator{lg: ttLogger}
@@ -136,7 +136,7 @@ func Test_operator_dropOrAdd(t *testing.T) {
 }
 
 func Test_operator_send(t *testing.T) {
-	c, _, _ := newTestShardServer()
+	c, _, _ := newTestShardServer("foo.bar2", "127.0.0.1:8802", []string{"127.0.0.1:2379"}, ":8802")
 	sc := smContainer{Container: c}
 
 	o := operator{lg: ttLogger}

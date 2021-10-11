@@ -24,6 +24,7 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -112,7 +113,7 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 		return errors.Wrap(err, "")
 	}
 	if len(etcdShardIdAndAny) == 0 {
-		w.lg.Info("service not init yet",
+		w.lg.Info("service not init",
 			zap.String("service", w.service),
 			zap.String("node", shardKey),
 		)
@@ -172,12 +173,12 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 			)
 		} else {
 			// 当survive的container为nil的时候，不能形成有效的分配，直接返回即可
-			w.lg.Warn("failed to reallocate",
+			w.lg.Warn("can not reallocate",
+				zap.String("service", w.service),
 				zap.Bool("container-changed", containerChanged),
 				zap.Bool("shard-changed", shardChanged),
-				zap.String("service", w.service),
 				zap.Reflect("shardIdAndManualContainerId", fixShardIdAndManualContainerId),
-				zap.Reflect("etcdHbContainerIdAndAny", etcdHbContainerIdAndAny),
+				zap.Strings("etcdHbContainerIds", etcdHbContainerIdAndAny.KeyList()),
 				zap.Reflect("hbShardIdAndContainerId", hbShardIdAndContainerId),
 			)
 		}
@@ -277,7 +278,15 @@ func (w *maintenanceWorker) parseAssignment(assignment map[string][]string, surv
 			curContainerId, ok := surviveShardIdAndContainerId[shardId]
 			if !ok {
 				// shard不再任何container内部
-				resultMAL = append(resultMAL, &moveAction{Service: w.service, ShardId: shardId, AddEndpoint: newContainerId})
+				resultMAL = append(
+					resultMAL,
+					&moveAction{
+						Service:     w.service,
+						ShardId:     shardId,
+						AddEndpoint: newContainerId,
+						TraceId:     uuid.NewString(),
+					},
+				)
 				continue
 			}
 
@@ -305,18 +314,28 @@ func (w *maintenanceWorker) parseAssignment(assignment map[string][]string, surv
 				allowDrop = true
 			}
 
-			resultMAL = append(resultMAL, &moveAction{Service: w.service, ShardId: shardId, DropEndpoint: curContainerId, AddEndpoint: newContainerId, AllowDrop: allowDrop})
+			resultMAL = append(
+				resultMAL,
+				&moveAction{
+					Service:      w.service,
+					ShardId:      shardId,
+					DropEndpoint: curContainerId,
+					AddEndpoint:  newContainerId,
+					AllowDrop:    allowDrop,
+					TraceId:      uuid.NewString(),
+				},
+			)
 		}
 	}
 	return resultMAL
 }
 
-func (w *maintenanceWorker) reallocate(shardIdAndManualContainerId ArmorMap, hbContainerIdAndAny ArmorMap, hbShardIdAndContainerId ArmorMap) moveActionList {
-	needAssignShardIds, resultMAL := w.extractNeedAssignShardIds(shardIdAndManualContainerId, hbContainerIdAndAny, hbShardIdAndContainerId)
+func (w *maintenanceWorker) reallocate(shardIdAndManualContainerId ArmorMap, hbContainerIdAndAny ArmorMap, etcdShardIdAndContainerId ArmorMap) moveActionList {
+	needAssignShardIds, resultMAL := w.extractNeedAssignShardIds(shardIdAndManualContainerId, hbContainerIdAndAny, etcdShardIdAndContainerId)
 
 	// 预先对每个container已经有的shard进行聚合，保证数量均分的情况下，最大限度减少shard的移动
 	var cws containerWeightList
-	keepContainerIdAndShards := hbShardIdAndContainerId.SwapKV()
+	keepContainerIdAndShards := etcdShardIdAndContainerId.SwapKV()
 	for surviveContainerId := range hbContainerIdAndAny {
 		ss, ok := keepContainerIdAndShards[surviveContainerId]
 		if ok {
@@ -367,7 +386,7 @@ func (w *maintenanceWorker) reallocate(shardIdAndManualContainerId ArmorMap, hbC
 		zap.Reflect("assignment", assignment),
 	)
 
-	tmpMAL := w.parseAssignment(assignment, hbContainerIdAndAny, hbShardIdAndContainerId)
+	tmpMAL := w.parseAssignment(assignment, hbContainerIdAndAny, etcdShardIdAndContainerId)
 	resultMAL = append(resultMAL, tmpMAL...)
 	if len(resultMAL) == 0 {
 		return nil

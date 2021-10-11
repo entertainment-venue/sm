@@ -39,14 +39,14 @@ func (m ArmorMap) KeyMap() map[string]struct{} {
 }
 
 func (m ArmorMap) ValueList() []string {
-	var r []string
+	vm := make(ArmorMap)
 	for _, v := range m {
 		if v == "" {
 			continue
 		}
-		r = append(r, v)
+		vm[v] = ""
 	}
-	return r
+	return vm.KeyList()
 }
 
 func (m ArmorMap) Exist(k string) bool {

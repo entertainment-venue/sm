@@ -39,6 +39,9 @@ type moveAction struct {
 
 	// container场景下，leader的init操作可以放弃
 	AllowDrop bool `json:"allowDrop"`
+
+	// 方便追溯每一个ma的执行结果和轨迹，方便追查问题
+	TraceId string `json:"traceId"`
 }
 
 func (action *moveAction) String() string {
