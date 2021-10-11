@@ -138,6 +138,7 @@ func (r *delShardRequest) String() string {
 	return string(b)
 }
 
+// GinAppDelShard TODO ACL 需要带着key过来做分片的移动，防止跨租户之间有影响
 func (ss *shardServer) GinAppDelShard(c *gin.Context) {
 	var req delShardRequest
 	if err := c.ShouldBind(&req); err != nil {
@@ -147,45 +148,25 @@ func (ss *shardServer) GinAppDelShard(c *gin.Context) {
 	}
 	ss.lg.Info("receive del shard request", zap.String("request", req.String()))
 
-	// 获取shard当前的基本信息
-	key := apputil.EtcdPathAppShardHbId(req.Service, req.ShardId)
-	resp, err := ss.container.Client.Get(context.Background(), key, nil)
+	ctx := context.Background()
+
+	// 删除shard节点
+	shardNode := apputil.EtcdPathAppShardId(req.Service, req.ShardId)
+	delResp, err := ss.container.Client.Delete(ctx, shardNode)
 	if err != nil {
-		ss.lg.Error("failed to get etcd node",
+		ss.lg.Error("delete err",
 			zap.Error(err),
-			zap.String("key", key),
+			zap.String("shardNode", shardNode),
 		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if resp.Count == 0 {
-		ss.lg.Error("etcd node not exist", zap.String("key", key))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": errNotExist})
-		return
-	}
-
-	var data apputil.ShardHbData
-	if err := json.Unmarshal(resp.Kvs[0].Value, &data); err != nil {
-		ss.lg.Error("Unmarshal err",
-			zap.Error(err),
-			zap.ByteString("value", resp.Kvs[0].Value),
+	if delResp.Deleted != 1 {
+		ss.lg.Warn("shard not exist",
+			zap.Reflect("req", req),
+			zap.String("shardNode", shardNode),
 		)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 要求特定服务drop某个shard，http请求
-	ma := moveAction{
-		Service:      req.Service,
-		ShardId:      req.ShardId,
-		DropEndpoint: data.ContainerId,
-	}
-	if err := ss.container.op.dropOrAdd(context.TODO(), &ma); err != nil {
-		ss.lg.Error("failed to dropOrAdd",
-			zap.Error(err),
-			zap.Reflect("ma", ma),
-		)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusOK, gin.H{})
 		return
 	}
 

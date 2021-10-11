@@ -26,7 +26,7 @@ import (
 	"github.com/coreos/etcd/mvcc/mvccpb"
 )
 
-func Test_Start(t *testing.T) {
+func Test_newMaintenanceWorker(t *testing.T) {
 	ctr, err := newSMContainer(context.TODO(), ttLogger, "127.0.0.1:8888", "foo.bar", nil)
 	if err != nil {
 		t.Errorf("err: %+v", err)
@@ -45,81 +45,42 @@ func Test_Start(t *testing.T) {
 		fmt.Printf("exit")
 	}
 }
-func Test_containerChanged(t *testing.T) {
+
+func Test_changed(t *testing.T) {
 	var tests = []struct {
-		fixContainerIds     []string
-		surviveContainerIds []string
-		expect              bool
+		a      []string
+		b      []string
+		expect bool
 	}{
 		{
-			fixContainerIds:     []string{},
-			surviveContainerIds: []string{},
-			expect:              false,
-		},
-		{
-			fixContainerIds:     []string{"1", "2"},
-			surviveContainerIds: []string{"1", ""},
-			expect:              true,
-		},
-		{
-			fixContainerIds:     []string{"1", "2"},
-			surviveContainerIds: []string{"2", "1"},
-			expect:              false,
-		},
-		{
-			fixContainerIds:     []string{"1", "2"},
-			surviveContainerIds: []string{"1", "2", "3"},
-			expect:              true,
-		},
-	}
-
-	mw := maintenanceWorker{}
-
-	for idx, tt := range tests {
-		if tt.expect != mw.containerChanged(tt.fixContainerIds, tt.surviveContainerIds) {
-			t.Errorf("idx %d expect %t", idx, tt.expect)
-			t.SkipNow()
-		}
-	}
-}
-
-func Test_shardChanged(t *testing.T) {
-	var tests = []struct {
-		fixShardIds       []string
-		surviveShardIdMap map[string]struct{}
-		expect            bool
-	}{
-		{
-			fixShardIds:       []string{},
-			surviveShardIdMap: map[string]struct{}{},
-			expect:            false,
-		},
-		{
-			fixShardIds: []string{"1"},
-			surviveShardIdMap: map[string]struct{}{
-				"1": {},
-			},
+			a:      []string{},
+			b:      []string{},
 			expect: false,
 		},
 		{
-			fixShardIds:       []string{"1"},
-			surviveShardIdMap: map[string]struct{}{},
-			expect:            true,
-		},
-		{
-			fixShardIds: []string{"1", "2"},
-			surviveShardIdMap: map[string]struct{}{
-				"1": {},
-				"2": {},
-			},
+			a:      []string{"1"},
+			b:      []string{"1"},
 			expect: false,
 		},
+		{
+			a:      []string{"1"},
+			b:      []string{},
+			expect: true,
+		},
+		{
+			a:      []string{"1", "2"},
+			b:      []string{"2", "1"},
+			expect: false,
+		},
+		{
+			a:      []string{"1", "2"},
+			b:      []string{"1", "2", "3"},
+			expect: true,
+		},
 	}
-
 	mw := maintenanceWorker{}
-
 	for idx, tt := range tests {
-		if tt.expect != mw.shardChanged(tt.fixShardIds, tt.surviveShardIdMap) {
+		if tt.expect != mw.changed(tt.a, tt.b) {
 			t.Errorf("idx %d expect %t", idx, tt.expect)
 			t.SkipNow()
 		}
@@ -336,6 +297,28 @@ func Test_extractNeedAssignShardIds(t *testing.T) {
 			},
 			expectPrepare: nil,
 			expectMAL:     nil,
+		},
+
+		// 删除case
+		{
+			shardIdAndManualContainerId: ArmorMap{
+				"s1": "",
+			},
+			surviveContainerIdAndAny: ArmorMap{
+				"c1": "",
+			},
+			surviveShardIdAndContainerId: ArmorMap{
+				// c2存在于surviveContainerIdAndAny
+				"s1": "c1",
+				"s2": "c1",
+			},
+			expectPrepare: nil,
+			expectMAL: moveActionList{
+				&moveAction{
+					ShardId:      "s2",
+					DropEndpoint: "c1",
+				},
+			},
 		},
 	}
 	mw := maintenanceWorker{}
