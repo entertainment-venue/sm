@@ -2,13 +2,13 @@
 
 Inspire by
 
-* [scaling-services-with-shard-manager](#https://engineering.fb.com/2020/08/24/production-engineering/scaling-services-with-shard-manager/)
-* [MirrorMaker 2.0](#https://cwiki.apache.org/confluence/display/KAFKA/KIP-382%3A+MirrorMaker+2.0)
-* [The Chubby lock service for loosely-coupled distributed systems](#https://static.googleusercontent.com/media/research.google.com/en//archive/chubby-osdi06.pdf)
+* [scaling-services-with-shard-manager](https://engineering.fb.com/2020/08/24/production-engineering/scaling-services-with-shard-manager/)
+* [MirrorMaker 2.0](https://cwiki.apache.org/confluence/display/KAFKA/KIP-382%3A+MirrorMaker+2.0)
+* [The Chubby lock service for loosely-coupled distributed systems](https://static.googleusercontent.com/media/research.google.com/en//archive/chubby-osdi06.pdf)
 
 We build sm to handle the backend service which need partition data into several instance(k8s pod or actual machines,
 use container below), the data in each container may be seen as a job. sm developed base
-on [etcd](#https://github.com/etcd-io/etcd), to make sure that:
+on [etcd](https://github.com/etcd-io/etcd), to make sure that:
 
 * When container changed, some shard moves will be made.
 * When shard changed, some shard moves will be made.
@@ -29,7 +29,7 @@ on [etcd](#https://github.com/etcd-io/etcd), to make sure that:
 
 ### Installing
 
-Install [go](#https://golang.org/dl/) >=go1.17.1, and run:
+Install [go](https://golang.org/dl/) >=go1.17.1, and run:
 
 ```
 go get https://github.com/entertainment-venue/sm/server
@@ -51,7 +51,7 @@ the management of key in etcd, management meaning that:
   moonlight.
 
 For more information, you can read
-the [source code](#https://github.com/entertainment-venue/sm/blob/main/pkg/apputil/container.go) for `Container`.
+the [source code](https://github.com/entertainment-venue/sm/blob/main/pkg/apputil/container.go) for `Container`.
 
 ### ShardServer
 
@@ -88,4 +88,4 @@ https://github.com/entertainment-venue/sm/blob/main/server/main.go
 ## Question
 
 Please feel free to report any issue or optimization suggestion
-in [Issues](#https://github.com/entertainment-venue/sm/issues)
+in [Issues](https://github.com/entertainment-venue/sm/issues)
