@@ -113,7 +113,7 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 		return errors.Wrap(err, "")
 	}
 	if len(etcdShardIdAndAny) == 0 {
-		w.lg.Info("service not init",
+		w.lg.Info("service not init, because no shard registered",
 			zap.String("service", w.service),
 			zap.String("node", shardKey),
 		)
@@ -150,14 +150,21 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 		return errors.Wrap(err, "")
 	}
 
-	containerChanged := w.changed(hbShardIdAndContainerId.ValueList(), etcdHbContainerIdAndAny.KeyList())
-	shardChanged := w.changed(etcdShardIdAndAny.KeyList(), hbShardIdAndContainerId.KeyList())
+	containerChanged := w.changed(true, hbShardIdAndContainerId.ValueList(), etcdHbContainerIdAndAny.KeyList())
+	shardChanged := w.changed(false, etcdShardIdAndAny.KeyList(), hbShardIdAndContainerId.KeyList())
 	if containerChanged || shardChanged {
+		var typ eventType
+		if containerChanged {
+			typ = tContainerChanged
+		} else if shardChanged {
+			typ = tShardChanged
+		}
+
 		r := w.reallocate(fixShardIdAndManualContainerId, etcdHbContainerIdAndAny, hbShardIdAndContainerId)
 		if len(r) > 0 {
 			ev := mvEvent{
 				Service:     w.service,
-				Type:        tContainerUpdate,
+				Type:        typ,
 				EnqueueTime: time.Now().Unix(),
 				Value:       r.String(),
 			}
@@ -186,7 +193,16 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 	return nil
 }
 
-func (w *maintenanceWorker) changed(a []string, b []string) bool {
+func (w *maintenanceWorker) changed(isContainerCompare bool, a []string, b []string) bool {
+	// 初始注册的server在shard和container为空的情况，需要提示出来，防止系统认为没有变化，开发人员也不知道漏掉什么操作
+	if len(a) == 0 && len(b) == 0 {
+		if isContainerCompare {
+			w.lg.Warn("service got empty container list", zap.String("service", w.service))
+		} else {
+			w.lg.Warn("service got empty shard list", zap.String("service", w.service))
+		}
+	}
+
 	sort.Strings(a)
 	sort.Strings(b)
 	return !reflect.DeepEqual(a, b)
@@ -399,56 +415,40 @@ func (w *maintenanceWorker) reallocate(shardIdAndManualContainerId ArmorMap, hbC
 }
 
 func (w *maintenanceWorker) shardLoadChecker(_ context.Context, ev *clientv3.Event) error {
-	if ev.IsCreate() {
+	// 只关注hb节点的load变化
+	if !ev.IsModify() {
 		return nil
 	}
+	// TODO 判断本次load时间是否需要出发shard move
+	return nil
 
 	start := time.Now()
 	qev := mvEvent{
 		Service:     w.service,
-		Type:        tShardUpdate,
+		Type:        tShardLoadChanged,
 		EnqueueTime: start.Unix(),
 		Value:       string(ev.Kv.Value),
 	}
-
-	var item Item
-	if ev.IsModify() {
-		qev.Type = tShardUpdate
-	} else {
-		qev.Type = tShardDel
-
-		// 3s是给服务器container重启的时间buffer
-		item.Priority = start.Add(3 * time.Second).Unix()
-	}
-	item.Value = qev.String()
-
+	item := Item{Priority: start.Unix(), Value: qev.String()}
 	w.parent.eq.push(&item, true)
 	return nil
 }
 
 func (w *maintenanceWorker) containerLoadChecker(_ context.Context, ev *clientv3.Event) error {
-	if ev.IsCreate() {
+	if !ev.IsModify() {
 		return nil
 	}
+	// TODO 判断本次load时间是否需要出发shard move
+	return nil
 
 	start := time.Now()
 	qev := mvEvent{
 		Service:     w.service,
-		Type:        tContainerUpdate,
+		Type:        tContainerLoadChanged,
 		EnqueueTime: start.Unix(),
 		Value:       string(ev.Kv.Value),
 	}
-
-	var item Item
-	if ev.IsModify() {
-		qev.Type = tContainerUpdate
-	} else {
-		qev.Type = tContainerDel
-		// 3s是给服务器container重启的事件
-		item.Priority = start.Add(3 * time.Second).Unix()
-	}
-	item.Value = qev.String()
-
+	item := Item{Priority: start.Unix(), Value: qev.String()}
 	w.parent.eq.push(&item, true)
 	return nil
 }

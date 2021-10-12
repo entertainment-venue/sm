@@ -38,6 +38,7 @@ func startSM() error {
 		fmt.Printf("error creating zap logger %v", zapError)
 		os.Exit(1)
 	}
+	defer lg.Sync()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	stopped := make(chan error)

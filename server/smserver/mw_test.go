@@ -80,7 +80,7 @@ func Test_changed(t *testing.T) {
 	}
 	mw := maintenanceWorker{}
 	for idx, tt := range tests {
-		if tt.expect != mw.changed(tt.a, tt.b) {
+		if tt.expect != mw.changed(true, tt.a, tt.b) {
 			t.Errorf("idx %d expect %t", idx, tt.expect)
 			t.SkipNow()
 		}

@@ -33,10 +33,10 @@ const defaultEventChanLength = 32
 type eventType int
 
 const (
-	tShardUpdate eventType = iota + 1
-	tShardDel
-	tContainerUpdate
-	tContainerDel
+	tShardChanged eventType = iota + 1
+	tShardLoadChanged
+	tContainerChanged
+	tContainerLoadChanged
 )
 
 type mvEvent struct {
@@ -58,20 +58,20 @@ type eventQueue struct {
 	// 延迟队列: 不能立即处理的先放这里，启动单独的goroutine把event根据时间拿出来，再放到异步队列中
 	pq PriorityQueue
 
-	mu     sync.Mutex
-	buffer map[string]chan *mvEvent // 区分service给chan，每个worker给一个goroutine
-	curEvs map[string]struct{}      // 防止同一service在queue中有重复任务
+	mu            sync.Mutex
+	serviceEvChan map[string]chan *mvEvent // 区分service给chan，每个worker给一个goroutine
+	serviceBlk    map[string]struct{}      // 防止同一service在queue中有重复任务
 
 	lg *zap.Logger
 }
 
 func newEventQueue(_ context.Context, lg *zap.Logger, sc *smContainer) *eventQueue {
 	eq := eventQueue{
-		parent:  sc,
-		buffer:  make(map[string]chan *mvEvent),
-		curEvs:  make(map[string]struct{}),
-		stopper: &apputil.GoroutineStopper{},
-		lg:      lg,
+		parent:        sc,
+		serviceEvChan: make(map[string]chan *mvEvent),
+		serviceBlk:    make(map[string]struct{}),
+		stopper:       &apputil.GoroutineStopper{},
+		lg:            lg,
 	}
 
 	heap.Init(&eq.pq)
@@ -79,7 +79,10 @@ func newEventQueue(_ context.Context, lg *zap.Logger, sc *smContainer) *eventQue
 	eq.stopper.Wrap(
 		func(ctx context.Context) {
 			apputil.TickerLoop(
-				ctx, lg, 1*time.Second, fmt.Sprintf(""),
+				ctx,
+				lg,
+				1*time.Second,
+				fmt.Sprintf("tryPopAndPush loop exit, service %s", eq.parent.Service()),
 				func(ctx context.Context) error {
 					eq.tryPopAndPush()
 					return nil
@@ -90,14 +93,10 @@ func newEventQueue(_ context.Context, lg *zap.Logger, sc *smContainer) *eventQue
 }
 
 func (eq *eventQueue) Close() {
-	if eq.lg != nil {
-		defer eq.lg.Sync()
-	}
-
 	if eq.stopper != nil {
 		eq.stopper.Close()
 	}
-	eq.lg.Info("eq closed", zap.String("", ""))
+	eq.lg.Info("eq closed", zap.String("service", eq.parent.Service()))
 }
 
 func (eq *eventQueue) push(item *Item, checkDup bool) {
@@ -111,17 +110,17 @@ func (eq *eventQueue) push(item *Item, checkDup bool) {
 	}
 
 	if checkDup {
-		if _, ok := eq.curEvs[ev.Service]; ok {
+		if _, ok := eq.serviceBlk[ev.Service]; ok {
 			eq.lg.Error("service already exist", zap.String("service", ev.Service))
 			return
 		}
-		eq.curEvs[ev.Service] = struct{}{}
+		eq.serviceBlk[ev.Service] = struct{}{}
 	}
 
-	ch := eq.buffer[ev.Service]
+	ch := eq.serviceEvChan[ev.Service]
 	if ch == nil {
 		ch = make(chan *mvEvent, defaultEventChanLength)
-		eq.buffer[ev.Service] = ch
+		eq.serviceEvChan[ev.Service] = ch
 
 		// 区分service启动evLoop，目前直接将任务设置到etcd节点中，因为所有任务都是不断重入的，不担心错过，如果当前正在处理某个任务，就直接放弃
 		eq.stopper.Wrap(
@@ -133,9 +132,9 @@ func (eq *eventQueue) push(item *Item, checkDup bool) {
 	}
 
 	switch ev.Type {
-	case tShardUpdate, tContainerUpdate:
+	case tShardChanged, tContainerChanged:
 		ch <- &ev
-	case tShardDel, tContainerDel:
+	case tShardLoadChanged, tContainerLoadChanged:
 		if time.Now().Unix() >= item.Priority {
 			ch <- &ev
 			return
@@ -199,7 +198,7 @@ func (eq *eventQueue) evLoop(ctx context.Context, service string, ch chan *mvEve
 		}
 		// 清理掉service的站位，允许该service的下一个event进来
 		eq.mu.Lock()
-		delete(eq.curEvs, ev.Service)
+		delete(eq.serviceBlk, ev.Service)
 		eq.mu.Unlock()
 	}
 }

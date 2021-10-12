@@ -26,7 +26,7 @@ func Test_PriorityQueue(t *testing.T) {
 
 	ev := mvEvent{
 		Service:     "foo.bar",
-		Type:        tContainerDel,
+		Type:        tContainerLoadChanged,
 		EnqueueTime: 1,
 	}
 
