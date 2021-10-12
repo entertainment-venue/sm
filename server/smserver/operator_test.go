@@ -17,13 +17,13 @@ package smserver
 import (
 	"context"
 	"fmt"
-	"github.com/google/uuid"
 	"reflect"
 	"sort"
 	"testing"
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
