@@ -121,6 +121,10 @@ type shardServerOptions struct {
 	container *Container
 	lg        *zap.Logger
 	sor       ShardOpReceiver
+
+	// 传入 router 允许shard被集成，降低shard接入对app造成的影响。
+	// 例如：现有的web项目使用gin，sm把server启动拿过来也不合适。
+	router *gin.Engine
 }
 
 type ShardServerOption func(options *shardServerOptions)
@@ -167,13 +171,20 @@ func ShardServerWithShardOpReceiver(v ShardOpReceiver) ShardServerOption {
 	}
 }
 
+func ShardServerWithRouter(v *gin.Engine) ShardServerOption {
+	return func(sso *shardServerOptions) {
+		sso.router = v
+	}
+}
+
 func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 	ops := &shardServerOptions{}
 	for _, opt := range opts {
 		opt(ops)
 	}
 
-	if ops.addr == "" {
+	// addr 和 router 二选一，否则啥也不用干了
+	if ops.addr == "" && ops.router == nil {
 		return nil, errors.New("addr err")
 	}
 	if ops.container == nil {
@@ -237,7 +248,15 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 		)
 	})
 
-	router := gin.Default()
+	router := ops.router
+	if ops.router == nil {
+		router = gin.Default()
+		if ops.routeAndHandler != nil {
+			for route, handler := range ops.routeAndHandler {
+				router.Any(route, handler)
+			}
+		}
+	}
 
 	var receiver ShardOpReceiver
 	if ops.sor != nil {
@@ -251,27 +270,24 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 		ssg.POST("/drop-shard", receiver.DropShard)
 	}
 
-	if ops.routeAndHandler != nil {
-		for route, handler := range ops.routeAndHandler {
-			router.POST(route, handler)
+	// router 为空，就帮助启动webserver，相当于app自己选择被集成，例如sm自己
+	if ops.router == nil {
+		// https://learnku.com/docs/gin-gonic/2019/examples-graceful-restart-or-stop/6173
+		srv := &http.Server{
+			Addr:    ops.addr,
+			Handler: router,
 		}
-	}
+		ss.srv = srv
 
-	// https://learnku.com/docs/gin-gonic/2019/examples-graceful-restart-or-stop/6173
-	srv := &http.Server{
-		Addr:    ops.addr,
-		Handler: router,
+		go func() {
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				ops.lg.Panic("failed to listen",
+					zap.Error(err),
+					zap.String("addr", ops.addr),
+				)
+			}
+		}()
 	}
-	ss.srv = srv
-
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			ops.lg.Panic("failed to listen",
-				zap.Error(err),
-				zap.String("addr", ops.addr),
-			)
-		}
-	}()
 
 	go func() {
 		defer ss.Close()
