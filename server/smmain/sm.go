@@ -25,7 +25,7 @@ func startSM() error {
 			return errors.Wrap(err, "")
 		}
 
-		if err := yaml.Unmarshal([]byte(data), &cfg); err != nil {
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
 			return errors.Wrap(err, "")
 		}
 
