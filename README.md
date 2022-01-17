@@ -29,6 +29,8 @@ on [etcd](https://github.com/etcd-io/etcd), to make sure that:
 
 ### Installing
 
+Install [etcd](https://github.com/etcd-io/etcd/releases), test with etcd-v3.4.13
+
 Install [go](https://golang.org/dl/) >=go1.17.1, and run:
 
 ```
