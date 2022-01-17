@@ -25,6 +25,8 @@ type Config struct {
 	Addr      string      `json:"addr"`
 	Endpoints MultiOption `json:"endpoints"`
 
+	EtcdPrefix string `json:"etcdPrefix"`
+
 	// TODO 支持配置文件
 	ConfigFile string `json:"config-file"`
 }
@@ -44,6 +46,7 @@ func init() {
 	flag.StringVar(&cfg.Service, "service", "", "The sharded application service name, should be used in service discovery")
 	flag.StringVar(&cfg.Addr, "addr", "", "Http server listen port like ':8888'")
 	flag.Var(&cfg.Endpoints, "endpoints", "The etcd cluster server list")
+	flag.StringVar(&cfg.EtcdPrefix, "", "/sm", "Etcd namespace, default '/sm'")
 }
 
 func checkSettings() {
@@ -66,6 +69,10 @@ func checkSettings() {
 	}
 	if len(cfg.Endpoints) == 0 {
 		fmt.Printf("Err: Endpoints require\n")
+		usage()
+	}
+	if cfg.EtcdPrefix == "" {
+		fmt.Printf("Err: EtcdPrefix require\n")
 		usage()
 	}
 }

@@ -51,7 +51,8 @@ func startSM() error {
 		smserver.WithEndpoints(cfg.Endpoints),
 		smserver.WithCtx(ctx),
 		smserver.WithStopped(stopped),
-		smserver.WithLogger(lg)); err != nil {
+		smserver.WithLogger(lg),
+		smserver.WithEtcdPrefix(cfg.EtcdPrefix)); err != nil {
 		lg.Panic("failed to start sm server", zap.Reflect("cfg", cfg))
 	}
 
