@@ -125,6 +125,10 @@ type shardServerOptions struct {
 	// 传入 router 允许shard被集成，降低shard接入对app造成的影响。
 	// 例如：现有的web项目使用gin，sm把server启动拿过来也不合适。
 	router *gin.Engine
+
+	// etcdPrefix 作为sharded application的数据存储prefix，能通过acl做限制
+	// TODO 配合 etcdPrefix 需要有用户名和密码的字段
+	etcdPrefix string
 }
 
 type ShardServerOption func(options *shardServerOptions)
@@ -177,6 +181,12 @@ func ShardServerWithRouter(v *gin.Engine) ShardServerOption {
 	}
 }
 
+func ShardServerWithEtcdPrefix(v string) ShardServerOption {
+	return func(sso *shardServerOptions) {
+		sso.etcdPrefix = v
+	}
+}
+
 func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 	ops := &shardServerOptions{}
 	for _, opt := range opts {
@@ -199,6 +209,9 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 	if ops.ctx == nil {
 		return nil, errors.New("ctx err")
 	}
+
+	// FIXME 直接刚常量有点粗糙，暂时没有更好的方案
+	InitEtcdPrefix(ops.etcdPrefix)
 
 	ss := ShardServer{
 		stopper:  &GoroutineStopper{},
