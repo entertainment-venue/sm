@@ -54,6 +54,10 @@ type serverOptions struct {
 	stopped chan error
 
 	lg *zap.Logger
+
+	// etcdPrefix 这个路径是etcd中开辟出来给sm使用的，etcd可能是多个组件公用
+	// TODO 要有用户名和密码限制
+	etcdPrefix string
 }
 
 type ServerOption func(options *serverOptions)
@@ -100,6 +104,12 @@ func WithLogger(v *zap.Logger) ServerOption {
 	}
 }
 
+func WithEtcdPrefix(v string) ServerOption {
+	return func(options *serverOptions) {
+		options.etcdPrefix = v
+	}
+}
+
 func NewServer(fn ...ServerOption) (*Server, error) {
 	ops := serverOptions{}
 	for _, f := range fn {
@@ -121,6 +131,7 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 	if ops.lg == nil {
 		return nil, errors.New("logger err")
 	}
+	apputil.InitEtcdPrefix(ops.etcdPrefix)
 
 	// 允许调用方对server进行控制
 	var (

@@ -4,7 +4,7 @@ go 1.17
 
 require (
 	github.com/coreos/etcd v3.3.25+incompatible
-	github.com/entertainment-venue/sm/pkg v0.0.0-20211011131001-a977c8a3d3d1
+	github.com/entertainment-venue/sm/pkg v0.0.0-20220117035043-4af464a2c492
 	github.com/gin-gonic/gin v1.7.4
 	github.com/google/uuid v1.3.0
 	github.com/pkg/errors v0.9.1

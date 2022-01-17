@@ -22,6 +22,9 @@ var (
 )
 
 func InitEtcdPrefix(prefix string) {
+	if prefix == "" {
+		panic("prefix should not be empty")
+	}
 	etcdPrefix = prefix
 }
 
