@@ -17,16 +17,16 @@ package apputil
 import "fmt"
 
 var (
-	// EtcdPrefix 需要可配置
-	EtcdPrefix = "/sm"
+	// etcdPrefix 需要可配置
+	etcdPrefix = "/sm"
 )
 
 func InitEtcdPrefix(prefix string) {
-	EtcdPrefix = prefix
+	etcdPrefix = prefix
 }
 
 func EtcdPathAppPrefix(service string) string {
-	return fmt.Sprintf("%s/app/%s", EtcdPrefix, service)
+	return fmt.Sprintf("%s/app/%s", etcdPrefix, service)
 }
 
 func EtcdPathAppContainerIdHb(service, id string) string {
