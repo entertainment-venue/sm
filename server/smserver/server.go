@@ -175,7 +175,8 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 		apputil.ShardServerWithContainer(c),
 		apputil.ShardServerWithApiHandler(routeAndHandler),
 		apputil.ShardServerWithShardImplementation(sc),
-		apputil.ShardServerWithLogger(logger))
+		apputil.ShardServerWithLogger(logger),
+		apputil.ShardServerWithEtcdPrefix(ops.etcdPrefix))
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
