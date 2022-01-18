@@ -138,8 +138,8 @@ func (r *delShardRequest) String() string {
 	return string(b)
 }
 
-// GinAppDelShard TODO ACL 需要带着key过来做分片的移动，防止跨租户之间有影响
-func (ss *shardServer) GinAppDelShard(c *gin.Context) {
+// GinDelShard TODO ACL 需要带着key过来做分片的移动，防止跨租户之间有影响
+func (ss *shardServer) GinDelShard(c *gin.Context) {
 	var req delShardRequest
 	if err := c.ShouldBind(&req); err != nil {
 		ss.lg.Error("ShouldBind err", zap.Error(err))

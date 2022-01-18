@@ -168,6 +168,7 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 	routeAndHandler := make(map[string]func(c *gin.Context))
 	routeAndHandler["/sm/server/add-spec"] = apiSrv.GinAddSpec
 	routeAndHandler["/sm/server/add-shard"] = apiSrv.GinAddShard
+	routeAndHandler["/sm/server/del-shard"] = apiSrv.GinDelShard
 	ss, err := apputil.NewShardServer(
 		apputil.ShardServerWithAddr(ops.addr),
 		apputil.ShardServerWithContext(ctx),
