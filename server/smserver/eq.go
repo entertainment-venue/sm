@@ -37,6 +37,7 @@ const (
 	tShardLoadChanged
 	tContainerChanged
 	tContainerLoadChanged
+	tContainerInit
 )
 
 type mvEvent struct {
@@ -132,7 +133,7 @@ func (eq *eventQueue) push(item *Item, checkDup bool) {
 	}
 
 	switch ev.Type {
-	case tShardChanged, tContainerChanged:
+	case tShardChanged, tContainerChanged, tContainerInit:
 		ch <- &ev
 	case tShardLoadChanged, tContainerLoadChanged:
 		if time.Now().Unix() >= item.Priority {

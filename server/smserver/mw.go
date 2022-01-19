@@ -24,7 +24,6 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/entertainment-venue/sm/pkg/apputil"
-	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -208,210 +207,193 @@ func (w *maintenanceWorker) changed(isContainerCompare bool, a []string, b []str
 	return !reflect.DeepEqual(a, b)
 }
 
-type containerWeight struct {
-	id     string
-	shards []string
-}
+func (w *maintenanceWorker) reallocate(fixShardIdAndManualContainerId ArmorMap, hbContainerIdAndAny ArmorMap, hbShardIdAndContainerId ArmorMap) moveActionList {
+	if len(hbContainerIdAndAny) == 0 {
+		w.lg.Info(
+			"empty container, can not trigger rebalance",
+			zap.String("service", w.service),
+		)
+		return nil
+	}
 
-type containerWeightList []*containerWeight
-
-func (l containerWeightList) Len() int { return len(l) }
-func (l containerWeightList) Less(i, j int) bool {
-	return l[i].id < l[j].id
-}
-func (l containerWeightList) Swap(i, j int) {
-	l[i], l[j] = l[j], l[i]
-}
-func (l containerWeightList) IsConflict(shards []string) bool {
-	r := make(map[string]struct{}, len(l))
-	for _, cw := range l {
-		for _, id := range cw.shards {
-			r[id] = struct{}{}
+	// 保证shard在hb中上报的container和存活container一致
+	containerIdAndHbShardIds := hbShardIdAndContainerId.SwapKV()
+	for containerId := range containerIdAndHbShardIds {
+		_, ok := hbContainerIdAndAny[containerId]
+		if !ok {
+			w.lg.Error(
+				"container in shard heartbeat do not exist in container heartbeat",
+				zap.String("containerId", containerId),
+			)
+			return nil
 		}
 	}
-	for _, shard := range shards {
-		if _, ok := r[shard]; ok {
-			return true
-		}
-	}
-	return false
-}
 
-// extractNeedAssignShardIds 得到哪些shardId需要更换位置
-// 1 fixShardIds中不存活的需要
-// 2 fixShardIds中存活，但是位置不对的需要（位置和fixShardIdAndManualContainerId中的位置不匹配）
-func (w *maintenanceWorker) extractNeedAssignShardIds(shardIdAndManualContainerId ArmorMap, surviveContainerIdAndAny ArmorMap, hbShardIdAndContainerId ArmorMap) ([]string, moveActionList) {
 	var (
-		resultMAL moveActionList
-		prepare   []string
+		mals []*moveAction
+
+		// 在最后做shard分配的时候合并到大集合中
+		adding []string
+
+		br = &balancer{
+			bcs: make(map[string]*balancerContainer),
+		}
 	)
 
-	// 删除: api中只负责管理shard spec节点的增删，异步守护任务负责干活
+	// 提取需要被移除的shard
 	for hbShardId, containerId := range hbShardIdAndContainerId {
-		if _, ok := shardIdAndManualContainerId[hbShardId]; !ok {
-			resultMAL = append(resultMAL, &moveAction{Service: w.service, ShardId: hbShardId, DropEndpoint: containerId})
-		}
-	}
-
-	// 新增 or 更新
-	for shardId, manualContainerId := range shardIdAndManualContainerId {
-		containerId, exist := hbShardIdAndContainerId[shardId]
-		if !exist {
-			// 不是存活的shard
-			if manualContainerId != "" {
-				resultMAL = append(resultMAL, &moveAction{Service: w.service, ShardId: shardId, AddEndpoint: manualContainerId})
-				continue
-			}
-
-			prepare = append(prepare, shardId)
-			continue
-		}
-
-		// 存活shard
-		if manualContainerId != "" {
-			if containerId != manualContainerId {
-				resultMAL = append(resultMAL, &moveAction{Service: w.service, ShardId: shardId, DropEndpoint: containerId, AddEndpoint: manualContainerId})
-
-				// 存活的shard需要移动，需要从surviveShardIdAndContainerId清理掉，该map中只保存不动的shard
-				delete(hbShardIdAndContainerId, shardId)
-			}
-			continue
-		}
-
-		// 无manual分配关系，以自己的container是否存活
-		if !surviveContainerIdAndAny.Exist(containerId) {
-			prepare = append(prepare, shardId)
-		}
-	}
-	return prepare, resultMAL
-}
-
-func (w *maintenanceWorker) parseAssignment(assignment map[string][]string, surviveContainerIdAndAny ArmorMap, surviveShardIdAndContainerId ArmorMap) moveActionList {
-	// 新增 or 修改，删除操作通过api直接到达被管理服务，停掉后ShardServer不再有hb上传
-	var resultMAL moveActionList
-	for newContainerId, shardIds := range assignment {
-		for _, shardId := range shardIds {
-			curContainerId, ok := surviveShardIdAndContainerId[shardId]
-			if !ok {
-				// shard不再任何container内部
-				resultMAL = append(
-					resultMAL,
-					&moveAction{
-						Service:     w.service,
-						ShardId:     shardId,
-						AddEndpoint: newContainerId,
-						TraceId:     uuid.NewString(),
-					},
-				)
-				continue
-			}
-
-			// shardId没有被分配到container，不对这个shard做任何处理，应该是程序bug
-			if curContainerId == "" {
-				w.lg.Error("got empty container id in shard hb node",
-					zap.String("service", w.service),
-					zap.String("shardId", shardId),
-				)
-				continue
-			}
-
-			// shardId当前的container符合最新的分配结果，不需要shard move
-			if curContainerId == newContainerId {
-				w.lg.Error("performAssignment encounter unexpected equal",
-					zap.String("shardId", shardId),
-					zap.String("containerId", newContainerId),
-				)
-				continue
-			}
-
-			// curContainerId 可能不存在与containerIdAndValue，你给他发drop，可能也无法处理，判断是否是survive的container，不是，允许drop
-			var allowDrop bool
-			if _, ok := surviveContainerIdAndAny[curContainerId]; !ok {
-				allowDrop = true
-			}
-
-			resultMAL = append(
-				resultMAL,
+		_, ok := fixShardIdAndManualContainerId[hbShardId]
+		if !ok {
+			mals = append(
+				mals,
 				&moveAction{
 					Service:      w.service,
-					ShardId:      shardId,
-					DropEndpoint: curContainerId,
-					AddEndpoint:  newContainerId,
-					AllowDrop:    allowDrop,
-					TraceId:      uuid.NewString(),
+					ShardId:      hbShardId,
+					DropEndpoint: containerId,
 				},
 			)
 		}
 	}
-	return resultMAL
-}
-
-func (w *maintenanceWorker) reallocate(shardIdAndManualContainerId ArmorMap, hbContainerIdAndAny ArmorMap, etcdShardIdAndContainerId ArmorMap) moveActionList {
-	needAssignShardIds, resultMAL := w.extractNeedAssignShardIds(shardIdAndManualContainerId, hbContainerIdAndAny, etcdShardIdAndContainerId)
-
-	// 预先对每个container已经有的shard进行聚合，保证数量均分的情况下，最大限度减少shard的移动
-	var cws containerWeightList
-	keepContainerIdAndShards := etcdShardIdAndContainerId.SwapKV()
-	for surviveContainerId := range hbContainerIdAndAny {
-		ss, ok := keepContainerIdAndShards[surviveContainerId]
-		if ok {
-			cws = append(cws, &containerWeight{surviveContainerId, ss})
-		} else {
-			cws = append(cws, &containerWeight{surviveContainerId, nil})
-		}
-	}
-
-	total := len(shardIdAndManualContainerId)
-	assignment, twice, err := performAssignment(total, needAssignShardIds, cws)
-	if err != nil {
-		w.lg.Error("failed to performAssignment",
-			zap.Error(err),
-			zap.Int("total", len(shardIdAndManualContainerId)),
-			zap.Strings("needAssignShardIds", needAssignShardIds),
-			zap.Reflect("cws", cws),
+	if len(fixShardIdAndManualContainerId) == 0 {
+		w.lg.Info(
+			"remove all shard",
+			zap.String("service", w.service),
+			zap.Reflect("mals", mals),
 		)
-		return nil
+		return mals
 	}
-	if len(twice) > 0 {
-		r, _, err := performAssignment(total, twice, cws)
-		if err != nil {
-			w.lg.Error("failed to performAssignment twice",
-				zap.Error(err),
-				zap.Int("total", len(shardIdAndManualContainerId)),
-				zap.Strings("needAssignShardIds", needAssignShardIds),
-				zap.Reflect("cws", cws),
-			)
-			return nil
-		}
-		for containerId, shardIds := range r {
-			if _, ok := assignment[containerId]; !ok {
-				assignment[containerId] = shardIds
+
+	// 构建container和shard的关系
+	for fixShardId, manualContainerId := range fixShardIdAndManualContainerId {
+		// 不在container上，可能是新增，确定需要被分配
+		currentContainerId, ok := hbShardIdAndContainerId[fixShardId]
+		if !ok {
+			if manualContainerId != "" {
+				mals = append(
+					mals,
+					&moveAction{
+						Service:     w.service,
+						ShardId:     fixShardId,
+						AddEndpoint: manualContainerId,
+					},
+				)
+
+				// 确定的指令，要对当前的csm有影响
+				br.put(manualContainerId, fixShardId, true)
 			} else {
-				assignment[containerId] = append(assignment[containerId], shardIds...)
+				adding = append(adding, fixShardId)
+			}
+			continue
+		}
+
+		// 不在要求的container上
+		if manualContainerId != "" {
+			if currentContainerId != manualContainerId {
+				mals = append(
+					mals,
+					&moveAction{
+						Service:      w.service,
+						ShardId:      fixShardId,
+						DropEndpoint: currentContainerId,
+						AddEndpoint:  manualContainerId,
+					},
+				)
+
+				// 确定的指令，要对当前的csm有影响
+				br.put(manualContainerId, fixShardId, true)
+			} else {
+				// 命中manual是不能被移动的
+				br.put(currentContainerId, fixShardId, true)
+			}
+			continue
+		}
+
+		br.put(currentContainerId, fixShardId, false)
+	}
+
+	// 处理新增container
+	for hbContainerId := range hbContainerIdAndAny {
+		_, ok := containerIdAndHbShardIds[hbContainerId]
+		if !ok {
+			br.addContainer(hbContainerId)
+		}
+	}
+
+	shardLen := len(fixShardIdAndManualContainerId)
+	containerLen := len(hbContainerIdAndAny)
+
+	// 每个container最少包含多少shard
+	base := shardLen / containerLen
+	delta := shardLen % containerLen
+	var maxHold int
+	if delta > 0 {
+		maxHold = base + 1
+	} else {
+		maxHold = base
+	}
+
+	dropFroms := make(map[string]string)
+	getDrops := func(bc *balancerContainer) {
+		dropCnt := len(bc.shards) - maxHold
+		if dropCnt <= 0 {
+			return
+		}
+
+		for _, bs := range bc.shards {
+			// 不能变动的shard
+			if bs.isManual {
+				continue
+			}
+			dropFroms[bs.id] = bc.id
+			delete(bc.shards, bs.id)
+			dropCnt--
+			if dropCnt == 0 {
+				break
 			}
 		}
 	}
-	if len(assignment) == 0 {
-		return nil
-	}
-	w.lg.Debug("perform assignment start",
-		zap.String("service", w.service),
-		zap.Int("total", total),
-		zap.Strings("needAssignShardIds", needAssignShardIds),
-		zap.Reflect("cws", cws),
-		zap.Reflect("assignment", assignment),
-	)
+	br.forEach(getDrops)
 
-	tmpMAL := w.parseAssignment(assignment, hbContainerIdAndAny, etcdShardIdAndContainerId)
-	resultMAL = append(resultMAL, tmpMAL...)
-	if len(resultMAL) == 0 {
-		return nil
+	// 可以移动的shard，补充到待分配中
+	for drop := range dropFroms {
+		adding = append(adding, drop)
 	}
-	w.lg.Info("perform assignment complete",
+	if len(adding) > 0 {
+		add := func(bc *balancerContainer) {
+			addCnt := maxHold - len(bc.shards)
+			if addCnt <= 0 {
+				return
+			}
+
+			idx := 0
+			for {
+				if idx == addCnt || idx == len(adding) {
+					break
+				}
+
+				shardId := adding[idx]
+				from, ok := dropFroms[shardId]
+				if ok {
+					mals = append(mals, &moveAction{Service: w.service, ShardId: adding[idx], DropEndpoint: from, AddEndpoint: bc.id})
+				} else {
+					mals = append(mals, &moveAction{Service: w.service, ShardId: adding[idx], AddEndpoint: bc.id})
+				}
+				idx++
+			}
+			adding = adding[idx:]
+		}
+		br.forEach(add)
+	}
+
+	w.lg.Info(
+		"rebalance",
 		zap.String("service", w.service),
-		zap.Reflect("resultMAL", resultMAL),
+		zap.Reflect("resultMAL", mals),
+		zap.Any("fixShardIdAndManualContainerId", fixShardIdAndManualContainerId),
+		zap.Strings("hbContainerIdAndAny", hbContainerIdAndAny.KeyList()),
+		zap.Any("hbShardIdAndContainerId", hbShardIdAndContainerId),
 	)
-	return resultMAL
+	return mals
 }
 
 func (w *maintenanceWorker) shardLoadChecker(_ context.Context, ev *clientv3.Event) error {

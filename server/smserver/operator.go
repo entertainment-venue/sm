@@ -185,23 +185,38 @@ func (o *operator) move(ctx context.Context, value []byte) error {
 	}
 	o.lg.Info("receive move action list", zap.Reflect("mal", mal))
 
-	// https://engineering.fb.com/2020/08/24/production-engineering/scaling-services-with-shard-manager/
-	// 单shard维度，先drop，再add，多个shard可以并行移动
-move:
-	g := new(errgroup.Group)
-	for _, ma := range mal {
-		ma := ma
-		g.Go(func() error {
-			return o.dropOrAdd(ctx, ma)
-		})
-	}
-	if err := g.Wait(); err != nil {
-		o.lg.Error("dropOrAdd err", zap.Error(err))
-		time.Sleep(defaultSleepTimeout)
-		goto move
+	var (
+		// 增加重试机制
+		retry   = 1
+		counter = 0
+		succ    bool
+	)
+	for counter <= retry {
+		if counter > 0 {
+			time.Sleep(defaultSleepTimeout)
+		}
+
+		g := new(errgroup.Group)
+		for _, ma := range mal {
+			ma := ma
+			g.Go(func() error {
+				return o.dropOrAdd(ctx, ma)
+			})
+		}
+		if err := g.Wait(); err != nil {
+			o.lg.Error("dropOrAdd err", zap.Error(err))
+			counter++
+		} else {
+			succ = true
+			break
+		}
 	}
 
-	o.lg.Info("complete move", zap.ByteString("value", value))
+	o.lg.Info(
+		"complete move",
+		zap.Bool("succ", succ),
+		zap.ByteString("value", value),
+	)
 
 	// 利用etcd tx清空任务节点，任务节点已经空就停止
 ack:

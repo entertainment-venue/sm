@@ -287,6 +287,37 @@ func (c *smContainer) campaign(ctx context.Context) {
 			goto loop
 		}
 
+		// opt: sm的task节点有未完成任务，先推入queue，清理掉历史任务，允许mw下发新的任务到task节点
+		smTaskNode := apputil.EtcdPathAppShardTask(c.service)
+		resp, err := c.Client.GetKV(ctx, smTaskNode, nil)
+		if err != nil {
+			c.lg.Error("failed to get task")
+			time.Sleep(defaultSleepTimeout)
+			goto loop
+		}
+		if len(resp.Kvs) > 0 {
+			stockTask := string(resp.Kvs[0].Value)
+			if stockTask != "" {
+				ev := mvEvent{
+					Service:     c.service,
+					Type:        tContainerInit,
+					EnqueueTime: time.Now().Unix(),
+					Value:       stockTask,
+				}
+				item := Item{
+					Value:    ev.String(),
+					Priority: time.Now().Unix(),
+				}
+				c.eq.push(&item, true)
+
+				c.lg.Info(
+					"encounter stock task",
+					zap.String("service", c.service),
+					zap.String("stockTask", stockTask),
+				)
+			}
+		}
+
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/sm/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
 		c.lw = newMaintenanceWorker(ctx, c.lg, c, c.service)
