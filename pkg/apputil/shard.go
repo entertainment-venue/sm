@@ -38,6 +38,10 @@ type ShardSpec struct {
 
 	// 通过api可以给shard主动分配到某个container
 	ManualContainerId string `json:"manualContainerId"`
+
+	// Group 同一个service需要区分不同种类的shard，
+	// 这些shard之间不相关的balance到现有container上
+	Group string `json:"group"`
 }
 
 func (ss *ShardSpec) String() string {
