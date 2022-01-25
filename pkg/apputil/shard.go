@@ -307,6 +307,7 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 	}
 
 	go func() {
+		// 关闭shard server
 		defer ss.Close()
 
 		// shardserver使用container与etcd建立的session，回收心跳节点
@@ -323,6 +324,30 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 
 func (ss *ShardServer) Close() {
 	defer close(ss.donec)
+
+	// 保证shard回收的手段，允许调用方启动for不断尝试重新加入存活container中
+	// FIXME session会触发drop动作，不允许失败，但也是潜在风险，一般的sdk使用者，不了解close的机制
+mustOk:
+	shards, err := ss.impl.Shards(ss.ctx)
+	if err != nil {
+		ss.lg.Error(
+			"Shards error",
+			zap.String("service", ss.container.Service()),
+			zap.Error(err),
+		)
+		goto mustOk
+	}
+	for _, shard := range shards {
+		err := ss.impl.Drop(ss.ctx, shard)
+		if err != nil {
+			ss.lg.Error(
+				"Drop error",
+				zap.String("service", ss.container.Service()),
+				zap.Error(err),
+			)
+			goto mustOk
+		}
+	}
 
 	if ss.srv != nil {
 		if err := ss.srv.Shutdown(ss.ctx); err != nil {

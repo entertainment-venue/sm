@@ -19,7 +19,7 @@ import (
 	"sync"
 )
 
-// 提出container和shard的公共属性
+// GoroutineStopper 提出container和shard的公共属性
 // 抽象数据结构，也会引入数据结构之间的耦合
 type GoroutineStopper struct {
 	once sync.Once
