@@ -109,10 +109,8 @@ type ShardServer struct {
 
 	donec chan struct{}
 
-	ctx       context.Context
-	impl      ShardInterface
-	container *Container
-	lg        *zap.Logger
+	// opts 存储选项中的数据，没必要copy一遍
+	opts *shardServerOptions
 }
 
 type shardServerOptions struct {
@@ -221,11 +219,7 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 		stopper:  &GoroutineStopper{},
 		taskNode: EtcdPathAppShardTask(ops.container.Service()),
 
-		impl:      ops.impl,
-		container: ops.container,
-		lg:        ops.lg,
-		ctx:       ops.ctx,
-		donec:     make(chan struct{}),
+		donec: make(chan struct{}),
 	}
 
 	// 上传shard的load，load是从接入服务拿到
@@ -233,24 +227,24 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 		TickerLoop(
 			ctx, ops.lg, 3*time.Second, fmt.Sprintf("shard server stop upload load"),
 			func(ctx context.Context) error {
-				shards, err := ss.impl.Shards(ctx)
+				shards, err := ss.opts.impl.Shards(ctx)
 				if err != nil {
 					return errors.Wrap(err, "")
 				}
 
 				for _, id := range shards {
-					load, err := ss.impl.Load(ctx, id)
+					load, err := ss.opts.impl.Load(ctx, id)
 					if err != nil {
 						return errors.Wrap(err, "")
 					}
 
 					hb := ShardHbData{
 						Load:        load,
-						ContainerId: ss.container.Id(),
+						ContainerId: ss.opts.container.Id(),
 					}
 
-					key := EtcdPathAppShardHbId(ss.container.Service(), id)
-					if _, err := ss.container.Client.Put(ctx, key, hb.String(), clientv3.WithLease(ss.container.Session.Lease())); err != nil {
+					key := EtcdPathAppShardHbId(ss.opts.container.Service(), id)
+					if _, err := ss.opts.container.Client.Put(ctx, key, hb.String(), clientv3.WithLease(ss.opts.container.Session.Lease())); err != nil {
 						ops.lg.Error("failed to shard load",
 							zap.Error(err),
 							zap.String("key", key),
@@ -312,10 +306,10 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 
 		// shardserver使用container与etcd建立的session，回收心跳节点
 		select {
-		case <-ss.container.Session.Done():
-			ss.lg.Info("session closed", zap.String("service", ss.container.Service()))
+		case <-ss.opts.container.Session.Done():
+			ss.opts.lg.Info("session closed", zap.String("service", ss.opts.container.Service()))
 		case <-ops.ctx.Done():
-			ss.lg.Info("context done", zap.String("service", ss.container.Service()))
+			ss.opts.lg.Info("context done", zap.String("service", ss.opts.container.Service()))
 		}
 	}()
 
@@ -328,21 +322,21 @@ func (ss *ShardServer) Close() {
 	// 保证shard回收的手段，允许调用方启动for不断尝试重新加入存活container中
 	// FIXME session会触发drop动作，不允许失败，但也是潜在风险，一般的sdk使用者，不了解close的机制
 mustOk:
-	shards, err := ss.impl.Shards(ss.ctx)
+	shards, err := ss.opts.impl.Shards(ss.opts.ctx)
 	if err != nil {
-		ss.lg.Error(
+		ss.opts.lg.Error(
 			"Shards error",
-			zap.String("service", ss.container.Service()),
+			zap.String("service", ss.opts.container.Service()),
 			zap.Error(err),
 		)
 		goto mustOk
 	}
 	for _, shard := range shards {
-		err := ss.impl.Drop(ss.ctx, shard)
+		err := ss.opts.impl.Drop(ss.opts.ctx, shard)
 		if err != nil {
-			ss.lg.Error(
+			ss.opts.lg.Error(
 				"Drop error",
-				zap.String("service", ss.container.Service()),
+				zap.String("service", ss.opts.container.Service()),
 				zap.Error(err),
 			)
 			goto mustOk
@@ -350,21 +344,21 @@ mustOk:
 	}
 
 	if ss.srv != nil {
-		if err := ss.srv.Shutdown(ss.ctx); err != nil {
-			ss.lg.Error("failed to shutdown http srv",
+		if err := ss.srv.Shutdown(ss.opts.ctx); err != nil {
+			ss.opts.lg.Error("failed to shutdown http srv",
 				zap.Error(err),
-				zap.String("service", ss.container.Service()),
+				zap.String("service", ss.opts.container.Service()),
 			)
 
 		} else {
-			ss.lg.Info("shutdown http srv success", zap.String("service", ss.container.Service()))
+			ss.opts.lg.Info("shutdown http srv success", zap.String("service", ss.opts.container.Service()))
 		}
 	}
 	if ss.stopper != nil {
 		ss.stopper.Close()
 	}
 
-	ss.lg.Info("shard server closed", zap.String("service", ss.container.Service()))
+	ss.opts.lg.Info("shard server closed", zap.String("service", ss.opts.container.Service()))
 }
 
 func (ss *ShardServer) Done() <-chan struct{} {
@@ -372,22 +366,22 @@ func (ss *ShardServer) Done() <-chan struct{} {
 }
 
 func (ss *ShardServer) Container() *Container {
-	return ss.container
+	return ss.opts.container
 }
 
 func (ss *ShardServer) AddShard(c *gin.Context) {
 	var req ShardOpMessage
 	if err := c.ShouldBind(&req); err != nil {
-		ss.lg.Error("ShouldBind err", zap.Error(err))
+		ss.opts.lg.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	req.Type = OpTypeAdd
 
-	shardNode := EtcdPathAppShardId(ss.container.Service(), req.Id)
-	sresp, err := ss.container.Client.GetKV(context.TODO(), shardNode, nil)
+	shardNode := EtcdPathAppShardId(ss.opts.container.Service(), req.Id)
+	sresp, err := ss.opts.container.Client.GetKV(context.TODO(), shardNode, nil)
 	if err != nil {
-		ss.lg.Error("GetKV err",
+		ss.opts.lg.Error("GetKV err",
 			zap.Error(err),
 			zap.String("shardNode", shardNode),
 		)
@@ -397,7 +391,7 @@ func (ss *ShardServer) AddShard(c *gin.Context) {
 
 	var spec ShardSpec
 	if err := json.Unmarshal(sresp.Kvs[0].Value, &spec); err != nil {
-		ss.lg.Error("Unmarshal err",
+		ss.opts.lg.Error("Unmarshal err",
 			zap.Error(err),
 			zap.ByteString("value", sresp.Kvs[0].Value),
 		)
@@ -406,7 +400,7 @@ func (ss *ShardServer) AddShard(c *gin.Context) {
 	}
 	// shard属性校验
 	if err := spec.Validate(); err != nil {
-		ss.lg.Error("shard spec etcd value err",
+		ss.opts.lg.Error("shard spec etcd value err",
 			zap.Error(err),
 			zap.String("value", string(sresp.Kvs[0].Value)),
 		)
@@ -415,18 +409,18 @@ func (ss *ShardServer) AddShard(c *gin.Context) {
 	}
 
 	// container校验
-	if spec.ManualContainerId != "" && spec.ManualContainerId != ss.container.Id() {
-		ss.lg.Error("unexpected container for shard",
-			zap.String("service", ss.container.Service()),
-			zap.String("actual", ss.container.Id()),
+	if spec.ManualContainerId != "" && spec.ManualContainerId != ss.opts.container.Id() {
+		ss.opts.lg.Error("unexpected container for shard",
+			zap.String("service", ss.opts.container.Service()),
+			zap.String("actual", ss.opts.container.Id()),
 			zap.String("expect", spec.ManualContainerId),
 		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unexpected container"})
 		return
 	}
 
-	if err := ss.impl.Add(context.TODO(), req.Id, &spec); err != nil {
-		ss.lg.Error("Add err",
+	if err := ss.opts.impl.Add(context.TODO(), req.Id, &spec); err != nil {
+		ss.opts.lg.Error("Add err",
 			zap.Error(err),
 			zap.String("id", req.Id),
 			zap.Reflect("spec", spec),
@@ -435,7 +429,7 @@ func (ss *ShardServer) AddShard(c *gin.Context) {
 		return
 	}
 
-	ss.lg.Info("add shard request success", zap.Reflect("request", req))
+	ss.opts.lg.Info("add shard request success", zap.Reflect("request", req))
 
 	c.JSON(http.StatusOK, gin.H{})
 }
@@ -443,14 +437,14 @@ func (ss *ShardServer) AddShard(c *gin.Context) {
 func (ss *ShardServer) DropShard(c *gin.Context) {
 	var req ShardOpMessage
 	if err := c.ShouldBind(&req); err != nil {
-		ss.lg.Error("ShouldBind err", zap.Error(err))
+		ss.opts.lg.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	req.Type = OpTypeDrop
 
-	if err := ss.impl.Drop(context.TODO(), req.Id); err != nil {
-		ss.lg.Error("Drop err",
+	if err := ss.opts.impl.Drop(context.TODO(), req.Id); err != nil {
+		ss.opts.lg.Error("Drop err",
 			zap.Error(err),
 			zap.String("id", req.Id),
 		)
@@ -458,6 +452,6 @@ func (ss *ShardServer) DropShard(c *gin.Context) {
 		return
 	}
 
-	ss.lg.Info("drop shard success", zap.Reflect("req", req))
+	ss.opts.lg.Info("drop shard success", zap.Reflect("req", req))
 	c.JSON(http.StatusOK, gin.H{})
 }
