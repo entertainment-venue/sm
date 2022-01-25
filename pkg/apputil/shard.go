@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
@@ -275,10 +276,23 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 	} else {
 		receiver = &ss
 	}
-	ssg := router.Group("/sm/admin")
-	{
-		ssg.POST("/add-shard", receiver.AddShard)
-		ssg.POST("/drop-shard", receiver.DropShard)
+	//是否需要跳过给router挂接口
+	var skip bool
+	routes := router.Routes()
+	if routes != nil {
+		for _, route := range routes {
+			if strings.HasPrefix(route.Path,"/sm/admin") {
+				skip = true
+				break
+			}
+		}
+	}
+	if !skip {
+		ssg := router.Group("/sm/admin")
+		{
+			ssg.POST("/add-shard", receiver.AddShard)
+			ssg.POST("/drop-shard", receiver.DropShard)
+		}
 	}
 
 	// router 为空，就帮助启动webserver，相当于app自己选择被集成，例如sm自己
