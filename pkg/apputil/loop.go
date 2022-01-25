@@ -37,12 +37,15 @@ func TickerLoop(ctx context.Context, lg *zap.Logger, duration time.Duration, exi
 	}
 }
 
-func WatchLoop(ctx context.Context, lg *zap.Logger, client *clientv3.Client, node string, exitMsg string, fn func(ctx context.Context, ev *clientv3.Event) error) {
-	var opts []clientv3.OpOption
-	opts = append(opts, clientv3.WithPrefix())
+func WatchLoop(ctx context.Context, lg *zap.Logger, client *clientv3.Client, node string, exitMsg string, fn func(ctx context.Context, ev *clientv3.Event) error, opts ...clientv3.OpOption) {
+	var wch clientv3.WatchChan
 
 watchLoop:
-	wch := client.Watch(ctx, node)
+	if len(opts) > 0 {
+		wch = client.Watch(ctx, node, opts...)
+	} else {
+		wch = client.Watch(ctx, node)
+	}
 	for {
 		var wr clientv3.WatchResponse
 		select {
