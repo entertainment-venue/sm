@@ -17,6 +17,7 @@ package apputil
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
@@ -41,12 +42,15 @@ type Container struct {
 	service string
 	lg      *zap.Logger
 
-	// 可以通知调用方Container结束
+	// donec 可以通知调用方
 	donec chan struct{}
+
+	mu sync.Mutex
+	// closed 导致 Container 被关闭的事件是异步的，需要做保护
+	closed bool
 }
 
 type containerOptions struct {
-	ctx       context.Context
 	endpoints []string
 
 	// 数据传递
@@ -81,12 +85,6 @@ func ContainerWithLogger(lg *zap.Logger) ContainerOption {
 	}
 }
 
-func ContainerWithContext(ctx context.Context) ContainerOption {
-	return func(co *containerOptions) {
-		co.ctx = ctx
-	}
-}
-
 func NewContainer(opts ...ContainerOption) (*Container, error) {
 	ops := &containerOptions{}
 	for _, opt := range opts {
@@ -104,9 +102,6 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	}
 	if ops.lg == nil {
 		return nil, errors.New("lg err")
-	}
-	if ops.ctx == nil {
-		return nil, errors.New("ctx err")
 	}
 
 	ec, err := etcdutil.NewEtcdClient(ops.endpoints, ops.lg)
@@ -135,47 +130,57 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 		lg:      ops.lg,
 	}
 
-	// 上报系统负载，提供container liveness的标记
+	// 通过heartbeat上报数据
 	c.stopper.Wrap(
 		func(ctx context.Context) {
 			TickerLoop(ctx, ops.lg, 3*time.Second, "container stop upload load", c.UploadSysLoad)
-		})
+		},
+	)
 
-	go func() {
-		// session关闭后，停掉当前container的工作goroutine
-		defer c.Close()
+	// 监控session存活
+	c.stopper.Wrap(
+		func(ctx context.Context) {
+			select {
+			case <-ctx.Done():
+				// 被动关闭
+				c.lg.Info("container: stopper closed",
+					zap.String("id", c.Id()),
+					zap.String("service", c.Service()),
+				)
+			case <-c.Session.Done():
+				c.close()
 
-		// 监控session的关闭
-		// 需要监控两个方面:
-		// 1. 与etcd网络连接问题导致session不稳定
-		// 2. 使用apputil的app主动通过ctx关闭
-		select {
-		case <-c.Session.Done():
-			c.lg.Info("session closed",
-				zap.String("id", c.Id()),
-				zap.String("service", c.Service()),
-			)
-		case <-ops.ctx.Done():
-			c.lg.Info("context done",
-				zap.String("id", c.Id()),
-				zap.String("service", c.Service()),
-			)
-		}
-	}()
+				c.lg.Info("container: session closed",
+					zap.String("id", c.Id()),
+					zap.String("service", c.Service()),
+				)
+			}
+		},
+	)
 
 	return &c, nil
 }
 
 func (c *Container) Close() {
-	defer close(c.donec)
+	c.close()
 
-	if c.stopper != nil {
-		c.stopper.Close()
-	}
-	c.lg.Info("container closed",
+	c.lg.Info("container: closed",
 		zap.String("id", c.Id()),
 		zap.String("service", c.Service()),
 	)
+}
+
+func (c *Container) close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// 可能和session closed事件有并发问题，这块用mu保护起来
+	if c.closed {
+		return
+	}
+	if c.stopper != nil {
+		c.stopper.Close()
+	}
+	close(c.donec)
 }
 
 func (c *Container) Done() <-chan struct{} {

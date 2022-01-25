@@ -11,6 +11,10 @@ import (
 	"go.uber.org/zap"
 )
 
+type Client struct {
+
+}
+
 type smOptions struct {
 	g           *gin.Engine
 	service     string
