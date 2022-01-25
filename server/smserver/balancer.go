@@ -43,3 +43,19 @@ func (b *balancer) addContainer(containerId string) {
 		}
 	}
 }
+
+// balancerGroup 同一个container支持在shard维度支持分组，分开balance
+type balancerGroup struct {
+	// fixShardIdAndManualContainerId shard配置
+	fixShardIdAndManualContainerId ArmorMap
+
+	// hbShardIdAndContainerId shard心跳
+	hbShardIdAndContainerId ArmorMap
+}
+
+func newBalanceGroup() *balancerGroup {
+	return &balancerGroup{
+		fixShardIdAndManualContainerId: make(ArmorMap),
+		hbShardIdAndContainerId:        make(ArmorMap),
+	}
+}

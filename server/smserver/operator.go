@@ -94,6 +94,11 @@ func newOperator(lg *zap.Logger, sc *smContainer, service string) (*operator, er
 
 	// TODO support scale
 
+	lg.Info(
+		"operator started",
+		zap.String("service", service),
+	)
+
 	return &op, nil
 }
 
@@ -109,37 +114,44 @@ func (o *operator) moveLoop(ctx context.Context) {
 
 	// Move只有对特定app负责的operator
 	// 当前如果存在任务，直接开始执行
-handleLatestTask:
-	resp, err := o.parent.Client.GetKV(ctx, key, []clientv3.OpOption{})
+stockTask:
+	resp, err := o.parent.Client.GetKV(ctx, key, nil)
 	if err != nil {
 		o.lg.Error("failed to GetKV",
 			zap.String("key", key),
 			zap.Error(err),
 		)
 		time.Sleep(defaultSleepTimeout)
-		goto handleLatestTask
+		goto stockTask
 	}
 	if resp.Count > 0 && string(resp.Kvs[0].Value) != "" {
-		o.lg.Info("got shard move task",
-			zap.String("service", o.service),
+		o.lg.Info(
+			"moveLoop start, got move task",
+			zap.String("key", key),
 			zap.String("value", string(resp.Kvs[0].Value)),
 		)
 		if err := o.move(ctx, resp.Kvs[0].Value); err != nil {
-			o.lg.Error("failed to move",
-				zap.Error(err),
+			o.lg.Error(
+				"move error",
+				zap.String("key", key),
 				zap.ByteString("value", resp.Kvs[0].Value),
+				zap.Error(err),
 			)
 
 			time.Sleep(defaultSleepTimeout)
-			goto handleLatestTask
+			goto stockTask
 		}
 	} else {
-		o.lg.Info("empty shard move task",
+		o.lg.Info(
+			"moveLoop start, empty move task",
 			zap.String("key", key),
 			zap.String("service", o.service),
 		)
 	}
 
+	var opts []clientv3.OpOption
+	opts = append(opts, clientv3.WithPrefix())
+	opts = append(opts, clientv3.WithRev(resp.Header.Revision+1))
 	apputil.WatchLoop(
 		ctx,
 		o.lg,
@@ -152,23 +164,24 @@ handleLatestTask:
 				return nil
 			}
 
-			// 任务被清空，会出发一次时间
+			// 任务被清空，记录日志
 			if string(ev.Kv.Value) == "" {
-				o.lg.Warn("got task erase event", zap.String("service", o.service))
+				o.lg.Info("got task erase event", zap.String("service", o.service))
 				return nil
 			}
 
-			// 不接受重复的任务，在一个任务运行时，eq提交任务也会失败
-			if ev.PrevKv != nil && string(ev.Kv.Value) == string(ev.PrevKv.Value) {
-				o.lg.Warn("duplicate event", zap.ByteString("prevValue", ev.PrevKv.Value))
-				return nil
-			}
+			o.lg.Info(
+				"trigger move",
+				zap.ByteString("key", ev.Kv.Key),
+				zap.ByteString("value", ev.Kv.Value),
+			)
 
 			if err := o.move(ctx, ev.Kv.Value); err != nil {
 				return errors.Wrap(err, "")
 			}
 			return nil
 		},
+		opts...,
 	)
 }
 
@@ -212,29 +225,32 @@ func (o *operator) move(ctx context.Context, value []byte) error {
 		}
 	}
 
+	valueStr := string(value)
+
 	o.lg.Info(
 		"complete move",
 		zap.Bool("succ", succ),
-		zap.ByteString("value", value),
+		zap.String("value", valueStr),
 	)
 
 	// 利用etcd tx清空任务节点，任务节点已经空就停止
-ack:
 	taskKey := apputil.EtcdPathAppShardTask(o.service)
-	if _, err := o.parent.Client.CompareAndSwap(ctx, taskKey, string(value), "", clientv3.NoLease); err != nil {
+	if _, err := o.parent.Client.CompareAndSwap(ctx, taskKey, valueStr, "", clientv3.NoLease); err != nil {
 		// 节点数据被破坏，需要人工介入
-		o.lg.Error("failed to CompareAndSwap",
-			zap.Error(err),
+		o.lg.Error(
+			"CompareAndSwap error",
 			zap.String("key", taskKey),
-			zap.ByteString("value", value),
+			zap.String("value", valueStr),
+			zap.Error(err),
 		)
-		time.Sleep(defaultSleepTimeout)
-		goto ack
+		// 这块不能重试，可能会因为网络问题(例如：etcd更新成功，但是返回err)卡在CompareAndSwap
+	} else {
+		o.lg.Info(
+			"CompareAndSwap succ",
+			zap.String("key", taskKey),
+			zap.String("value", valueStr),
+		)
 	}
-	o.lg.Info("remove task",
-		zap.String("key", taskKey),
-		zap.String("value", string(value)),
-	)
 
 	return nil
 }

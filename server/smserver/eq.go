@@ -183,14 +183,14 @@ func (eq *eventQueue) evLoop(ctx context.Context, service string, ch chan *mvEve
 		key := apputil.EtcdPathAppShardTask(eq.parent.service)
 		if _, err := eq.parent.Client.CompareAndSwap(ctx, key, "", ev.Value, clientv3.NoLease); err != nil {
 			if err == etcdutil.ErrEtcdValueNotMatch {
-				eq.lg.Warn("can not add task, etcd not got task now",
-					zap.String("service", eq.parent.service),
+				eq.lg.Warn(
+					"can not add task, value conflict",
 					zap.String("key", key),
 					zap.String("value", ev.Value),
+					zap.Error(err),
 				)
 			} else {
-				eq.lg.Error("failed to put task",
-					zap.String("service", eq.parent.service),
+				eq.lg.Warn("failed to put task",
 					zap.String("key", key),
 					zap.String("value", ev.Value),
 					zap.Error(err),

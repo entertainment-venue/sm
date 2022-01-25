@@ -85,6 +85,9 @@ type addShardRequest struct {
 	Task string `json:"task" binding:"required"`
 
 	ManualContainerId string `json:"manualContainerId"`
+
+	// Group 同一个service需要区分不同种类的shard，这些shard之间不相关的balance到现有container上
+	Group string `json:"group"`
 }
 
 func (r *addShardRequest) String() string {
@@ -106,6 +109,7 @@ func (ss *shardServer) GinAddShard(c *gin.Context) {
 		Task:              req.Task,
 		UpdateTime:        time.Now().Unix(),
 		ManualContainerId: req.ManualContainerId,
+		Group:             req.Group,
 	}
 
 	// 区分更新和添加

@@ -61,6 +61,9 @@ func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smCont
 			)
 		})
 
+	var opts []clientv3.OpOption
+	opts = append(opts, clientv3.WithPrefix())
+
 	w.gs.Wrap(
 		func(ctx context.Context) {
 			apputil.WatchLoop(
@@ -72,6 +75,7 @@ func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smCont
 				func(ctx context.Context, ev *clientv3.Event) error {
 					return w.shardLoadChecker(ctx, ev)
 				},
+				opts...,
 			)
 		})
 
@@ -86,6 +90,7 @@ func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smCont
 				func(ctx context.Context, ev *clientv3.Event) error {
 					return w.containerLoadChecker(ctx, ev)
 				},
+				opts...,
 			)
 		})
 
@@ -101,7 +106,9 @@ func (w *maintenanceWorker) Close() {
 // 1 smContainer 的增加/减少是优先级最高，目前可能涉及大量shard move
 // 2 smShard 被漏掉作为container检测的补充，最后校验，这种情况只涉及到漏掉的shard任务下发下去
 func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
-	// 获取当前所有shard
+	groups := make(map[string]*balancerGroup)
+
+	// 获取当前所有shard配置
 	var (
 		etcdShardIdAndAny ArmorMap
 		err               error
@@ -119,13 +126,22 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 		return nil
 	}
 	// 支持手动指定container
-	fixShardIdAndManualContainerId := make(ArmorMap)
+	shardIdAndGroup := make(ArmorMap)
 	for id, value := range etcdShardIdAndAny {
 		var ss apputil.ShardSpec
 		if err := json.Unmarshal([]byte(value), &ss); err != nil {
 			return errors.Wrap(err, "")
 		}
-		fixShardIdAndManualContainerId[id] = ss.ManualContainerId
+
+		// 按照group聚合
+		bg := groups[ss.Group]
+		if bg == nil {
+			groups[ss.Group] = newBalanceGroup()
+		}
+		groups[ss.Group].fixShardIdAndManualContainerId[id] = ss.ManualContainerId
+
+		// 建立index
+		shardIdAndGroup[id] = ss.Group
 	}
 
 	// 获取当前存活shard，存活shard的container分配关系如果命中可以不生产moveAction
@@ -133,13 +149,23 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
-	hbShardIdAndContainerId := make(ArmorMap)
 	for id, value := range etcdHbShardIdAndValue {
 		var data apputil.ShardHbData
 		if err := json.Unmarshal([]byte(value), &data); err != nil {
 			return errors.Wrap(err, "")
 		}
-		hbShardIdAndContainerId[id] = data.ContainerId
+
+		group, ok := shardIdAndGroup[id]
+		if !ok {
+			for _, bg := range groups {
+				bg.hbShardIdAndContainerId[id] = data.ContainerId
+				// shard的配置删除，代表service想要移除这个shard，为了方便下面的算法，在第一个group中都保留这个shard，group不影响删除操作
+				break
+			}
+			continue
+		}
+		// shard配置中存在group
+		groups[group].hbShardIdAndContainerId[id] = data.ContainerId
 	}
 
 	// 现有存活containers
@@ -149,9 +175,16 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 		return errors.Wrap(err, "")
 	}
 
-	containerChanged := w.changed(true, hbShardIdAndContainerId.ValueList(), etcdHbContainerIdAndAny.KeyList())
-	shardChanged := w.changed(false, etcdShardIdAndAny.KeyList(), hbShardIdAndContainerId.KeyList())
-	if containerChanged || shardChanged {
+	for group, bg := range groups {
+		containerChanged := w.changed(true, bg.hbShardIdAndContainerId.ValueList(), etcdHbContainerIdAndAny.KeyList())
+		shardChanged := w.changed(false, bg.fixShardIdAndManualContainerId.KeyList(), bg.hbShardIdAndContainerId.KeyList())
+		if !containerChanged && !shardChanged {
+			continue
+		}
+		// 需要保证在变更的情况下是有container可以接受分配的
+		if len(etcdHbContainerIdAndAny) == 0 {
+			continue
+		}
 		var typ eventType
 		if containerChanged {
 			typ = tContainerChanged
@@ -159,7 +192,7 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 			typ = tShardChanged
 		}
 
-		r := w.reallocate(fixShardIdAndManualContainerId, etcdHbContainerIdAndAny, hbShardIdAndContainerId)
+		r := w.reallocate(bg.fixShardIdAndManualContainerId, etcdHbContainerIdAndAny, bg.hbShardIdAndContainerId)
 		if len(r) > 0 {
 			ev := mvEvent{
 				Service:     w.service,
@@ -177,17 +210,19 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 				zap.String("service", w.service),
 				zap.Reflect("item", item),
 			)
-		} else {
-			// 当survive的container为nil的时候，不能形成有效的分配，直接返回即可
-			w.lg.Warn("can not reallocate",
-				zap.String("service", w.service),
-				zap.Bool("container-changed", containerChanged),
-				zap.Bool("shard-changed", shardChanged),
-				zap.Reflect("shardIdAndManualContainerId", fixShardIdAndManualContainerId),
-				zap.Strings("etcdHbContainerIds", etcdHbContainerIdAndAny.KeyList()),
-				zap.Reflect("hbShardIdAndContainerId", hbShardIdAndContainerId),
-			)
+
+			continue
 		}
+		// 当survive的container为nil的时候，不能形成有效的分配，直接返回即可
+		w.lg.Warn("can not reallocate",
+			zap.String("service", w.service),
+			zap.Bool("container-changed", containerChanged),
+			zap.Bool("shard-changed", shardChanged),
+			zap.String("group", group),
+			zap.Reflect("shardIdAndManualContainerId", bg.fixShardIdAndManualContainerId),
+			zap.Strings("etcdHbContainerIds", etcdHbContainerIdAndAny.KeyList()),
+			zap.Reflect("hbShardIdAndContainerId", bg.hbShardIdAndContainerId),
+		)
 	}
 	return nil
 }
@@ -196,9 +231,15 @@ func (w *maintenanceWorker) changed(isContainerCompare bool, a []string, b []str
 	// 初始注册的server在shard和container为空的情况，需要提示出来，防止系统认为没有变化，开发人员也不知道漏掉什么操作
 	if len(a) == 0 && len(b) == 0 {
 		if isContainerCompare {
-			w.lg.Warn("service got empty container list", zap.String("service", w.service))
+			w.lg.Info(
+				"no container",
+				zap.String("service", w.service),
+			)
 		} else {
-			w.lg.Warn("service got empty shard list", zap.String("service", w.service))
+			w.lg.Info(
+				"no shard",
+				zap.String("service", w.service),
+			)
 		}
 	}
 

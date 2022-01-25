@@ -278,44 +278,14 @@ func (c *smContainer) campaign(ctx context.Context) {
 		// etcd sdk中keepalive的请求发送时间时500ms，5s>>500ms，认为这个时间段内，所有container都会发heartbeat，不存在的就认为没有任务。
 		time.Sleep(5 * time.Second)
 
-		// leader需要处理shard move的任务
-		var err error
-		c.op, err = newOperator(c.lg, c, c.service)
-		if err != nil {
-			c.lg.Error("leader failed to newOperator", zap.Error(err))
-			time.Sleep(defaultSleepTimeout)
+		// leader启动operator
+		if err := c.RegisterOperator(c.service); err != nil {
+			c.lg.Error(
+				"start operator error",
+				zap.String("service", c.service),
+				zap.Error(err),
+			)
 			goto loop
-		}
-
-		// opt: sm的task节点有未完成任务，先推入queue，清理掉历史任务，允许mw下发新的任务到task节点
-		smTaskNode := apputil.EtcdPathAppShardTask(c.service)
-		resp, err := c.Client.GetKV(ctx, smTaskNode, nil)
-		if err != nil {
-			c.lg.Error("failed to get task")
-			time.Sleep(defaultSleepTimeout)
-			goto loop
-		}
-		if len(resp.Kvs) > 0 {
-			stockTask := string(resp.Kvs[0].Value)
-			if stockTask != "" {
-				ev := mvEvent{
-					Service:     c.service,
-					Type:        tContainerInit,
-					EnqueueTime: time.Now().Unix(),
-					Value:       stockTask,
-				}
-				item := Item{
-					Value:    ev.String(),
-					Priority: time.Now().Unix(),
-				}
-				c.eq.push(&item, true)
-
-				c.lg.Info(
-					"encounter stock task",
-					zap.String("service", c.service),
-					zap.String("stockTask", stockTask),
-				)
-			}
 		}
 
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
