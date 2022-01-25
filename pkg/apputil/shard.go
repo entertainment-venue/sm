@@ -276,7 +276,7 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 	} else {
 		receiver = &ss
 	}
-	//是否需要跳过给router挂接口
+	// 是否需要跳过给router挂接口
 	var skip bool
 	routes := router.Routes()
 	if routes != nil {

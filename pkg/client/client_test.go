@@ -16,7 +16,7 @@ func TestStartSM(t *testing.T) {
 	ginSrv := gin.Default()
 	if err := StartSM(SmWithRouter(ginSrv),
 		SmWithContainerId(fmt.Sprintf("%s:%d", getLocalIP(), port)),
-		SmWithEtcdAddr([]string{"10.189.73.122:8989"}),
+		SmWithEtcdAddr([]string{"127.0.0.1:2379"}),
 		SmWithService("proxy.dev"),
 		SmWithImplementation(&testShard{ids: make(map[string]string)})); err != nil {
 		t.Fatal(err)
