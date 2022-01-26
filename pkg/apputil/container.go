@@ -137,26 +137,26 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 		},
 	)
 
-	// 监控session存活
-	c.stopper.Wrap(
-		func(ctx context.Context) {
-			select {
-			case <-ctx.Done():
-				// 被动关闭
-				c.lg.Info("container: stopper closed",
-					zap.String("id", c.Id()),
-					zap.String("service", c.Service()),
-				)
-			case <-c.Session.Done():
-				c.close()
+	// 1 监控session，关注etcd导致的异常关闭
+	// 2 使用donec，关注外部调用Close导致的关闭
+	go func() {
+		select {
+		case <-c.donec:
+			// 被动关闭
+			c.lg.Info("container: stopper closed",
+				zap.String("id", c.Id()),
+				zap.String("service", c.Service()),
+			)
+		case <-c.Session.Done():
+			// 主动关闭
+			c.close()
 
-				c.lg.Info("container: session closed",
-					zap.String("id", c.Id()),
-					zap.String("service", c.Service()),
-				)
-			}
-		},
-	)
+			c.lg.Info("container: session closed",
+				zap.String("id", c.Id()),
+				zap.String("service", c.Service()),
+			)
+		}
+	}()
 
 	return &c, nil
 }
@@ -173,7 +173,6 @@ func (c *Container) Close() {
 func (c *Container) close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// 可能和session closed事件有并发问题，这块用mu保护起来
 	if c.closed {
 		return
 	}

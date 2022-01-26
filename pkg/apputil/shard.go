@@ -254,26 +254,23 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 		)
 	})
 
-	// 监控session存活
-	ss.stopper.Wrap(
-		func(ctx context.Context) {
-			select {
-			case <-ctx.Done():
-				// 被动关闭
-				ss.opts.lg.Info(
-					"shardserver: stopper closed",
-					zap.String("service", ss.opts.container.Service()),
-				)
-			case <-ss.opts.container.Session.Done():
-				ss.close()
+	go func() {
+		select {
+		case <-ss.donec:
+			// 被动关闭
+			ss.opts.lg.Info(
+				"shardserver: stopper closed",
+				zap.String("service", ss.opts.container.Service()),
+			)
+		case <-ss.opts.container.Session.Done():
+			ss.close()
 
-				ss.opts.lg.Info(
-					"shardserver: session closed",
-					zap.String("service", ss.opts.container.Service()),
-				)
-			}
-		},
-	)
+			ss.opts.lg.Info(
+				"shardserver: session closed",
+				zap.String("service", ss.opts.container.Service()),
+			)
+		}
+	}()
 
 	router := ops.router
 	if ops.router == nil {
