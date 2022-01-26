@@ -1,4 +1,4 @@
-module sm/client
+module github.com/entertainment-venue/sm/client
 
 go 1.17
 

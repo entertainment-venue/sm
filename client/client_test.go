@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net"
 	"sync"
 	"testing"
 
@@ -26,11 +25,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func TestStartSM(t *testing.T) {
+func TestNewClient(t *testing.T) {
 	port := 8888
 	ginSrv := gin.Default()
 	_, err := NewClient(ClientWithRouter(ginSrv),
-		ClientWithContainerId(fmt.Sprintf("%s:%d", getLocalIP(), port)),
+		ClientWithContainerId(fmt.Sprintf("%s:%d", "127.0.0.1", port)),
 		ClientWithEtcdAddr([]string{"127.0.0.1:2379"}),
 		ClientWithService("proxy.dev"),
 		ClientWithImplementation(&testShard{ids: make(map[string]string)}))
@@ -75,21 +74,4 @@ func (s *testShard) Shards(ctx context.Context) ([]string, error) {
 	}
 	fmt.Printf("shards op %s\n", r)
 	return r, nil
-}
-
-func getLocalIP() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		fmt.Printf("get local IP failed, error is %+v\n", err)
-		return ""
-	}
-	for _, address := range addrs {
-		// check the address type and if it is not a loopback the display it
-		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil {
-				return ipnet.IP.String()
-			}
-		}
-	}
-	return ""
 }
