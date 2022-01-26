@@ -176,8 +176,31 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 	}
 
 	for group, bg := range groups {
-		containerChanged := w.changed(true, bg.hbShardIdAndContainerId.ValueList(), etcdHbContainerIdAndAny.KeyList())
-		shardChanged := w.changed(false, bg.fixShardIdAndManualContainerId.KeyList(), bg.hbShardIdAndContainerId.KeyList())
+		hbContainerIds := etcdHbContainerIdAndAny.KeyList()
+		// 没有存活的container，不需要做shard移动
+		if len(hbContainerIds) == 0 {
+			w.lg.Warn(
+				"no survive container",
+				zap.String("group", group),
+				zap.String("service", w.service),
+			)
+			continue
+		}
+
+		fixShardIds := bg.fixShardIdAndManualContainerId.KeyList()
+		hbShardIds := bg.hbShardIdAndContainerId.KeyList()
+		// 没有存活分片，且没有分片待分配
+		if len(fixShardIds) == 0 && len(hbShardIds) == 0 {
+			w.lg.Warn(
+				"no survive shard",
+				zap.String("group", group),
+				zap.String("service", w.service),
+			)
+			continue
+		}
+
+		containerChanged := w.changed(hbContainerIds, bg.hbShardIdAndContainerId.ValueList())
+		shardChanged := w.changed(fixShardIds, hbShardIds)
 		if !containerChanged && !shardChanged {
 			continue
 		}
@@ -227,22 +250,7 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 	return nil
 }
 
-func (w *maintenanceWorker) changed(isContainerCompare bool, a []string, b []string) bool {
-	// 初始注册的server在shard和container为空的情况，需要提示出来，防止系统认为没有变化，开发人员也不知道漏掉什么操作
-	if len(a) == 0 && len(b) == 0 {
-		if isContainerCompare {
-			w.lg.Info(
-				"no container",
-				zap.String("service", w.service),
-			)
-		} else {
-			w.lg.Info(
-				"no shard",
-				zap.String("service", w.service),
-			)
-		}
-	}
-
+func (w *maintenanceWorker) changed(a []string, b []string) bool {
 	sort.Strings(a)
 	sort.Strings(b)
 	return !reflect.DeepEqual(a, b)

@@ -71,7 +71,6 @@ func newSMContainer(ctx context.Context, lg *zap.Logger, id, service string, c *
 	}
 
 	sc.eq = newEventQueue(ctx, lg, &sc)
-	sc.lw = newMaintenanceWorker(ctx, lg, &sc, sc.service)
 
 	sc.gs.Wrap(
 		func(ctx context.Context) {
