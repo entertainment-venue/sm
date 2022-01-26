@@ -8,7 +8,7 @@ replace github.com/coreos/bbolt => go.etcd.io/bbolt v1.3.6
 replace google.golang.org/grpc => google.golang.org/grpc v1.26.0
 
 require (
-	github.com/entertainment-venue/sm/pkg v0.0.0-20220126090028-39948d46d108
+	github.com/entertainment-venue/sm/pkg v0.0.0-20220126113837-8b6340b9f845
 	github.com/gin-gonic/gin v1.7.7
 	github.com/pkg/errors v0.9.1
 	go.uber.org/zap v1.20.0

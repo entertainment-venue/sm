@@ -3,7 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
-	"net"
+	"github.com/entertainment-venue/sm/pkg/client"
 	"log"
 	"sync"
 	"testing"
@@ -15,11 +15,11 @@ import (
 func TestNewClient(t *testing.T) {
 	port := 8888
 	ginSrv := gin.Default()
-	if err := StartSM(SmWithRouter(ginSrv),
-		SmWithContainerId(fmt.Sprintf("%s:%d", getLocalIP(), port)),
-		SmWithEtcdAddr([]string{"127.0.0.1:2379"}),
-		SmWithService("proxy.dev"),
-		SmWithImplementation(&testShard{ids: make(map[string]string)})); err != nil {
+	if err := client.StartSM(client.SmWithRouter(ginSrv),
+		client.SmWithContainerId(fmt.Sprintf("%s:%d", getLocalIP(), port)),
+		client.SmWithEtcdAddr([]string{"127.0.0.1:2379"}),
+		client.SmWithService("proxy.dev"),
+		client.SmWithImplementation(&testShard{ids: make(map[string]string)})); err != nil {
 		t.Fatal(err)
 	_, err := NewClient(ClientWithRouter(ginSrv),
 		ClientWithContainerId(fmt.Sprintf("%s:%d", "127.0.0.1", port)),
