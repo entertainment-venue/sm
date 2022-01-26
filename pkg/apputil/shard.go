@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
@@ -112,14 +113,16 @@ type ShardServer struct {
 
 	// opts 存储选项中的数据，没必要copy一遍
 	opts *shardServerOptions
+
+	mu sync.Mutex
+	// closed 导致 ShardServer 被关闭的事件是异步的，需要做保护
+	closed bool
 }
 
 type shardServerOptions struct {
 	addr            string
 	routeAndHandler map[string]func(c *gin.Context)
 
-	// FIXME 和ShardServer重复
-	ctx       context.Context
 	impl      ShardInterface
 	container *Container
 	lg        *zap.Logger
@@ -151,12 +154,6 @@ func ShardServerWithContainer(v *Container) ShardServerOption {
 func ShardServerWithShardImplementation(v ShardInterface) ShardServerOption {
 	return func(sso *shardServerOptions) {
 		sso.impl = v
-	}
-}
-
-func ShardServerWithContext(v context.Context) ShardServerOption {
-	return func(sso *shardServerOptions) {
-		sso.ctx = v
 	}
 }
 
@@ -209,9 +206,6 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 	if ops.impl == nil {
 		return nil, errors.New("impl err")
 	}
-	if ops.ctx == nil {
-		return nil, errors.New("ctx err")
-	}
 
 	// FIXME 直接刚常量有点粗糙，暂时没有更好的方案
 	InitEtcdPrefix(ops.etcdPrefix)
@@ -221,9 +215,10 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 		taskNode: EtcdPathAppShardTask(ops.container.Service()),
 
 		donec: make(chan struct{}),
+		opts:  ops,
 	}
 
-	// 上传shard的load，load是从接入服务拿到
+	// heartbeat
 	ss.stopper.Wrap(func(ctx context.Context) {
 		TickerLoop(
 			ctx, ops.lg, 3*time.Second, fmt.Sprintf("shard server stop upload load"),
@@ -260,6 +255,24 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 		)
 	})
 
+	go func() {
+		select {
+		case <-ss.donec:
+			// 被动关闭
+			ss.opts.lg.Info(
+				"shardserver: stopper closed",
+				zap.String("service", ss.opts.container.Service()),
+			)
+		case <-ss.opts.container.Session.Done():
+			ss.close()
+
+			ss.opts.lg.Info(
+				"shardserver: session closed",
+				zap.String("service", ss.opts.container.Service()),
+			)
+		}
+	}()
+
 	router := ops.router
 	if ops.router == nil {
 		router = gin.Default()
@@ -281,7 +294,7 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 	routes := router.Routes()
 	if routes != nil {
 		for _, route := range routes {
-			if strings.HasPrefix(route.Path,"/sm/admin") {
+			if strings.HasPrefix(route.Path, "/sm/admin") {
 				skip = true
 				break
 			}
@@ -304,39 +317,50 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 		}
 		ss.srv = srv
 
+		// FIXME 这个goroutine在退出时，没有回收当前资源，后续，会改造把gin从sm剔除掉
 		go func() {
 			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				ops.lg.Panic("failed to listen",
+				ops.lg.Panic(
+					"failed to listen",
 					zap.Error(err),
 					zap.String("addr", ops.addr),
 				)
+				return
 			}
+			ops.lg.Info(
+				"ListenAndServe exit",
+				zap.String("addr", ops.addr),
+				zap.String("service", ss.opts.container.Service()),
+			)
 		}()
 	}
-
-	go func() {
-		// 关闭shard server
-		defer ss.Close()
-
-		// shardserver使用container与etcd建立的session，回收心跳节点
-		select {
-		case <-ss.opts.container.Session.Done():
-			ss.opts.lg.Info("session closed", zap.String("service", ss.opts.container.Service()))
-		case <-ops.ctx.Done():
-			ss.opts.lg.Info("context done", zap.String("service", ss.opts.container.Service()))
-		}
-	}()
 
 	return &ss, nil
 }
 
 func (ss *ShardServer) Close() {
-	defer close(ss.donec)
+	ss.close()
+
+	ss.opts.lg.Info(
+		"shardserver: closed",
+		zap.String("service", ss.opts.container.Service()),
+	)
+}
+
+func (ss *ShardServer) close() {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	if ss.closed {
+		return
+	}
+
+	// TODO ctx在interface中限定，但是没有用处
+	ctx := context.TODO()
 
 	// 保证shard回收的手段，允许调用方启动for不断尝试重新加入存活container中
 	// FIXME session会触发drop动作，不允许失败，但也是潜在风险，一般的sdk使用者，不了解close的机制
 mustOk:
-	shards, err := ss.opts.impl.Shards(ss.opts.ctx)
+	shards, err := ss.opts.impl.Shards(ctx)
 	if err != nil {
 		ss.opts.lg.Error(
 			"Shards error",
@@ -346,11 +370,12 @@ mustOk:
 		goto mustOk
 	}
 	for _, shard := range shards {
-		err := ss.opts.impl.Drop(ss.opts.ctx, shard)
+		err := ss.opts.impl.Drop(ctx, shard)
 		if err != nil {
 			ss.opts.lg.Error(
 				"Drop error",
 				zap.String("service", ss.opts.container.Service()),
+				zap.String("shard", shard),
 				zap.Error(err),
 			)
 			goto mustOk
@@ -358,19 +383,24 @@ mustOk:
 	}
 
 	if ss.srv != nil {
-		if err := ss.srv.Shutdown(ss.opts.ctx); err != nil {
-			ss.opts.lg.Error("failed to shutdown http srv",
+		if err := ss.srv.Shutdown(ctx); err != nil {
+			ss.opts.lg.Error(
+				"Shutdown error",
 				zap.Error(err),
 				zap.String("service", ss.opts.container.Service()),
 			)
 
 		} else {
-			ss.opts.lg.Info("shutdown http srv success", zap.String("service", ss.opts.container.Service()))
+			ss.opts.lg.Info(
+				"Shutdown success",
+				zap.String("service", ss.opts.container.Service()),
+			)
 		}
 	}
 	if ss.stopper != nil {
 		ss.stopper.Close()
 	}
+	close(ss.donec)
 
 	ss.opts.lg.Info("shard server closed", zap.String("service", ss.opts.container.Service()))
 }

@@ -17,6 +17,7 @@ package apputil
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
@@ -41,12 +42,15 @@ type Container struct {
 	service string
 	lg      *zap.Logger
 
-	// 可以通知调用方Container结束
+	// donec 可以通知调用方
 	donec chan struct{}
+
+	mu sync.Mutex
+	// closed 导致 Container 被关闭的事件是异步的，需要做保护
+	closed bool
 }
 
 type containerOptions struct {
-	ctx       context.Context
 	endpoints []string
 
 	// 数据传递
@@ -81,12 +85,6 @@ func ContainerWithLogger(lg *zap.Logger) ContainerOption {
 	}
 }
 
-func ContainerWithContext(ctx context.Context) ContainerOption {
-	return func(co *containerOptions) {
-		co.ctx = ctx
-	}
-}
-
 func NewContainer(opts ...ContainerOption) (*Container, error) {
 	ops := &containerOptions{}
 	for _, opt := range opts {
@@ -105,16 +103,13 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	if ops.lg == nil {
 		return nil, errors.New("lg err")
 	}
-	if ops.ctx == nil {
-		return nil, errors.New("ctx err")
-	}
 
 	ec, err := etcdutil.NewEtcdClient(ops.endpoints, ops.lg)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	// FIXME etcd不启动，这里会hang住，127.0.0.1.2379
-	s, err := concurrency.NewSession(ec.Client, concurrency.WithTTL(5))
+	ctx, _ := context.WithTimeout(context.Background(), 3*time.Second)
+	s, err := concurrency.NewSession(ec.Client, concurrency.WithTTL(5), concurrency.WithContext(ctx))
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -135,28 +130,28 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 		lg:      ops.lg,
 	}
 
-	// 上报系统负载，提供container liveness的标记
+	// 通过heartbeat上报数据
 	c.stopper.Wrap(
 		func(ctx context.Context) {
 			TickerLoop(ctx, ops.lg, 3*time.Second, "container stop upload load", c.UploadSysLoad)
-		})
+		},
+	)
 
+	// 1 监控session，关注etcd导致的异常关闭
+	// 2 使用donec，关注外部调用Close导致的关闭
 	go func() {
-		// session关闭后，停掉当前container的工作goroutine
-		defer c.Close()
-
-		// 监控session的关闭
-		// 需要监控两个方面:
-		// 1. 与etcd网络连接问题导致session不稳定
-		// 2. 使用apputil的app主动通过ctx关闭
 		select {
-		case <-c.Session.Done():
-			c.lg.Info("session closed",
+		case <-c.donec:
+			// 被动关闭
+			c.lg.Info("container: stopper closed",
 				zap.String("id", c.Id()),
 				zap.String("service", c.Service()),
 			)
-		case <-ops.ctx.Done():
-			c.lg.Info("context done",
+		case <-c.Session.Done():
+			// 主动关闭
+			c.close()
+
+			c.lg.Info("container: session closed",
 				zap.String("id", c.Id()),
 				zap.String("service", c.Service()),
 			)
@@ -167,15 +162,24 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 }
 
 func (c *Container) Close() {
-	defer close(c.donec)
+	c.close()
 
-	if c.stopper != nil {
-		c.stopper.Close()
-	}
-	c.lg.Info("container closed",
+	c.lg.Info("container: closed",
 		zap.String("id", c.Id()),
 		zap.String("service", c.Service()),
 	)
+}
+
+func (c *Container) close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
+	if c.stopper != nil {
+		c.stopper.Close()
+	}
+	close(c.donec)
 }
 
 func (c *Container) Done() <-chan struct{} {
