@@ -41,7 +41,7 @@ type clientOptions struct {
 	v           apputil.ShardInterface
 }
 
-var defaultSmPrefix = "/sm"
+var defaultEtcdPrefix = "/sm"
 
 type ClientOption func(options *clientOptions)
 
@@ -96,7 +96,7 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 		return nil, errors.New("containerId empty")
 	}
 	if ops.etcdPrefix == "" {
-		ops.etcdPrefix = defaultSmPrefix
+		ops.etcdPrefix = defaultEtcdPrefix
 	}
 	if ops.etcdAddr == nil {
 		return nil, errors.New("etcdAddr empty")
