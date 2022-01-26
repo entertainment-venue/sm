@@ -46,38 +46,38 @@ var defaultEtcdPrefix = "/sm"
 type ClientOption func(options *clientOptions)
 
 func ClientWithRouter(g *gin.Engine) ClientOption {
-	return func(so *clientOptions) {
-		so.g = g
+	return func(co *clientOptions) {
+		co.g = g
 	}
 }
 
 func ClientWithService(service string) ClientOption {
-	return func(so *clientOptions) {
-		so.service = service
+	return func(co *clientOptions) {
+		co.service = service
 	}
 }
 
 func ClientWithContainerId(containerId string) ClientOption {
-	return func(so *clientOptions) {
-		so.containerId = containerId
+	return func(co *clientOptions) {
+		co.containerId = containerId
 	}
 }
 
 func ClientWithEtcdPrefix(etcdPrefix string) ClientOption {
-	return func(so *clientOptions) {
-		so.etcdPrefix = etcdPrefix
+	return func(co *clientOptions) {
+		co.etcdPrefix = etcdPrefix
 	}
 }
 
 func ClientWithEtcdAddr(etcdAddr []string) ClientOption {
-	return func(so *clientOptions) {
-		so.etcdAddr = etcdAddr
+	return func(co *clientOptions) {
+		co.etcdAddr = etcdAddr
 	}
 }
 
 func ClientWithImplementation(v apputil.ShardInterface) ClientOption {
-	return func(so *clientOptions) {
-		so.v = v
+	return func(co *clientOptions) {
+		co.v = v
 	}
 }
 
@@ -123,24 +123,25 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 		return nil, err
 	}
 
-	c.stopper.Wrap(func(ctx context.Context) {
-		for {
-			select {
-			case <-ctx.Done():
-				c.lg.Info("client exit")
-				return
-			case <-c.shardServer.Done():
-				lg.Info("session done, try again")
-				if err := c.newServer(); err != nil {
-					lg.Error("new server failed",
-						zap.String("service", ops.service),
-						zap.String("err", err.Error()),
-					)
-					time.Sleep(3 * time.Second)
+	c.stopper.Wrap(
+		func(ctx context.Context) {
+			for {
+				select {
+				case <-ctx.Done():
+					c.lg.Info("client exit")
+					return
+				case <-c.shardServer.Done():
+					lg.Info("session done, try again")
+					if err := c.newServer(); err != nil {
+						lg.Error("new server failed",
+							zap.String("service", ops.service),
+							zap.String("err", err.Error()),
+						)
+						time.Sleep(3 * time.Second)
+					}
 				}
 			}
-		}
-	})
+		})
 	return c, nil
 }
 
