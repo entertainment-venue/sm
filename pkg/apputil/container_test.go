@@ -18,7 +18,6 @@ func TestContainer_NewContainer_ParamErr(t *testing.T) {
 				ContainerWithService("service"),
 				ContainerWithEndpoints([]string{"127.0.0.1:8888"}),
 				ContainerWithLogger(ttLogger),
-				ContainerWithContext(context.TODO()),
 			},
 			hasErr: true,
 		},
@@ -27,7 +26,6 @@ func TestContainer_NewContainer_ParamErr(t *testing.T) {
 				ContainerWithId("id"),
 				ContainerWithEndpoints([]string{"127.0.0.1:8888"}),
 				ContainerWithLogger(ttLogger),
-				ContainerWithContext(context.TODO()),
 			},
 			hasErr: true,
 		},
@@ -36,7 +34,6 @@ func TestContainer_NewContainer_ParamErr(t *testing.T) {
 				ContainerWithId("id"),
 				ContainerWithService("service"),
 				ContainerWithLogger(ttLogger),
-				ContainerWithContext(context.TODO()),
 			},
 			hasErr: true,
 		},
@@ -45,7 +42,6 @@ func TestContainer_NewContainer_ParamErr(t *testing.T) {
 				ContainerWithId("id"),
 				ContainerWithService("service"),
 				ContainerWithEndpoints([]string{"127.0.0.1:8888"}),
-				ContainerWithContext(context.TODO()),
 			},
 			hasErr: true,
 		},
@@ -119,6 +115,5 @@ func newTestContainerOptions(ctx context.Context) []ContainerOption {
 		ContainerWithService("foo.bar"),
 		ContainerWithEndpoints([]string{"127.0.0.1:2379"}),
 		ContainerWithLogger(ttLogger),
-		ContainerWithContext(ctx),
 	}
 }
