@@ -148,7 +148,6 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 	srv := Server{cancel: cancel, lg: logger, stopped: ops.stopped}
 
 	c, err := apputil.NewContainer(
-		apputil.ContainerWithContext(ctx),
 		apputil.ContainerWithService(ops.service),
 		apputil.ContainerWithId(ops.id),
 		apputil.ContainerWithEndpoints(ops.endpoints),
@@ -171,7 +170,6 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 	routeAndHandler["/sm/server/del-shard"] = apiSrv.GinDelShard
 	ss, err := apputil.NewShardServer(
 		apputil.ShardServerWithAddr(ops.addr),
-		apputil.ShardServerWithContext(ctx),
 		apputil.ShardServerWithContainer(c),
 		apputil.ShardServerWithApiHandler(routeAndHandler),
 		apputil.ShardServerWithShardImplementation(sc),
