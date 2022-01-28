@@ -289,7 +289,16 @@ func (c *smContainer) campaign(ctx context.Context) {
 
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/sm/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
-		c.lw = newMaintenanceWorker(ctx, c.lg, c, c.service)
+		var err error
+		c.lw, err = newMaintenanceWorker(ctx, c.lg, c, c.service)
+		if err != nil {
+			c.lg.Error(
+				"newMaintenanceWorker error",
+				zap.String("service", c.service),
+				zap.Error(err),
+			)
+			goto loop
+		}
 
 		// block until出现需要放弃leader职权的事件
 		c.lg.Info("leader completed op", zap.String("service", c.service))

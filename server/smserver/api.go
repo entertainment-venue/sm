@@ -32,20 +32,23 @@ type shardServer struct {
 	lg *zap.Logger
 }
 
-type addSpecRequest struct {
-	// 目前app的spec更多承担的是管理职能，shard配置的一个起点，先只配置上service，可以唯一标记一个app
+type smAppSpec struct {
+	// Service 目前app的spec更多承担的是管理职能，shard配置的一个起点，先只配置上service，可以唯一标记一个app
 	Service string `json:"service" binding:"required"`
 
 	CreateTime int64 `json:"createTime" binding:"required"`
+
+	// MaxShardCount 单container承载的最大分片数量，防止雪崩
+	MaxShardCount int `json:"maxShardCount" binding:"required"`
 }
 
-func (s *addSpecRequest) String() string {
+func (s *smAppSpec) String() string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
 
 func (ss *shardServer) GinAddSpec(c *gin.Context) {
-	var req addSpecRequest
+	var req smAppSpec
 	if err := c.ShouldBind(&req); err != nil {
 		ss.lg.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
