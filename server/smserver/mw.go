@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"sort"
 	"time"
@@ -26,6 +27,10 @@ import (
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+)
+
+var (
+	defaultMaxShardCount = math.MaxInt
 )
 
 // 管理某个sm app的shard
@@ -37,15 +42,49 @@ type maintenanceWorker struct {
 
 	// 从属于leader或者sm smShard，service和container不一定一样
 	service string
+
+	// spec 需要通过配置影响balance算法
+	spec *smAppSpec
 }
 
-func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smContainer, service string) *maintenanceWorker {
+func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smContainer, service string) (*maintenanceWorker, error) {
+	// worker需要service的配置信息，作为balance的因素
+	appSpecNode := nodeAppSpec(service)
+	resp, err := container.Client.GetKV(ctx, appSpecNode, nil)
+	if err != nil {
+		lg.Error(
+			"get service metadata error",
+			zap.String("node", appSpecNode),
+			zap.Error(err),
+		)
+		return nil, errors.Wrap(err, "")
+	}
+	if resp.Count == 0 {
+		lg.Error(
+			"config service first",
+			zap.String("node", appSpecNode),
+		)
+		return nil, errors.Wrap(err, "")
+	}
+	appSpec := smAppSpec{}
+	if err := json.Unmarshal(resp.Kvs[0].Value, &appSpec); err != nil {
+		lg.Error(
+			"Unmarshal error",
+			zap.String("node", appSpecNode),
+		)
+		return nil, errors.Wrap(err, "")
+	}
+	if appSpec.MaxShardCount == 0 {
+		appSpec.MaxShardCount = defaultMaxShardCount
+	}
+
 	w := &maintenanceWorker{
 		ctx:     ctx,
 		lg:      lg,
 		parent:  container,
 		service: service,
 		gs:      &apputil.GoroutineStopper{},
+		spec:    &appSpec,
 	}
 
 	w.gs.Wrap(
@@ -95,7 +134,7 @@ func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smCont
 		})
 
 	w.lg.Info("maintenanceWorker started", zap.String("service", w.service))
-	return w
+	return w, nil
 }
 
 func (w *maintenanceWorker) Close() {
@@ -173,6 +212,21 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 	etcdHbContainerIdAndAny, err = w.parent.Client.GetKVs(ctx, nodeAppHbContainer(w.service))
 	if err != nil {
 		return errors.Wrap(err, "")
+	}
+
+	// 增加阈值限制，防止单进程过载导致雪崩
+	maxHold := w.maxHold(len(etcdHbContainerIdAndAny), len(etcdShardIdAndAny))
+	if maxHold > w.spec.MaxShardCount {
+		err := errors.New("MaxShardCount exceeded")
+		w.lg.Error(
+			err.Error(),
+			zap.String("service", w.service),
+			zap.Int("maxHold", maxHold),
+			zap.Int("containerCnt", len(etcdHbContainerIdAndAny)),
+			zap.Int("shardCnt", len(etcdShardIdAndAny)),
+			zap.Error(err),
+		)
+		return err
 	}
 
 	for group, bg := range groups {
@@ -372,14 +426,7 @@ func (w *maintenanceWorker) reallocate(fixShardIdAndManualContainerId ArmorMap, 
 	containerLen := len(hbContainerIdAndAny)
 
 	// 每个container最少包含多少shard
-	base := shardLen / containerLen
-	delta := shardLen % containerLen
-	var maxHold int
-	if delta > 0 {
-		maxHold = base + 1
-	} else {
-		maxHold = base
-	}
+	maxHold := w.maxHold(containerLen, shardLen)
 
 	dropFroms := make(map[string]string)
 	getDrops := func(bc *balancerContainer) {
@@ -443,6 +490,22 @@ func (w *maintenanceWorker) reallocate(fixShardIdAndManualContainerId ArmorMap, 
 		zap.Any("hbShardIdAndContainerId", hbShardIdAndContainerId),
 	)
 	return mals
+}
+
+func (w *maintenanceWorker) maxHold(containerCnt, shardCnt int) int {
+	if containerCnt == 0 {
+		// 不做过滤
+		return 0
+	}
+	base := shardCnt / containerCnt
+	delta := shardCnt % containerCnt
+	var r int
+	if delta > 0 {
+		r = base + 1
+	} else {
+		r = base
+	}
+	return r
 }
 
 func (w *maintenanceWorker) shardLoadChecker(_ context.Context, ev *clientv3.Event) error {

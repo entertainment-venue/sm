@@ -64,7 +64,11 @@ func newShard(ctx context.Context, lg *zap.Logger, sc *smContainer, id string, s
 		return nil, errors.Wrap(err, "")
 	}
 
-	s.worker = newMaintenanceWorker(ctx, lg, s.parent, s.service)
+	var err error
+	s.worker, err = newMaintenanceWorker(ctx, lg, s.parent, s.service)
+	if err != nil {
+		return nil, err
+	}
 
 	return &s, nil
 }
