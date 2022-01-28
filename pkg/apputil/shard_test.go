@@ -34,7 +34,6 @@ func TestShardServer_NewShardServer_ParamError(t *testing.T) {
 				ShardServerWithContainer(&Container{}),
 				ShardServerWithLogger(ttLogger),
 				ShardServerWithShardImplementation(&testShardImpl{}),
-				ShardServerWithContext(context.Background()),
 			},
 			hasErr: true,
 		},
@@ -43,7 +42,6 @@ func TestShardServer_NewShardServer_ParamError(t *testing.T) {
 				ShardServerWithAddr("addr"),
 				ShardServerWithLogger(ttLogger),
 				ShardServerWithShardImplementation(&testShardImpl{}),
-				ShardServerWithContext(context.Background()),
 			},
 			hasErr: true,
 		},
@@ -52,7 +50,6 @@ func TestShardServer_NewShardServer_ParamError(t *testing.T) {
 				ShardServerWithAddr("addr"),
 				ShardServerWithContainer(&Container{}),
 				ShardServerWithShardImplementation(&testShardImpl{}),
-				ShardServerWithContext(context.Background()),
 			},
 			hasErr: true,
 		},
@@ -61,7 +58,6 @@ func TestShardServer_NewShardServer_ParamError(t *testing.T) {
 				ShardServerWithAddr("addr"),
 				ShardServerWithContainer(&Container{}),
 				ShardServerWithLogger(ttLogger),
-				ShardServerWithContext(context.Background()),
 			},
 			hasErr: true,
 		},
@@ -107,7 +103,6 @@ func TestShardServer_NewShardServer_CancelCtx(t *testing.T) {
 		ShardServerWithContainer(container),
 		ShardServerWithLogger(ttLogger),
 		ShardServerWithShardImplementation(&testShardImpl{}),
-		ShardServerWithContext(ctx),
 	)
 	if err != nil {
 		t.Errorf("err: %v", err)
@@ -133,7 +128,6 @@ func TestShardServer_NewShardServer_Close(t *testing.T) {
 		ShardServerWithContainer(container),
 		ShardServerWithLogger(ttLogger),
 		ShardServerWithShardImplementation(&testShardImpl{}),
-		ShardServerWithContext(context.TODO()),
 	)
 	if err != nil {
 		t.Errorf("err: %v", err)
@@ -166,7 +160,6 @@ func TestShardServer_Api(t *testing.T) {
 		ShardServerWithContainer(container),
 		ShardServerWithLogger(ttLogger),
 		ShardServerWithShardImplementation(&testShardImpl{}),
-		ShardServerWithContext(context.TODO()),
 	)
 	if err != nil {
 		t.Errorf("err: %v", err)
