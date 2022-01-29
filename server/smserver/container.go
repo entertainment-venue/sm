@@ -20,9 +20,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
