@@ -31,13 +31,11 @@ var (
 	ttLogger, _ = zap.NewProduction()
 )
 
-func newTestOperator() (*operator, context.CancelFunc) {
+func newTestOperator() *operator {
 	id := "127.0.0.1:8888"
 	service := "foo.bar"
-	ctx, cancel := context.WithCancel(context.TODO())
 
 	c, err := apputil.NewContainer(
-		apputil.ContainerWithContext(ctx),
 		apputil.ContainerWithId(id),
 		apputil.ContainerWithService(service),
 		apputil.ContainerWithEndpoints([]string{"127.0.0.1:2379"}),
@@ -49,7 +47,7 @@ func newTestOperator() (*operator, context.CancelFunc) {
 	sc := smContainer{Container: c, service: service}
 
 	o := operator{lg: ttLogger, parent: &sc, service: service}
-	return &o, cancel
+	return &o
 }
 
 func Test_operator_moveActionList_sort(t *testing.T) {
@@ -89,17 +87,17 @@ func Test_operator_moveActionList_sort(t *testing.T) {
 }
 
 func Test_operator_moveLoop(t *testing.T) {
-	o, cancel := newTestOperator()
+	o := newTestOperator()
 
 	o.moveLoop(context.TODO())
 
 	stopch := make(chan struct{})
 	<-stopch
-	cancel()
+	o.Close()
 }
 
 func Test_operator_move(t *testing.T) {
-	c, _, _ := newTestShardServer("foo.bar2", "127.0.0.1:8802", []string{"127.0.0.1:2379"}, ":8802")
+	c, _ := newTestShardServer("foo.bar2", "127.0.0.1:8802", []string{"127.0.0.1:2379"}, ":8802")
 	sc := smContainer{Container: c}
 
 	o := operator{lg: ttLogger, service: "foo.bar"}
@@ -117,7 +115,7 @@ func Test_operator_move(t *testing.T) {
 }
 
 func Test_operator_dropOrAdd(t *testing.T) {
-	c, _, _ := newTestShardServer("foo.bar2", "127.0.0.1:8802", []string{"127.0.0.1:2379"}, ":8802")
+	c, _ := newTestShardServer("foo.bar2", "127.0.0.1:8802", []string{"127.0.0.1:2379"}, ":8802")
 	sc := smContainer{Container: c}
 
 	o := operator{lg: ttLogger}
@@ -137,7 +135,7 @@ func Test_operator_dropOrAdd(t *testing.T) {
 }
 
 func Test_operator_send(t *testing.T) {
-	c, _, _ := newTestShardServer("foo.bar2", "127.0.0.1:8802", []string{"127.0.0.1:2379"}, ":8802")
+	c, _ := newTestShardServer("foo.bar2", "127.0.0.1:8802", []string{"127.0.0.1:2379"}, ":8802")
 	sc := smContainer{Container: c}
 
 	o := operator{lg: ttLogger}

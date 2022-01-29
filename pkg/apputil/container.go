@@ -108,8 +108,7 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	ctx, _ := context.WithTimeout(context.Background(), 3*time.Second)
-	s, err := concurrency.NewSession(ec.Client, concurrency.WithTTL(5), concurrency.WithContext(ctx))
+	s, err := concurrency.NewSession(ec.Client, concurrency.WithTTL(5))
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}

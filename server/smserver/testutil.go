@@ -10,13 +10,10 @@ import (
 )
 
 // 启动被管理的sharded application
-func newTestShardServer(service string, containerId string, endpoints []string, addr string) (*apputil.Container, *apputil.ShardServer, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(context.TODO())
-
+func newTestShardServer(service string, containerId string, endpoints []string, addr string) (*apputil.Container, *apputil.ShardServer) {
 	logger, _ := zap.NewProduction()
 
 	c, err := apputil.NewContainer(
-		apputil.ContainerWithContext(ctx),
 		apputil.ContainerWithService(service),
 		apputil.ContainerWithId(containerId),
 		apputil.ContainerWithEndpoints(endpoints),
@@ -27,7 +24,6 @@ func newTestShardServer(service string, containerId string, endpoints []string, 
 
 	ss, err := apputil.NewShardServer(
 		apputil.ShardServerWithAddr(addr),
-		apputil.ShardServerWithContext(ctx),
 		apputil.ShardServerWithContainer(c),
 		apputil.ShardServerWithShardImplementation(&testShard{m: make(map[string]string)}),
 		apputil.ShardServerWithLogger(logger))
@@ -35,7 +31,7 @@ func newTestShardServer(service string, containerId string, endpoints []string, 
 		panic(err)
 	}
 
-	return c, ss, cancel
+	return c, ss
 }
 
 type testShard struct {

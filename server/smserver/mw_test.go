@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
-	"github.com/coreos/etcd/mvcc/mvccpb"
+	"go.etcd.io/etcd/api/v3/mvccpb"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -33,7 +33,7 @@ func Test_newMaintenanceWorker(t *testing.T) {
 		t.SkipNow()
 	}
 
-	mw := newMaintenanceWorker(context.TODO(), ttLogger, ctr, "foo.bar")
+	mw, _ := newMaintenanceWorker(context.TODO(), ttLogger, ctr, "foo.bar")
 
 	go func() {
 		time.Sleep(5 * time.Second)
@@ -80,7 +80,7 @@ func Test_changed(t *testing.T) {
 	}
 	mw := maintenanceWorker{}
 	for idx, tt := range tests {
-		if tt.expect != mw.changed(true, tt.a, tt.b) {
+		if tt.expect != mw.changed(tt.a, tt.b) {
 			t.Errorf("idx %d expect %t", idx, tt.expect)
 			t.SkipNow()
 		}

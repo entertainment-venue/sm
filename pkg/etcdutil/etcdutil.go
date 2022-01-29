@@ -22,6 +22,7 @@ import (
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 var (
@@ -42,7 +43,7 @@ func NewEtcdClient(endpoints []string, lg *zap.Logger) (*EtcdClient, error) {
 	if len(endpoints) < 1 {
 		return nil, errors.New("You must provide at least one etcd address")
 	}
-	client, err := clientv3.New(clientv3.Config{Endpoints: endpoints, DialTimeout: 3 * time.Second})
+	client, err := clientv3.New(clientv3.Config{Endpoints: endpoints, DialTimeout: 3 * time.Second, DialOptions: []grpc.DialOption{grpc.WithBlock()}})
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
