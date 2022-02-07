@@ -64,12 +64,15 @@ func (ss *ShardSpec) Validate() error {
 	return nil
 }
 
-type ShardHbData struct {
+type ShardHeartbeat struct {
 	Load        string `json:"load"`
 	ContainerId string `json:"containerId"`
+
+	// Timestamp sm中用于计算shard删除事件的等待时间
+	Timestamp int64 `json:"timestamp"`
 }
 
-func (s *ShardHbData) String() string {
+func (s *ShardHeartbeat) String() string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
@@ -234,9 +237,10 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 						return errors.Wrap(err, "")
 					}
 
-					hb := ShardHbData{
+					hb := ShardHeartbeat{
 						Load:        load,
 						ContainerId: ss.opts.container.Id(),
+						Timestamp:   time.Now().Unix(),
 					}
 
 					key := EtcdPathAppShardHbId(ss.opts.container.Service(), id)

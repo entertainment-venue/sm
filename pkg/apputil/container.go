@@ -193,20 +193,23 @@ func (c *Container) Service() string {
 	return c.service
 }
 
-type SysLoad struct {
+type ContainerHeartbeat struct {
 	VirtualMemoryStat  *mem.VirtualMemoryStat `json:"virtualMemoryStat"`
 	CPUUsedPercent     float64                `json:"cpuUsedPercent"`
 	DiskIOCountersStat []*disk.IOCountersStat `json:"diskIOCountersStat"`
 	NetIOCountersStat  *net.IOCountersStat    `json:"netIOCountersStat"`
+
+	// Timestamp sm中用于计算container删除事件的等待时间
+	Timestamp int64 `json:"timestamp"`
 }
 
-func (l *SysLoad) String() string {
+func (l *ContainerHeartbeat) String() string {
 	b, _ := json.Marshal(l)
 	return string(b)
 }
 
 func (c *Container) UploadSysLoad(ctx context.Context) error {
-	ld := SysLoad{}
+	ld := ContainerHeartbeat{Timestamp: time.Now().Unix()}
 
 	// 内存使用比率
 	vm, err := mem.VirtualMemory()
