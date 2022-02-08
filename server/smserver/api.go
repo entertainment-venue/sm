@@ -36,10 +36,10 @@ type smAppSpec struct {
 	// Service 目前app的spec更多承担的是管理职能，shard配置的一个起点，先只配置上service，可以唯一标记一个app
 	Service string `json:"service" binding:"required"`
 
-	CreateTime int64 `json:"createTime" binding:"required"`
+	CreateTime int64 `json:"createTime"`
 
 	// MaxShardCount 单container承载的最大分片数量，防止雪崩
-	MaxShardCount int `json:"maxShardCount" binding:"required"`
+	MaxShardCount int `json:"maxShardCount"`
 
 	// MaxRecoveryTime 遇到container删除的场景，等待的时间，超时认为该container被清理
 	MaxRecoveryTime int `json:"maxRecoveryTime"`
@@ -57,6 +57,7 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	req.CreateTime = time.Now().Unix()
 	ss.lg.Info("receive add spec request", zap.String("request", req.String()))
 
 	//  写入app spec和app task节点在一个tx

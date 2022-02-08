@@ -34,10 +34,9 @@ var (
 )
 
 // 管理某个sm app的shard
-type maintenanceWorker struct {
+type Worker struct {
 	parent  *smContainer
 	lg      *zap.Logger
-	ctx     context.Context
 	stopper *apputil.GoroutineStopper
 
 	// 从属于leader或者sm smShard，service和container不一定一样
@@ -50,7 +49,7 @@ type maintenanceWorker struct {
 	mpr *mapper
 }
 
-func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smContainer, service string) (*maintenanceWorker, error) {
+func newWorker(ctx context.Context, lg *zap.Logger, container *smContainer, service string) (*Worker, error) {
 	// worker需要service的配置信息，作为balance的因素
 	appSpecNode := nodeAppSpec(service)
 	resp, err := container.Client.GetKV(ctx, appSpecNode, nil)
@@ -69,8 +68,7 @@ func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smCont
 		appSpec.MaxShardCount = defaultMaxShardCount
 	}
 
-	w := &maintenanceWorker{
-		ctx:     ctx,
+	w := &Worker{
 		lg:      lg,
 		parent:  container,
 		service: service,
@@ -87,7 +85,7 @@ func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smCont
 	w.stopper.Wrap(
 		func(ctx context.Context) {
 			apputil.TickerLoop(
-				w.ctx,
+				ctx,
 				w.lg,
 				defaultLoopInterval,
 				fmt.Sprintf("[lw] service %s ShardAllocateLoop exit", w.service),
@@ -103,7 +101,7 @@ func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smCont
 	w.stopper.Wrap(
 		func(ctx context.Context) {
 			apputil.WatchLoop(
-				w.ctx,
+				ctx,
 				w.lg,
 				w.parent.Client.Client,
 				nodeAppShardHb(w.service),
@@ -118,7 +116,7 @@ func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smCont
 	w.stopper.Wrap(
 		func(ctx context.Context) {
 			apputil.WatchLoop(
-				w.ctx,
+				ctx,
 				w.lg,
 				w.parent.Client.Client,
 				nodeAppContainerHb(w.service),
@@ -130,19 +128,19 @@ func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smCont
 			)
 		})
 
-	w.lg.Info("maintenanceWorker started", zap.String("service", w.service))
+	w.lg.Info("Worker started", zap.String("service", w.service))
 	return w, nil
 }
 
-func (w *maintenanceWorker) Close() {
+func (w *Worker) Close() {
 	w.mpr.Close()
 	w.stopper.Close()
-	w.lg.Info("maintenanceWorker stopped", zap.String("service", w.service))
+	w.lg.Info("Worker stopped", zap.String("service", w.service))
 }
 
 // 1 smContainer 的增加/减少是优先级最高，目前可能涉及大量shard move
 // 2 smShard 被漏掉作为container检测的补充，最后校验，这种情况只涉及到漏掉的shard任务下发下去
-func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
+func (w *Worker) allocateChecker(ctx context.Context) error {
 	groups := make(map[string]*balancerGroup)
 
 	// 获取当前所有shard配置
@@ -311,13 +309,13 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 	return nil
 }
 
-func (w *maintenanceWorker) changed(a []string, b []string) bool {
+func (w *Worker) changed(a []string, b []string) bool {
 	sort.Strings(a)
 	sort.Strings(b)
 	return !reflect.DeepEqual(a, b)
 }
 
-func (w *maintenanceWorker) reallocate(fixShardIdAndManualContainerId ArmorMap, hbContainerIdAndAny ArmorMap, hbShardIdAndContainerId ArmorMap) moveActionList {
+func (w *Worker) reallocate(fixShardIdAndManualContainerId ArmorMap, hbContainerIdAndAny ArmorMap, hbShardIdAndContainerId ArmorMap) moveActionList {
 	if len(hbContainerIdAndAny) == 0 {
 		w.lg.Info(
 			"empty container, can not trigger rebalance",
@@ -499,7 +497,7 @@ func (w *maintenanceWorker) reallocate(fixShardIdAndManualContainerId ArmorMap, 
 	return mals
 }
 
-func (w *maintenanceWorker) maxHold(containerCnt, shardCnt int) int {
+func (w *Worker) maxHold(containerCnt, shardCnt int) int {
 	if containerCnt == 0 {
 		// 不做过滤
 		return 0
@@ -515,7 +513,7 @@ func (w *maintenanceWorker) maxHold(containerCnt, shardCnt int) int {
 	return r
 }
 
-func (w *maintenanceWorker) shardLoadChecker(_ context.Context, ev *clientv3.Event) error {
+func (w *Worker) shardLoadChecker(_ context.Context, ev *clientv3.Event) error {
 	// 只关注hb节点的load变化
 	if !ev.IsModify() {
 		return nil
@@ -535,7 +533,7 @@ func (w *maintenanceWorker) shardLoadChecker(_ context.Context, ev *clientv3.Eve
 	return nil
 }
 
-func (w *maintenanceWorker) containerLoadChecker(_ context.Context, ev *clientv3.Event) error {
+func (w *Worker) containerLoadChecker(_ context.Context, ev *clientv3.Event) error {
 	if !ev.IsModify() {
 		return nil
 	}

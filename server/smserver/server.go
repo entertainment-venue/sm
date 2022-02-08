@@ -16,6 +16,7 @@ package smserver
 
 import (
 	"context"
+	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/gin-gonic/gin"
@@ -24,15 +25,12 @@ import (
 )
 
 type Server struct {
-	// 管理sm server内部的goroutine
-	cancel context.CancelFunc
-
 	c   *apputil.Container
 	ss  *apputil.ShardServer
 	smc *smContainer
 
-	lg      *zap.Logger
-	stopped chan error
+	opts    *serverOptions
+	stopper *apputil.GoroutineStopper
 }
 
 type serverOptions struct {
@@ -131,79 +129,98 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 	if ops.lg == nil {
 		return nil, errors.New("logger err")
 	}
+	if ops.ctx == nil {
+		ops.ctx = context.Background()
+	}
 	apputil.InitEtcdPrefix(ops.etcdPrefix)
 
-	// 允许调用方对server进行控制
-	var (
-		ctx    context.Context
-		cancel context.CancelFunc
-	)
-	if ops.ctx == nil {
-		ctx, cancel = context.WithCancel(context.Background())
-	} else {
-		ctx, cancel = context.WithCancel(ops.ctx)
+	srv := Server{opts: &ops, stopper: &apputil.GoroutineStopper{}}
+	if err := srv.run(); err != nil {
+		return nil, err
 	}
 
-	logger := ops.lg
-	srv := Server{cancel: cancel, lg: logger, stopped: ops.stopped}
-
-	c, err := apputil.NewContainer(
-		apputil.ContainerWithService(ops.service),
-		apputil.ContainerWithId(ops.id),
-		apputil.ContainerWithEndpoints(ops.endpoints),
-		apputil.ContainerWithLogger(logger))
-	if err != nil {
-		return nil, errors.Wrap(err, "")
-	}
-	srv.c = c
-
-	sc, err := newSMContainer(ctx, logger, ops.id, ops.service, c)
-	if err != nil {
-		return nil, errors.Wrap(err, "")
-	}
-	srv.smc = sc
-
-	apiSrv := shardServer{sc, logger}
-	routeAndHandler := make(map[string]func(c *gin.Context))
-	routeAndHandler["/sm/server/add-spec"] = apiSrv.GinAddSpec
-	routeAndHandler["/sm/server/add-shard"] = apiSrv.GinAddShard
-	routeAndHandler["/sm/server/del-shard"] = apiSrv.GinDelShard
-	ss, err := apputil.NewShardServer(
-		apputil.ShardServerWithAddr(ops.addr),
-		apputil.ShardServerWithContainer(c),
-		apputil.ShardServerWithApiHandler(routeAndHandler),
-		apputil.ShardServerWithShardImplementation(sc),
-		apputil.ShardServerWithLogger(logger),
-		apputil.ShardServerWithEtcdPrefix(ops.etcdPrefix))
-	if err != nil {
-		return nil, errors.Wrap(err, "")
-	}
-	srv.ss = ss
+	srv.stopper.Wrap(
+		func(ctx context.Context) {
+			for {
+				select {
+				case <-ctx.Done():
+					srv.opts.lg.Info("client exit")
+					return
+				case <-srv.ss.Done():
+					srv.smc.Close()
+					// 关注apputil中的ShardServer关闭，尝试重新连接
+					srv.opts.lg.Info("session done, try again")
+					if err := srv.run(); err != nil {
+						srv.opts.lg.Error("new server failed",
+							zap.String("service", ops.service),
+							zap.String("err", err.Error()),
+						)
+						time.Sleep(3 * time.Second)
+					}
+				}
+			}
+		})
 
 	go func() {
 		defer srv.Close()
 
-		// 关注apputil中的Container和ShardServer关闭，sm服务停下来
+		// 允许外部通过ctx，控制sm服务停下来
 		select {
-		case <-c.Done():
-			logger.Info("container done")
-		case <-ss.Done():
-			logger.Info("shard server done")
-		case <-ctx.Done():
-			logger.Info("main exit server")
+		case <-srv.opts.ctx.Done():
+			ops.lg.Info("main exit server")
 		}
 	}()
 
 	return &srv, nil
 }
 
-func (s *Server) Close() {
-	defer s.lg.Sync()
-
-	if s.cancel != nil {
-		s.cancel()
+func (s *Server) run() error {
+	c, err := apputil.NewContainer(
+		apputil.ContainerWithService(s.opts.service),
+		apputil.ContainerWithId(s.opts.id),
+		apputil.ContainerWithEndpoints(s.opts.endpoints),
+		apputil.ContainerWithLogger(s.opts.lg))
+	if err != nil {
+		return errors.Wrap(err, "new container failed")
 	}
+	s.c = c
 
+	sc, err := newSMContainer(s.opts.lg, s.opts.id, s.opts.service, c)
+	if err != nil {
+		c.Close()
+		return errors.Wrap(err, "new SM container failed")
+	}
+	s.smc = sc
+
+	apiSrv := shardServer{sc, s.opts.lg}
+	routeAndHandler := make(map[string]func(c *gin.Context))
+	routeAndHandler["/sm/server/add-spec"] = apiSrv.GinAddSpec
+	routeAndHandler["/sm/server/add-shard"] = apiSrv.GinAddShard
+	routeAndHandler["/sm/server/del-shard"] = apiSrv.GinDelShard
+	ss, err := apputil.NewShardServer(
+		apputil.ShardServerWithAddr(s.opts.addr),
+		apputil.ShardServerWithContainer(c),
+		apputil.ShardServerWithApiHandler(routeAndHandler),
+		apputil.ShardServerWithShardImplementation(sc),
+		apputil.ShardServerWithLogger(s.opts.lg),
+		apputil.ShardServerWithEtcdPrefix(s.opts.etcdPrefix))
+	if err != nil {
+		c.Close()
+		sc.Close()
+		return errors.Wrap(err, "new shard server failed")
+	}
+	s.ss = ss
+	return nil
+}
+
+func (s *Server) Close() {
+	defer s.opts.lg.Sync()
+	if s.stopper != nil {
+		s.stopper.Close()
+	}
+	s.c.Close()
+	s.smc.Close()
+	s.ss.Close()
 	// 通知上游，保留像上游传递error的能力
-	close(s.stopped)
+	close(s.opts.stopped)
 }
