@@ -275,7 +275,7 @@ func (c *smContainer) campaign(ctx context.Context) {
 
 		// leader启动时，等待一个时间段，方便所有container做至少一次heartbeat，然后开始监测是否需要进行container和shard映射关系的变更。
 		// etcd sdk中keepalive的请求发送时间时500ms，5s>>500ms，认为这个时间段内，所有container都会发heartbeat，不存在的就认为没有任务。
-		time.Sleep(5 * time.Second)
+		time.Sleep(defaultMaxRecoveryTime)
 
 		// leader启动operator
 		if err := c.RegisterOperator(c.service); err != nil {

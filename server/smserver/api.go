@@ -40,6 +40,9 @@ type smAppSpec struct {
 
 	// MaxShardCount 单container承载的最大分片数量，防止雪崩
 	MaxShardCount int `json:"maxShardCount" binding:"required"`
+
+	// MaxRecoveryTime 遇到container删除的场景，等待的时间，超时认为该container被清理
+	MaxRecoveryTime int `json:"maxRecoveryTime"`
 }
 
 func (s *smAppSpec) String() string {
