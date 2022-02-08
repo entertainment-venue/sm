@@ -38,11 +38,6 @@ func nodeAppShardHb(service string) string {
 	return fmt.Sprintf("%s/shardhb/", apputil.EtcdPathAppPrefix(service))
 }
 
-// /sm/proxy/admin/containerhb/
-func nodeAppHbContainer(service string) string {
-	return fmt.Sprintf("%s/containerhb/", apputil.EtcdPathAppPrefix(service))
-}
-
 // /sm/app/proxy/spec 存储app的基本信息
 func nodeAppSpec(service string) string {
 	return fmt.Sprintf("%s/spec", apputil.EtcdPathAppPrefix(service))

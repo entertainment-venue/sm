@@ -35,16 +35,19 @@ var (
 
 // 管理某个sm app的shard
 type maintenanceWorker struct {
-	parent *smContainer
-	lg     *zap.Logger
-	ctx    context.Context
-	gs     *apputil.GoroutineStopper
+	parent  *smContainer
+	lg      *zap.Logger
+	ctx     context.Context
+	stopper *apputil.GoroutineStopper
 
 	// 从属于leader或者sm smShard，service和container不一定一样
 	service string
 
 	// spec 需要通过配置影响balance算法
 	spec *smAppSpec
+
+	// mpr 存储当前存活的container和shard信息，代理etcd访问
+	mpr *mapper
 }
 
 func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smContainer, service string) (*maintenanceWorker, error) {
@@ -52,26 +55,14 @@ func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smCont
 	appSpecNode := nodeAppSpec(service)
 	resp, err := container.Client.GetKV(ctx, appSpecNode, nil)
 	if err != nil {
-		lg.Error(
-			"get service metadata error",
-			zap.String("node", appSpecNode),
-			zap.Error(err),
-		)
 		return nil, errors.Wrap(err, "")
 	}
 	if resp.Count == 0 {
-		lg.Error(
-			"config service first",
-			zap.String("node", appSpecNode),
-		)
+		err := errors.Errorf("service not config %s", appSpecNode)
 		return nil, errors.Wrap(err, "")
 	}
 	appSpec := smAppSpec{}
 	if err := json.Unmarshal(resp.Kvs[0].Value, &appSpec); err != nil {
-		lg.Error(
-			"Unmarshal error",
-			zap.String("node", appSpecNode),
-		)
 		return nil, errors.Wrap(err, "")
 	}
 	if appSpec.MaxShardCount == 0 {
@@ -83,11 +74,17 @@ func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smCont
 		lg:      lg,
 		parent:  container,
 		service: service,
-		gs:      &apputil.GoroutineStopper{},
+		stopper: &apputil.GoroutineStopper{},
 		spec:    &appSpec,
 	}
 
-	w.gs.Wrap(
+	// TODO 参数传递的有些冗余，需要重新梳理
+	w.mpr, err = newMapper(ctx, lg, container, &appSpec)
+	if err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+
+	w.stopper.Wrap(
 		func(ctx context.Context) {
 			apputil.TickerLoop(
 				w.ctx,
@@ -103,7 +100,7 @@ func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smCont
 	var opts []clientv3.OpOption
 	opts = append(opts, clientv3.WithPrefix())
 
-	w.gs.Wrap(
+	w.stopper.Wrap(
 		func(ctx context.Context) {
 			apputil.WatchLoop(
 				w.ctx,
@@ -118,7 +115,7 @@ func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smCont
 			)
 		})
 
-	w.gs.Wrap(
+	w.stopper.Wrap(
 		func(ctx context.Context) {
 			apputil.WatchLoop(
 				w.ctx,
@@ -138,7 +135,8 @@ func newMaintenanceWorker(ctx context.Context, lg *zap.Logger, container *smCont
 }
 
 func (w *maintenanceWorker) Close() {
-	w.gs.Close()
+	w.mpr.Close()
+	w.stopper.Close()
 	w.lg.Info("maintenanceWorker stopped", zap.String("service", w.service))
 }
 
@@ -184,35 +182,23 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 	}
 
 	// 获取当前存活shard，存活shard的container分配关系如果命中可以不生产moveAction
-	etcdHbShardIdAndValue, err := w.parent.Client.GetKVs(ctx, nodeAppShardHb(w.service))
-	if err != nil {
-		return errors.Wrap(err, "")
-	}
-	for id, value := range etcdHbShardIdAndValue {
-		var data apputil.ShardHbData
-		if err := json.Unmarshal([]byte(value), &data); err != nil {
-			return errors.Wrap(err, "")
-		}
-
-		group, ok := shardIdAndGroup[id]
+	etcdHbShardIdAndValue := w.mpr.AliveShards()
+	for shardId, value := range etcdHbShardIdAndValue {
+		group, ok := shardIdAndGroup[shardId]
 		if !ok {
 			for _, bg := range groups {
-				bg.hbShardIdAndContainerId[id] = data.ContainerId
+				bg.hbShardIdAndContainerId[shardId] = value.curContainerId
 				// shard的配置删除，代表service想要移除这个shard，为了方便下面的算法，在第一个group中都保留这个shard，group不影响删除操作
 				break
 			}
 			continue
 		}
 		// shard配置中存在group
-		groups[group].hbShardIdAndContainerId[id] = data.ContainerId
+		groups[group].hbShardIdAndContainerId[shardId] = value.curContainerId
 	}
 
 	// 现有存活containers
-	var etcdHbContainerIdAndAny ArmorMap
-	etcdHbContainerIdAndAny, err = w.parent.Client.GetKVs(ctx, nodeAppHbContainer(w.service))
-	if err != nil {
-		return errors.Wrap(err, "")
-	}
+	etcdHbContainerIdAndAny := w.mpr.AliveContainers()
 
 	// 增加阈值限制，防止单进程过载导致雪崩
 	maxHold := w.maxHold(len(etcdHbContainerIdAndAny), len(etcdShardIdAndAny))
@@ -256,8 +242,29 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 		containerChanged := w.changed(hbContainerIds, bg.hbShardIdAndContainerId.ValueList())
 		shardChanged := w.changed(fixShardIds, hbShardIds)
 		if !containerChanged && !shardChanged {
-			continue
+			// 需要探测是否有某个container过载，即超过应该容纳的shard数量
+			var exist bool
+			maxHold := w.maxHold(len(hbContainerIds), len(fixShardIds))
+			kv := bg.hbShardIdAndContainerId.SwapKV()
+			for _, shardIds := range kv {
+				if len(shardIds) > maxHold {
+					exist = true
+					break
+				}
+			}
+			if !exist {
+				continue
+			}
 		}
+
+		w.lg.Info(
+			"changed",
+			zap.String("group", group),
+			zap.String("service", w.service),
+			zap.Bool("containerChanged", containerChanged),
+			zap.Bool("shardChanged", shardChanged),
+		)
+
 		// 需要保证在变更的情况下是有container可以接受分配的
 		if len(etcdHbContainerIdAndAny) == 0 {
 			continue
@@ -265,7 +272,7 @@ func (w *maintenanceWorker) allocateChecker(ctx context.Context) error {
 		var typ eventType
 		if containerChanged {
 			typ = tContainerChanged
-		} else if shardChanged {
+		} else {
 			typ = tShardChanged
 		}
 
