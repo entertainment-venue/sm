@@ -16,7 +16,6 @@ package smserver
 
 import (
 	"context"
-	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -27,23 +26,16 @@ import (
 )
 
 func Test_newMaintenanceWorker(t *testing.T) {
-	ctr, err := newSMContainer(context.TODO(), ttLogger, "127.0.0.1:8888", "foo.bar", nil)
+	ctr, err := newSMContainer(ttLogger, "127.0.0.1:8888", "foo.bar", nil)
 	if err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
 	}
 
-	mw, _ := newMaintenanceWorker(context.TODO(), ttLogger, ctr, "foo.bar")
+	mw, _ := newWorker(context.TODO(), ttLogger, ctr, "foo.bar")
 
-	go func() {
-		time.Sleep(5 * time.Second)
-		mw.Close()
-	}()
-
-	select {
-	case <-mw.ctx.Done():
-		fmt.Printf("exit")
-	}
+	time.Sleep(5 * time.Second)
+	mw.Close()
 }
 
 func Test_changed(t *testing.T) {
@@ -78,7 +70,7 @@ func Test_changed(t *testing.T) {
 			expect: true,
 		},
 	}
-	mw := maintenanceWorker{}
+	mw := Worker{}
 	for idx, tt := range tests {
 		if tt.expect != mw.changed(tt.a, tt.b) {
 			t.Errorf("idx %d expect %t", idx, tt.expect)
@@ -201,7 +193,7 @@ func Test_reallocate(t *testing.T) {
 	}
 
 	logger, _ := zap.NewDevelopment()
-	w := maintenanceWorker{service: "foo.bar", lg: logger}
+	w := Worker{service: "foo.bar", lg: logger}
 
 	for idx, tt := range tests {
 		r := w.reallocate(tt.fixShardIdAndManualContainerId, tt.hbContainerIdAndAny, tt.hbShardIdAndContainerId)
@@ -213,14 +205,14 @@ func Test_reallocate(t *testing.T) {
 }
 
 func Test_shardLoadChecker(t *testing.T) {
-	eq := newEventQueue(context.Background(), ttLogger, nil)
+	eq := newEventQueue(ttLogger, nil)
 
 	ev := clientv3.Event{
 		Type: mvccpb.DELETE,
 		Kv:   &mvccpb.KeyValue{},
 	}
 
-	mw := maintenanceWorker{}
+	mw := Worker{}
 
 	if err := mw.shardLoadChecker(context.TODO(), &ev); err != nil {
 		t.Errorf("err: %v", err)
@@ -233,14 +225,14 @@ func Test_shardLoadChecker(t *testing.T) {
 }
 
 func Test_containerLoadChecker(t *testing.T) {
-	eq := newEventQueue(context.Background(), ttLogger, nil)
+	eq := newEventQueue(ttLogger, nil)
 
 	ev := clientv3.Event{
 		Type: mvccpb.DELETE,
 		Kv:   &mvccpb.KeyValue{},
 	}
 
-	mw := maintenanceWorker{}
+	mw := Worker{}
 
 	if err := mw.containerLoadChecker(context.TODO(), &ev); err != nil {
 		t.Errorf("err: %v", err)

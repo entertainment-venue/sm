@@ -66,7 +66,7 @@ type eventQueue struct {
 	lg *zap.Logger
 }
 
-func newEventQueue(_ context.Context, lg *zap.Logger, sc *smContainer) *eventQueue {
+func newEventQueue(lg *zap.Logger, sc *smContainer) *eventQueue {
 	eq := eventQueue{
 		parent:        sc,
 		serviceEvChan: make(map[string]chan *mvEvent),

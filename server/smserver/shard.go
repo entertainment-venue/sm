@@ -42,7 +42,7 @@ type smShard struct {
 
 	shardSpec *apputil.ShardSpec
 
-	worker *maintenanceWorker
+	worker *Worker
 }
 
 func newShard(ctx context.Context, lg *zap.Logger, sc *smContainer, id string, spec *apputil.ShardSpec) (*smShard, error) {
@@ -65,7 +65,7 @@ func newShard(ctx context.Context, lg *zap.Logger, sc *smContainer, id string, s
 	}
 
 	var err error
-	s.worker, err = newMaintenanceWorker(ctx, lg, s.parent, s.service)
+	s.worker, err = newWorker(ctx, lg, s.parent, s.service)
 	if err != nil {
 		return nil, err
 	}

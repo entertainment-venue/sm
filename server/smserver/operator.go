@@ -115,6 +115,13 @@ func (o *operator) moveLoop(ctx context.Context) {
 	// Move只有对特定app负责的operator
 	// 当前如果存在任务，直接开始执行
 stockTask:
+	select {
+	case <-ctx.Done():
+		o.lg.Info("operator exit", zap.String("service", o.service))
+		return
+	default:
+	}
+
 	resp, err := o.parent.Client.GetKV(ctx, key, nil)
 	if err != nil {
 		o.lg.Error("failed to GetKV",

@@ -41,7 +41,7 @@ type smContainer struct {
 	lg *zap.Logger
 
 	// 保证sm运行健康的goroutine，通过task节点下发任务给op
-	lw *maintenanceWorker
+	lw *Worker
 
 	eq *eventQueue
 
@@ -58,7 +58,7 @@ type smContainer struct {
 	stopped bool
 }
 
-func newSMContainer(ctx context.Context, lg *zap.Logger, id, service string, c *apputil.Container) (*smContainer, error) {
+func newSMContainer(lg *zap.Logger, id, service string, c *apputil.Container) (*smContainer, error) {
 	sc := smContainer{
 		lg:        lg,
 		id:        id,
@@ -70,7 +70,7 @@ func newSMContainer(ctx context.Context, lg *zap.Logger, id, service string, c *
 		shardServiceAndOp: make(map[string]*operator),
 	}
 
-	sc.eq = newEventQueue(ctx, lg, &sc)
+	sc.eq = newEventQueue(lg, &sc)
 
 	sc.gs.Wrap(
 		func(ctx context.Context) {
@@ -96,6 +96,9 @@ func (c *smContainer) Close() {
 
 	if c.lw != nil {
 		c.lw.Close()
+	}
+	if c.eq != nil {
+		c.eq.Close()
 	}
 
 	// stop smShard
@@ -178,6 +181,7 @@ func (c *smContainer) Drop(_ context.Context, id string) error {
 		return errors.Wrap(errNotExist, "")
 	}
 	sd.Close()
+	delete(c.idAndShard, id)
 	c.lg.Info("shard dropped", zap.String("id", id))
 	return nil
 }
@@ -290,10 +294,10 @@ func (c *smContainer) campaign(ctx context.Context) {
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/sm/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
 		var err error
-		c.lw, err = newMaintenanceWorker(ctx, c.lg, c, c.service)
+		c.lw, err = newWorker(ctx, c.lg, c, c.service)
 		if err != nil {
 			c.lg.Error(
-				"newMaintenanceWorker error",
+				"newWorker error",
 				zap.String("service", c.service),
 				zap.Error(err),
 			)
