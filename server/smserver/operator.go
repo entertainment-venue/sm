@@ -117,7 +117,7 @@ func (o *operator) moveLoop(ctx context.Context) {
 stockTask:
 	select {
 	case <-ctx.Done():
-		o.lg.Info("operator exit")
+		o.lg.Info("operator exit", zap.String("service", o.service))
 		return
 	default:
 	}
