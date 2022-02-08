@@ -64,12 +64,14 @@ func (ss *ShardSpec) Validate() error {
 	return nil
 }
 
-type ShardHbData struct {
+type ShardHeartbeat struct {
+	Heartbeat
+
 	Load        string `json:"load"`
 	ContainerId string `json:"containerId"`
 }
 
-func (s *ShardHbData) String() string {
+func (s *ShardHeartbeat) String() string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
@@ -234,10 +236,11 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 						return errors.Wrap(err, "")
 					}
 
-					hb := ShardHbData{
+					hb := ShardHeartbeat{
 						Load:        load,
 						ContainerId: ss.opts.container.Id(),
 					}
+					hb.Timestamp = time.Now().Unix()
 
 					key := EtcdPathAppShardHbId(ss.opts.container.Service(), id)
 					if _, err := ss.opts.container.Client.Put(ctx, key, hb.String(), clientv3.WithLease(ss.opts.container.Session.Lease())); err != nil {
