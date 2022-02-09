@@ -93,12 +93,12 @@ func newShardKeeper(lg *zap.Logger, service string, impl ShardInterface) (*shard
 
 	// 基于boltdb当前内容做shard下发
 	initFn := func(k, v []byte) error {
-		var ss ShardSpec
-		if err := json.Unmarshal(v, &ss); err != nil {
+		var value shardKeeperDbValue
+		if err := json.Unmarshal(v, &value); err != nil {
 			return err
 		}
 		// 使用shardImpl还是lk.Add要区分清楚，forEach中如果有boltdb访问会block
-		return lk.shardImpl.Add(string(k), &ss)
+		return lk.shardImpl.Add(string(k), value.Spec)
 	}
 	if err := lk.forEach(initFn); err != nil {
 		return nil, errors.Wrap(err, "")
