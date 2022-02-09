@@ -76,7 +76,7 @@ func newShardKeeper(lg *zap.Logger, service string, impl ShardInterface) (*shard
 		return nil, errors.Wrap(err, "")
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucket([]byte(service))
+		_, err := tx.CreateBucketIfNotExists([]byte(service))
 		return err
 	}); err != nil {
 		return nil, errors.Wrap(err, "")
