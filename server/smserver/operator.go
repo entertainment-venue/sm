@@ -164,7 +164,7 @@ stockTask:
 		o.lg,
 		o.parent.Client.Client,
 		key,
-		"[operator] service %s moveLoop exit",
+		fmt.Sprintf("[operator] service %s moveLoop exit", o.service),
 		func(ctx context.Context, ev *clientv3.Event) error {
 			if ev.Type == mvccpb.DELETE {
 				o.lg.Error("unexpected event", zap.Reflect("ev", ev))
