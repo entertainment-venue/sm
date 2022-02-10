@@ -195,6 +195,7 @@ func (s *Server) run() error {
 	apiSrv := shardServer{sc, s.opts.lg}
 	routeAndHandler := make(map[string]func(c *gin.Context))
 	routeAndHandler["/sm/server/add-spec"] = apiSrv.GinAddSpec
+	routeAndHandler["/sm/server/del-spec"] = apiSrv.GinDelSpec
 	routeAndHandler["/sm/server/add-shard"] = apiSrv.GinAddShard
 	routeAndHandler["/sm/server/del-shard"] = apiSrv.GinDelShard
 	ss, err := apputil.NewShardServer(

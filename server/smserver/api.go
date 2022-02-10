@@ -82,6 +82,28 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{})
 }
 
+func (ss *shardServer) GinDelSpec(c *gin.Context) {
+	service := c.Query("service")
+	if service == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "service empty"})
+		return
+	}
+	resp, err := ss.container.Client.Delete(context.Background(), apputil.EtcdPathAppPrefix(service) + "/", clientv3.WithPrefix())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	}
+
+	if resp.Deleted == 0 {
+		ss.lg.Warn("spec not exist",
+			zap.String("service", service),
+		)
+		c.JSON(http.StatusOK, gin.H{})
+		return
+	}
+	ss.lg.Info("delete spec success", zap.String("service", service))
+	c.JSON(http.StatusOK, gin.H{})
+}
+
 type addShardRequest struct {
 	ShardId string `json:"shardId" binding:"required"`
 
