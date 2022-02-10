@@ -19,8 +19,11 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	_ "github.com/entertainment-venue/sm/server/docs"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	swaggerfiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 	"go.uber.org/zap"
 )
 
@@ -198,6 +201,7 @@ func (s *Server) run() error {
 	routeAndHandler["/sm/server/del-spec"] = apiSrv.GinDelSpec
 	routeAndHandler["/sm/server/add-shard"] = apiSrv.GinAddShard
 	routeAndHandler["/sm/server/del-shard"] = apiSrv.GinDelShard
+	routeAndHandler["/swagger/*any"] = ginSwagger.WrapHandler(swaggerfiles.Handler)
 	ss, err := apputil.NewShardServer(
 		apputil.ShardServerWithAddr(s.opts.addr),
 		apputil.ShardServerWithContainer(c),

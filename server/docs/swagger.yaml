@@ -1,0 +1,126 @@
+definitions:
+  smserver.addShardRequest:
+    properties:
+      group:
+        description: Group 同一个service需要区分不同种类的shard，这些shard之间不相关的balance到现有container上
+        type: string
+      manualContainerId:
+        type: string
+      service:
+        description: 为哪个业务app增加shard
+        type: string
+      shardId:
+        type: string
+      task:
+        description: 业务app自己定义task内容
+        type: string
+    required:
+    - service
+    - shardId
+    - task
+    type: object
+  smserver.delShardRequest:
+    properties:
+      service:
+        type: string
+      shardId:
+        type: string
+    required:
+    - service
+    - shardId
+    type: object
+  smserver.smAppSpec:
+    properties:
+      createTime:
+        type: integer
+      maxRecoveryTime:
+        description: MaxRecoveryTime 遇到container删除的场景，等待的时间，超时认为该container被清理
+        type: integer
+      maxShardCount:
+        description: MaxShardCount 单container承载的最大分片数量，防止雪崩
+        type: integer
+      service:
+        description: Service 目前app的spec更多承担的是管理职能，shard配置的一个起点，先只配置上service，可以唯一标记一个app
+        type: string
+    required:
+    - service
+    type: object
+info:
+  contact: {}
+paths:
+  /sm/server/add-shard:
+    post:
+      consumes:
+      - application/json
+      description: 增加shard
+      parameters:
+      - description: param
+        in: body
+        name: param
+        required: true
+        schema:
+          $ref: '#/definitions/smserver.addShardRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: ""
+      tags:
+      - shard管理
+  /sm/server/add-spec:
+    post:
+      consumes:
+      - application/json
+      description: 增加spec
+      parameters:
+      - description: param
+        in: body
+        name: param
+        required: true
+        schema:
+          $ref: '#/definitions/smserver.smAppSpec'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: ""
+      tags:
+      - spec管理
+  /sm/server/del-shard:
+    post:
+      consumes:
+      - application/json
+      description: 删除shard
+      parameters:
+      - description: param
+        in: body
+        name: param
+        required: true
+        schema:
+          $ref: '#/definitions/smserver.delShardRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: ""
+      tags:
+      - shard管理
+  /sm/server/del-spec:
+    get:
+      consumes:
+      - application/json
+      description: 删除spec
+      parameters:
+      - description: param
+        in: query
+        name: service
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: ""
+      tags:
+      - spec管理
+swagger: "2.0"
