@@ -15,7 +15,6 @@
 package smserver
 
 import (
-	"context"
 	"encoding/json"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
@@ -45,7 +44,7 @@ type smShard struct {
 	worker *Worker
 }
 
-func newShard(ctx context.Context, lg *zap.Logger, sc *smContainer, id string, spec *apputil.ShardSpec) (*smShard, error) {
+func newShard(lg *zap.Logger, sc *smContainer, id string, spec *apputil.ShardSpec) (*smShard, error) {
 	var st shardTask
 	if err := json.Unmarshal([]byte(spec.Task), &st); err != nil {
 		return nil, errors.Wrap(err, "")
@@ -65,7 +64,7 @@ func newShard(ctx context.Context, lg *zap.Logger, sc *smContainer, id string, s
 	}
 
 	var err error
-	s.worker, err = newWorker(ctx, lg, s.parent, s.service)
+	s.worker, err = newWorker(lg, s.parent, s.service)
 	if err != nil {
 		return nil, err
 	}

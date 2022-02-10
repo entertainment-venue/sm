@@ -164,7 +164,7 @@ stockTask:
 		o.lg,
 		o.parent.Client.Client,
 		key,
-		"[operator] service %s moveLoop exit",
+		fmt.Sprintf("[operator] service %s moveLoop exit", o.service),
 		func(ctx context.Context, ev *clientv3.Event) error {
 			if ev.Type == mvccpb.DELETE {
 				o.lg.Error("unexpected event", zap.Reflect("ev", ev))
@@ -293,9 +293,9 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 		onlyDrop = true
 
 		// 没有Add节点证明要把shard清除掉
-		if err := o.parent.Client.DelKV(ctx, apputil.EtcdPathAppShardId(ma.Service, ma.ShardId)); err != nil {
-			return errors.Wrap(err, "")
-		}
+		// if err := o.parent.Client.DelKV(ctx, apputil.EtcdPathAppShardId(ma.Service, ma.ShardId)); err != nil {
+		// 	return errors.Wrap(err, "")
+		// }
 	}
 	o.lg.Info("move shard request success",
 		zap.Reflect("ma", ma),

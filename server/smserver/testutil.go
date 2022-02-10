@@ -1,7 +1,6 @@
 package smserver
 
 import (
-	"context"
 	"fmt"
 	"sync"
 
@@ -39,7 +38,7 @@ type testShard struct {
 	m  ArmorMap
 }
 
-func (s *testShard) Add(ctx context.Context, id string, spec *apputil.ShardSpec) error {
+func (s *testShard) Add(id string, spec *apputil.ShardSpec) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -49,7 +48,7 @@ func (s *testShard) Add(ctx context.Context, id string, spec *apputil.ShardSpec)
 	return nil
 }
 
-func (s *testShard) Drop(ctx context.Context, id string) error {
+func (s *testShard) Drop(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -59,13 +58,7 @@ func (s *testShard) Drop(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *testShard) Load(ctx context.Context, id string) (string, error) {
+func (s *testShard) Load(id string) (string, error) {
 	fmt.Printf("load op %s\n", id)
 	return "", nil
-}
-
-func (s *testShard) Shards(ctx context.Context) ([]string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.m.KeyList(), nil
 }

@@ -6,6 +6,8 @@ require (
 	github.com/gin-gonic/gin v1.7.7
 	github.com/pkg/errors v0.9.1
 	github.com/shirou/gopsutil/v3 v3.21.12
+	github.com/zd3tl/evtrigger v0.0.0-20220210031052-b4ea6139b28c
+	go.etcd.io/bbolt v1.3.6
 	go.etcd.io/etcd/client/v3 v3.5.1
 	go.uber.org/zap v1.20.0
 	google.golang.org/grpc v1.44.0

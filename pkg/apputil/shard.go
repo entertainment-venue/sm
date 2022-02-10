@@ -26,6 +26,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -77,10 +78,9 @@ func (s *ShardHeartbeat) String() string {
 }
 
 type ShardInterface interface {
-	Add(ctx context.Context, id string, spec *ShardSpec) error
-	Drop(ctx context.Context, id string) error
-	Load(ctx context.Context, id string) (string, error)
-	Shards(ctx context.Context) ([]string, error)
+	Add(id string, spec *ShardSpec) error
+	Drop(id string) error
+	Load(id string) (string, error)
 }
 
 type ShardOpMessage struct {
@@ -115,6 +115,9 @@ type ShardServer struct {
 
 	// opts 存储选项中的数据，没必要copy一遍
 	opts *shardServerOptions
+
+	// keeper 代理shard的操作，封装bolt操作进去
+	keeper *shardKeeper
 
 	mu sync.Mutex
 	// closed 导致 ShardServer 被关闭的事件是异步的，需要做保护
@@ -220,20 +223,31 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 		opts:  ops,
 	}
 
-	// heartbeat
+	// keeper: 向调用方下发shard move指令，提供本地持久存储能力
+	keeper, err := newShardKeeper(ops.lg, ops.container.Service(), ops.impl)
+	if err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+	ss.keeper = keeper
+
+	// heartbeat:
 	ss.stopper.Wrap(func(ctx context.Context) {
 		TickerLoop(
-			ctx, ops.lg, 3*time.Second, fmt.Sprintf("shard server stop upload load"),
+			ctx,
+			ops.lg,
+			3*time.Second,
+			fmt.Sprintf("shardserver: service %s stop heartbeat", ss.opts.container.Service()),
 			func(ctx context.Context) error {
-				shards, err := ss.opts.impl.Shards(ctx)
-				if err != nil {
-					return errors.Wrap(err, "")
-				}
-
-				for _, id := range shards {
-					load, err := ss.opts.impl.Load(ctx, id)
+				hbFn := func(k, v []byte) error {
+					id := string(k)
+					load, err := ss.keeper.Load(id)
 					if err != nil {
-						return errors.Wrap(err, "")
+						ops.lg.Error(
+							"call Load error",
+							zap.Reflect("id", id),
+							zap.Error(err),
+						)
+						return nil
 					}
 
 					hb := ShardHeartbeat{
@@ -242,18 +256,34 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 					}
 					hb.Timestamp = time.Now().Unix()
 
-					key := EtcdPathAppShardHbId(ss.opts.container.Service(), id)
-					if _, err := ss.opts.container.Client.Put(ctx, key, hb.String(), clientv3.WithLease(ss.opts.container.Session.Lease())); err != nil {
-						ops.lg.Error("failed to shard load",
+					session := ss.opts.container.Session
+
+					// lock: 失败场景打印日志，不影响其他shard的heartbeat
+					lockPfx := EtcdPathAppShardHbId(ss.opts.container.Service(), id)
+					mutex := concurrency.NewMutex(session, lockPfx)
+					if err := mutex.Lock(ss.opts.container.Client.Client.Ctx()); err != nil {
+						ops.lg.Error(
+							"lock error",
+							zap.String("pfx", lockPfx),
 							zap.Error(err),
-							zap.String("key", key),
-							zap.Reflect("hb", hb),
 						)
-						return errors.Wrap(err, "")
+						return nil
 					}
-					ops.lg.Debug("shard heartbeat", zap.String("hbNode", key))
+
+					dataPfx := fmt.Sprintf("%s/%x", lockPfx, session.Lease())
+					if _, err := ss.opts.container.Client.Put(ctx, dataPfx, hb.String(), clientv3.WithLease(session.Lease())); err != nil {
+						ops.lg.Error(
+							"put error",
+							zap.String("pfx", dataPfx),
+							zap.Reflect("hb", hb),
+							zap.Error(err),
+						)
+						return nil
+					}
+					ops.lg.Debug("shard heartbeat", zap.String("hbNode", dataPfx))
+					return nil
 				}
-				return nil
+				return errors.Wrap(ss.keeper.forEach(hbFn), "")
 			},
 		)
 	})
@@ -362,27 +392,16 @@ func (ss *ShardServer) close() {
 
 	// 保证shard回收的手段，允许调用方启动for不断尝试重新加入存活container中
 	// FIXME session会触发drop动作，不允许失败，但也是潜在风险，一般的sdk使用者，不了解close的机制
-mustOk:
-	shards, err := ss.opts.impl.Shards(ctx)
-	if err != nil {
+	dropFn := func(k, v []byte) error {
+		shardId := string(k)
+		return ss.opts.impl.Drop(shardId)
+	}
+	if err := ss.keeper.forEach(dropFn); err != nil {
 		ss.opts.lg.Error(
-			"Shards error",
+			"Drop error",
 			zap.String("service", ss.opts.container.Service()),
 			zap.Error(err),
 		)
-		goto mustOk
-	}
-	for _, shard := range shards {
-		err := ss.opts.impl.Drop(ctx, shard)
-		if err != nil {
-			ss.opts.lg.Error(
-				"Drop error",
-				zap.String("service", ss.opts.container.Service()),
-				zap.String("shard", shard),
-				zap.Error(err),
-			)
-			goto mustOk
-		}
 	}
 
 	if ss.srv != nil {
@@ -466,7 +485,7 @@ func (ss *ShardServer) AddShard(c *gin.Context) {
 		return
 	}
 
-	if err := ss.opts.impl.Add(context.TODO(), req.Id, &spec); err != nil {
+	if err := ss.keeper.Add(req.Id, &spec); err != nil {
 		ss.opts.lg.Error("Add err",
 			zap.Error(err),
 			zap.String("id", req.Id),
@@ -490,7 +509,7 @@ func (ss *ShardServer) DropShard(c *gin.Context) {
 	}
 	req.Type = OpTypeDrop
 
-	if err := ss.opts.impl.Drop(context.TODO(), req.Id); err != nil {
+	if err := ss.keeper.Drop(req.Id); err != nil {
 		ss.opts.lg.Error("Drop err",
 			zap.Error(err),
 			zap.String("id", req.Id),

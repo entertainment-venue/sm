@@ -1,7 +1,6 @@
 package client
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -30,7 +29,7 @@ type testShard struct {
 	ids  map[string]string
 }
 
-func (s *testShard) Add(ctx context.Context, id string, spec *apputil.ShardSpec) error {
+func (s *testShard) Add(id string, spec *apputil.ShardSpec) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	s.ids[id] = ""
@@ -38,7 +37,7 @@ func (s *testShard) Add(ctx context.Context, id string, spec *apputil.ShardSpec)
 	return nil
 }
 
-func (s *testShard) Drop(ctx context.Context, id string) error {
+func (s *testShard) Drop(id string) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	delete(s.ids, id)
@@ -46,18 +45,7 @@ func (s *testShard) Drop(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *testShard) Load(ctx context.Context, id string) (string, error) {
+func (s *testShard) Load(id string) (string, error) {
 	fmt.Printf("load op %s\n", id)
 	return "", nil
-}
-
-func (s *testShard) Shards(ctx context.Context) ([]string, error) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	var r []string
-	for id, _ := range s.ids {
-		r = append(r, id)
-	}
-	fmt.Printf("shards op %s\n", r)
-	return r, nil
 }

@@ -11,17 +11,17 @@ import (
 type testShardImpl struct {
 }
 
-func (impl *testShardImpl) Add(ctx context.Context, id string, spec *ShardSpec) error {
+func (impl *testShardImpl) Add(id string, spec *ShardSpec) error {
+	fmt.Println("add " + id)
 	return nil
 }
-func (impl *testShardImpl) Drop(ctx context.Context, id string) error {
+func (impl *testShardImpl) Drop(id string) error {
+	fmt.Println("drop ", id)
 	return nil
 }
-func (impl *testShardImpl) Load(ctx context.Context, id string) (string, error) {
+func (impl *testShardImpl) Load(id string) (string, error) {
+	fmt.Println("load ", id)
 	return "", nil
-}
-func (impl *testShardImpl) Shards(ctx context.Context) ([]string, error) {
-	return nil, nil
 }
 
 func TestShardServer_NewShardServer_ParamError(t *testing.T) {

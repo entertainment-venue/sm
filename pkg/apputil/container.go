@@ -17,6 +17,7 @@ package apputil
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -246,7 +247,17 @@ func (c *Container) UploadSysLoad(ctx context.Context) error {
 	}
 	ld.NetIOCountersStat = &netIOCounters[0]
 
-	if _, err := c.Client.Put(ctx, EtcdPathAppContainerIdHb(c.service, c.id), ld.String(), clientv3.WithLease(c.Session.Lease())); err != nil {
+	// https://tangxusc.github.io/blog/2019/05/etcd-lock%E8%AF%A6%E8%A7%A3/
+	// 利用etcd内置lock，防止container冲突，这个问题在container应该比较少见，做到heartbeat即可，smserver就可以做
+	lockPfx := EtcdPathAppContainerIdHb(c.service, c.id)
+	mutex := concurrency.NewMutex(c.Session, lockPfx)
+	if err := mutex.Lock(c.Client.Client.Ctx()); err != nil {
+		return errors.Wrap(err, "")
+	}
+
+	// 上传负载和基础信息
+	dataPfx := fmt.Sprintf("%s/%x", lockPfx, c.Session.Lease())
+	if _, err := c.Client.Put(ctx, dataPfx, ld.String(), clientv3.WithLease(c.Session.Lease())); err != nil {
 		return errors.Wrap(err, "")
 	}
 	return nil

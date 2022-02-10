@@ -26,6 +26,10 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	_ apputil.ShardInterface = new(smContainer)
+)
+
 type smContainer struct {
 	*apputil.Container
 
@@ -117,7 +121,7 @@ func (c *smContainer) Close() {
 	)
 }
 
-func (c *smContainer) Add(ctx context.Context, id string, spec *apputil.ShardSpec) error {
+func (c *smContainer) Add(id string, spec *apputil.ShardSpec) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -151,7 +155,7 @@ func (c *smContainer) Add(ctx context.Context, id string, spec *apputil.ShardSpe
 		}
 	}
 
-	shard, err := newShard(ctx, c.lg, c, id, spec)
+	shard, err := newShard(c.lg, c, id, spec)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -163,7 +167,7 @@ func (c *smContainer) Add(ctx context.Context, id string, spec *apputil.ShardSpe
 	return nil
 }
 
-func (c *smContainer) Drop(_ context.Context, id string) error {
+func (c *smContainer) Drop(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -186,7 +190,7 @@ func (c *smContainer) Drop(_ context.Context, id string) error {
 	return nil
 }
 
-func (c *smContainer) Load(_ context.Context, id string) (string, error) {
+func (c *smContainer) Load(id string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -209,18 +213,6 @@ func (c *smContainer) Load(_ context.Context, id string) (string, error) {
 		zap.String("load", load),
 	)
 	return load, nil
-}
-
-func (c *smContainer) Shards(_ context.Context) ([]string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	var ids []string
-	for id := range c.idAndShard {
-		ids = append(ids, id)
-	}
-	c.lg.Debug("get shards success", zap.String("service", c.service))
-	return ids, nil
 }
 
 func (c *smContainer) RegisterOperator(shardService string) error {
@@ -294,7 +286,7 @@ func (c *smContainer) campaign(ctx context.Context) {
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/sm/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
 		var err error
-		c.lw, err = newWorker(ctx, c.lg, c, c.service)
+		c.lw, err = newWorker(c.lg, c, c.service)
 		if err != nil {
 			c.lg.Error(
 				"newWorker error",

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +30,8 @@ const (
 
 	// defaultMaxRecoveryTime 不设定，需要提供默认阈值，理论上应该能应对大多应用的重启时间
 	defaultMaxRecoveryTime = 10 * time.Second
+	// maxRecoveryWaitTime 给个上限，防止异常情况导致等待时间过长问题排查难
+	maxRecoveryWaitTime = 30 * time.Second
 )
 
 // mapper leader或者follower都需要构建当前分片应用的映射关系
@@ -58,7 +60,7 @@ type mapper struct {
 	stopper *apputil.GoroutineStopper
 }
 
-func newMapper(ctx context.Context, lg *zap.Logger, container *smContainer, appSpec *smAppSpec) (*mapper, error) {
+func newMapper(lg *zap.Logger, container *smContainer, appSpec *smAppSpec) (*mapper, error) {
 	mpr := mapper{
 		lg:        lg,
 		container: container,
@@ -80,34 +82,52 @@ func newMapper(ctx context.Context, lg *zap.Logger, container *smContainer, appS
 		mpr.maxRecoveryTime = defaultMaxRecoveryTime
 	}
 
-	if err := mpr.initAndWatch(ctx, containerTrigger); err != nil {
+	if err := mpr.initAndWatch(containerTrigger); err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	if err := mpr.initAndWatch(ctx, shardTrigger); err != nil {
+	if err := mpr.initAndWatch(shardTrigger); err != nil {
 		return nil, errors.Wrap(err, "")
 	}
+
+	mpr.lg.Info(
+		"mapper started",
+		zap.String("service", mpr.appSpec.Service),
+	)
+
 	return &mpr, nil
 }
 
-func (lm *mapper) initAndWatch(ctx context.Context, typ string) error {
+func (lm *mapper) extractId(key string) string {
+	// https://github.com/entertainment-venue/sm/commit/77c6ba8d36196b6fa5a115483083ae9777f70c7d
+	// 目录结构引入mutex，导致有变化，id在倒数第二段
+	arr := strings.Split(key, "/")
+	str := arr[len(arr)-2]
+	if str == "" {
+		lm.lg.Panic(
+			"key error",
+			zap.String("key", key),
+		)
+	}
+	return str
+}
+
+func (lm *mapper) initAndWatch(typ string) error {
 	so := lm.getStateOps(typ)
 	pfx := so.Prefix()
 	getOpts := []clientv3.OpOption{clientv3.WithPrefix()}
-	resp, err := lm.container.Client.Get(ctx, pfx, getOpts...)
+	resp, err := lm.container.Client.Get(context.TODO(), pfx, getOpts...)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
 
-	// 初始化
 	for _, kv := range resp.Kvs {
-		_, id := filepath.Split(string(kv.Key))
-		if err := so.Create([]byte(id), kv.Value); err != nil {
+		id := lm.extractId(string(kv.Key))
+		if err := so.Create(id, kv.Value); err != nil {
 			return errors.Wrap(err, "")
 		}
 	}
 	startRev := resp.Header.Revision + 1
 
-	// initAndWatch
 	lm.stopper.Wrap(
 		func(ctx context.Context) {
 			var watchOpts []clientv3.OpOption
@@ -120,6 +140,11 @@ func (lm *mapper) initAndWatch(ctx context.Context, typ string) error {
 				pfx,
 				fmt.Sprintf("initAndWatch %s exit", pfx),
 				func(ctx context.Context, ev *clientv3.Event) error {
+					// pkg中会先lock，然后再写入心跳内容
+					if ev.Type != mvccpb.DELETE && ev.Kv.Value == nil {
+						return nil
+					}
+
 					// 事件写入evtrigger，理论上不会漏事件，除非event不合法
 					if err := lm.trigger.Put(&evtrigger.TriggerEvent{Key: typ, Value: ev}); err != nil {
 						return errors.Wrap(err, "")
@@ -129,6 +154,11 @@ func (lm *mapper) initAndWatch(ctx context.Context, typ string) error {
 				watchOpts...,
 			)
 		},
+	)
+	lm.lg.Info(
+		"watch hb",
+		zap.String("pfx", pfx),
+		zap.String("service", lm.appSpec.Service),
 	)
 	return nil
 }
@@ -167,17 +197,12 @@ func (lm *mapper) Close() {
 
 func (lm *mapper) UpdateState(key string, value interface{}) error {
 	event := value.(*clientv3.Event)
-	_, id := filepath.Split(string(event.Kv.Key))
 
+	id := lm.extractId(string(event.Kv.Key))
 	ops := lm.getStateOps(key)
-
-	if event.IsModify() {
+	if event.IsCreate() || event.IsModify() {
 		// 需要更新container或者shard的存活事件
 		return ops.Refresh(id, event.Kv.Value)
-	}
-
-	if event.IsCreate() {
-		return ops.Create([]byte(id), event.Kv.Value)
 	}
 
 	if event.Type != mvccpb.DELETE {
@@ -238,8 +263,7 @@ type stateOps interface {
 	// Refresh 心跳时，刷新内存数据
 	Refresh(id string, d []byte) error
 
-	// Create 创建新的container或者shard
-	Create(key, value []byte) error
+	Create(id string, value []byte) error
 
 	// Delete 删除container或者shard
 	Delete(id string) error
@@ -283,24 +307,27 @@ func newMapperState(mpr *mapper, typ string) *mapperState {
 	}
 }
 
-func (s *mapperState) Create(key, value []byte) error {
+// Create 初始化时使用，增加lock
+func (s *mapperState) Create(id string, value []byte) error {
 	s.mpr.mu.Lock()
 	defer s.mpr.mu.Unlock()
+	return s.create(id, value)
+}
 
-	id := string(key)
-
+// create Refresh和Create都会使用，无lock
+func (s *mapperState) create(id string, value []byte) error {
 	switch s.typ {
 	case shardTrigger:
 		var t apputil.ShardHeartbeat
 		if err := json.Unmarshal(value, &t); err != nil {
-			return errors.Wrap(err, "")
+			return errors.Wrap(err, string(value))
 		}
 		s.alive[id] = newTemporary(t.Timestamp)
 		s.alive[id].curContainerId = t.ContainerId
 	default:
 		var t apputil.Heartbeat
 		if err := json.Unmarshal(value, &t); err != nil {
-			return errors.Wrap(err, "")
+			return errors.Wrap(err, string(value))
 		}
 		s.alive[id] = newTemporary(t.Timestamp)
 	}
@@ -336,13 +363,8 @@ func (s *mapperState) Refresh(id string, d []byte) error {
 
 	cur, ok := s.alive[id]
 	if !ok {
-		s.mpr.lg.Error(
-			"state not found",
-			zap.String("service", s.mpr.appSpec.Service),
-			zap.String("id", id),
-			zap.String("typ", s.typ),
-		)
-		return nil
+		// pkg中先lock心跳节点，然后再进行更新操作
+		return errors.Wrap(s.create(id, d), "")
 	}
 
 	switch s.typ {
@@ -406,6 +428,16 @@ func (s *mapperState) Wait(id string) error {
 	// 判断是否需要等待一会再处理该事件，队列中的事件在第一个等待事件完结后，可能都已经达到需要被处理的时间点
 	timeElapsed := time.Since(cur.lastHeartbeatTime)
 	waitTime := s.mpr.maxRecoveryTime - timeElapsed
+	if waitTime > maxRecoveryWaitTime {
+		s.mpr.lg.Warn(
+			"maxRecoveryWaitTime exceeded",
+			zap.String("service", s.mpr.appSpec.Service),
+			zap.String("id", id),
+			zap.Duration("maxRecoveryTime", s.mpr.maxRecoveryTime),
+			zap.Duration("timeElapsed", time.Since(cur.lastHeartbeatTime)),
+		)
+		waitTime = maxRecoveryWaitTime
+	}
 	if waitTime > 0 {
 		s.mpr.lg.Info(
 			"wait until timeout",
