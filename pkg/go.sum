@@ -181,6 +181,8 @@ github.com/zd3tl/evtrigger v0.0.0-20220208033025-c6595f82ad39 h1:HPrfb2cqsPZW4mH
 github.com/zd3tl/evtrigger v0.0.0-20220208033025-c6595f82ad39/go.mod h1:jS9rwkmqfOQZ0u04EEgHlIbd4oCkqNvl1uLR7z1f/ak=
 github.com/zd3tl/evtrigger v0.0.0-20220209145619-30571d0f0c4e h1:knm7EJkffJRp7Fee+g1i6q9IYIbUQ+0KWm1LProJcjc=
 github.com/zd3tl/evtrigger v0.0.0-20220209145619-30571d0f0c4e/go.mod h1:jS9rwkmqfOQZ0u04EEgHlIbd4oCkqNvl1uLR7z1f/ak=
+github.com/zd3tl/evtrigger v0.0.0-20220210031052-b4ea6139b28c h1:f9xc8i+n2cHrsFZ2cfrH1j0NSU9aqExvnYaA0qMaZ50=
+github.com/zd3tl/evtrigger v0.0.0-20220210031052-b4ea6139b28c/go.mod h1:jS9rwkmqfOQZ0u04EEgHlIbd4oCkqNvl1uLR7z1f/ak=
 go.etcd.io/bbolt v1.3.6 h1:/ecaJf0sk1l4l6V4awd65v2C3ILy7MSj+s/x1ADCIMU=
 go.etcd.io/bbolt v1.3.6/go.mod h1:qXsaaIqmgQH0T+OPdb99Bf+PKfBBQVAdyD6TY9G8XM4=
 go.etcd.io/etcd/api/v3 v3.5.1 h1:v28cktvBq+7vGyJXF8G+rWJmj+1XUmMtqcLnH8hDocM=
