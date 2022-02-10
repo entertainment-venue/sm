@@ -33,7 +33,7 @@ var (
 	defaultMaxShardCount = math.MaxInt
 )
 
-// 管理某个sm app的shard
+// Worker 管理某个sm app的shard
 type Worker struct {
 	parent  *smContainer
 	lg      *zap.Logger
@@ -49,10 +49,10 @@ type Worker struct {
 	mpr *mapper
 }
 
-func newWorker(ctx context.Context, lg *zap.Logger, container *smContainer, service string) (*Worker, error) {
+func newWorker(lg *zap.Logger, container *smContainer, service string) (*Worker, error) {
 	// worker需要service的配置信息，作为balance的因素
 	appSpecNode := nodeAppSpec(service)
-	resp, err := container.Client.GetKV(ctx, appSpecNode, nil)
+	resp, err := container.Client.GetKV(context.TODO(), appSpecNode, nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -77,7 +77,7 @@ func newWorker(ctx context.Context, lg *zap.Logger, container *smContainer, serv
 	}
 
 	// TODO 参数传递的有些冗余，需要重新梳理
-	w.mpr, err = newMapper(ctx, lg, container, &appSpec)
+	w.mpr, err = newMapper(lg, container, &appSpec)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}

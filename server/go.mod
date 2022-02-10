@@ -3,11 +3,11 @@ module github.com/entertainment-venue/sm/server
 go 1.17
 
 require (
-	github.com/entertainment-venue/sm/pkg v0.0.0-20220207102727-2258754bdf74
+	github.com/entertainment-venue/sm/pkg v0.0.0-20220210031726-7df4084ed06b
 	github.com/gin-gonic/gin v1.7.7
 	github.com/google/uuid v1.3.0
 	github.com/pkg/errors v0.9.1
-	github.com/zd3tl/evtrigger v0.0.0-20220208033025-c6595f82ad39
+	github.com/zd3tl/evtrigger v0.0.0-20220210031052-b4ea6139b28c
 	go.etcd.io/etcd/api/v3 v3.5.1
 	go.etcd.io/etcd/client/v3 v3.5.1
 	go.uber.org/zap v1.20.0
@@ -38,6 +38,7 @@ require (
 	github.com/tklauser/numcpus v0.3.0 // indirect
 	github.com/ugorji/go/codec v1.1.7 // indirect
 	github.com/yusufpapurcu/wmi v1.2.2 // indirect
+	go.etcd.io/bbolt v1.3.6 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.5.1 // indirect
 	go.uber.org/atomic v1.7.0 // indirect
 	go.uber.org/multierr v1.6.0 // indirect

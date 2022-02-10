@@ -53,7 +53,11 @@ func startSM() error {
 		smserver.WithStopped(stopped),
 		smserver.WithLogger(lg),
 		smserver.WithEtcdPrefix(cfg.EtcdPrefix)); err != nil {
-		lg.Panic("failed to start sm server", zap.Reflect("cfg", cfg))
+		lg.Panic(
+			"failed to start sm server",
+			zap.Reflect("cfg", cfg),
+			zap.Error(err),
+		)
 	}
 
 	<-stopped
