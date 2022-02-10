@@ -50,6 +50,13 @@ func (s *smAppSpec) String() string {
 	return string(b)
 }
 
+// @Description 增加spec
+// @Tags  spec管理
+// @Accept  json
+// @Produce  json
+// @Param param body smAppSpec true "param"
+// @success 200
+// @Router /sm/server/add-spec [post]
 func (ss *shardServer) GinAddSpec(c *gin.Context) {
 	var req smAppSpec
 	if err := c.ShouldBind(&req); err != nil {
@@ -82,6 +89,36 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{})
 }
 
+// @Description 删除spec
+// @Tags  spec管理
+// @Accept  json
+// @Produce  json
+// @Param service query string true "param"
+// @success 200
+// @Router /sm/server/del-spec [get]
+func (ss *shardServer) GinDelSpec(c *gin.Context) {
+	service := c.Query("service")
+	if service == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "service empty"})
+		return
+	}
+	resp, err := ss.container.Client.Delete(context.Background(), apputil.EtcdPathAppPrefix(service) + "/", clientv3.WithPrefix())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if resp.Deleted == 0 {
+		ss.lg.Warn("spec not exist",
+			zap.String("service", service),
+		)
+		c.JSON(http.StatusOK, gin.H{})
+		return
+	}
+	ss.lg.Info("delete spec success", zap.String("service", service))
+	c.JSON(http.StatusOK, gin.H{})
+}
+
 type addShardRequest struct {
 	ShardId string `json:"shardId" binding:"required"`
 
@@ -102,6 +139,13 @@ func (r *addShardRequest) String() string {
 	return string(b)
 }
 
+// @Description 增加shard
+// @Tags  shard管理
+// @Accept  json
+// @Produce  json
+// @Param param body addShardRequest true "param"
+// @success 200
+// @Router /sm/server/add-shard [post]
 func (ss *shardServer) GinAddShard(c *gin.Context) {
 	var req addShardRequest
 	if err := c.ShouldBind(&req); err != nil {
@@ -149,6 +193,13 @@ func (r *delShardRequest) String() string {
 	return string(b)
 }
 
+// @Description 删除shard
+// @Tags  shard管理
+// @Accept  json
+// @Produce  json
+// @Param param body delShardRequest true "param"
+// @success 200
+// @Router /sm/server/del-shard [post]
 // GinDelShard TODO ACL 需要带着key过来做分片的移动，防止跨租户之间有影响
 func (ss *shardServer) GinDelShard(c *gin.Context) {
 	var req delShardRequest
