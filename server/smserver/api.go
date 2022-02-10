@@ -105,6 +105,7 @@ func (ss *shardServer) GinDelSpec(c *gin.Context) {
 	resp, err := ss.container.Client.Delete(context.Background(), apputil.EtcdPathAppPrefix(service) + "/", clientv3.WithPrefix())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
 	if resp.Deleted == 0 {
