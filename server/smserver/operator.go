@@ -156,15 +156,12 @@ stockTask:
 		)
 	}
 
-	var opts []clientv3.OpOption
-	opts = append(opts, clientv3.WithPrefix())
-	opts = append(opts, clientv3.WithRev(resp.Header.Revision+1))
 	apputil.WatchLoop(
 		ctx,
 		o.lg,
 		o.parent.Client.Client,
 		key,
-		fmt.Sprintf("[operator] service %s moveLoop exit", o.service),
+		resp.Header.Revision+1,
 		func(ctx context.Context, ev *clientv3.Event) error {
 			if ev.Type == mvccpb.DELETE {
 				o.lg.Error("unexpected event", zap.Reflect("ev", ev))
@@ -188,7 +185,6 @@ stockTask:
 			}
 			return nil
 		},
-		opts...,
 	)
 }
 

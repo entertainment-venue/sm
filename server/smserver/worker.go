@@ -93,40 +93,8 @@ func newWorker(lg *zap.Logger, container *smContainer, service string) (*Worker,
 					return w.allocateChecker(ctx)
 				},
 			)
-		})
-
-	var opts []clientv3.OpOption
-	opts = append(opts, clientv3.WithPrefix())
-
-	w.stopper.Wrap(
-		func(ctx context.Context) {
-			apputil.WatchLoop(
-				ctx,
-				w.lg,
-				w.parent.Client.Client,
-				nodeAppShardHb(w.service),
-				fmt.Sprintf("[lw] service %s ShardLoadLoop exit", w.service),
-				func(ctx context.Context, ev *clientv3.Event) error {
-					return w.shardLoadChecker(ctx, ev)
-				},
-				opts...,
-			)
-		})
-
-	w.stopper.Wrap(
-		func(ctx context.Context) {
-			apputil.WatchLoop(
-				ctx,
-				w.lg,
-				w.parent.Client.Client,
-				nodeAppContainerHb(w.service),
-				fmt.Sprintf("[lw] service %s ContainerLoadLoop exit", w.service),
-				func(ctx context.Context, ev *clientv3.Event) error {
-					return w.containerLoadChecker(ctx, ev)
-				},
-				opts...,
-			)
-		})
+		},
+	)
 
 	w.lg.Info("Worker started", zap.String("service", w.service))
 	return w, nil
