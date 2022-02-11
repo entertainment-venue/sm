@@ -78,7 +78,7 @@ func newMapper(lg *zap.Logger, container *smContainer, appSpec *smAppSpec) (*map
 	_ = mpr.trigger.Register(containerTrigger, mpr.UpdateState)
 	_ = mpr.trigger.Register(shardTrigger, mpr.UpdateState)
 
-	if mpr.appSpec.MaxRecoveryTime <= 0 && time.Duration(mpr.appSpec.MaxRecoveryTime)*time.Second > maxRecoveryWaitTime{
+	if mpr.appSpec.MaxRecoveryTime <= 0 && time.Duration(mpr.appSpec.MaxRecoveryTime)*time.Second > maxRecoveryWaitTime {
 		mpr.maxRecoveryTime = defaultMaxRecoveryTime
 	} else {
 		mpr.maxRecoveryTime = time.Duration(mpr.appSpec.MaxRecoveryTime) * time.Second
@@ -225,7 +225,8 @@ func (lm *mapper) UpdateState(key string, value interface{}) error {
 	// 2. 便利evtrigger中的事件，如果有该container的put事件，直接return，否则删除掉
 	var hasCreate bool
 	findCreate := func(it interface{}) error {
-		ev := it.(*clientv3.Event)
+		triggerEvent := it.(*evtrigger.TriggerEvent)
+		ev := triggerEvent.Value.(*clientv3.Event)
 		if ev.IsCreate() {
 			hasCreate = true
 		} else if ev.Type == mvccpb.DELETE {
