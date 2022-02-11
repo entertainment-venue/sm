@@ -110,7 +110,7 @@ func newWorker(lg *zap.Logger, container *smContainer, service string) (*Worker,
 		evtrigger.WithLogger(lg),
 		evtrigger.WithWorkerSize(1),
 	)
-	_ = trigger.Register(containerTrigger, w.processEvent)
+	_ = trigger.Register(workerTrigger, w.processEvent)
 	w.trigger = trigger
 	w.operator = newOperator(lg, container, service)
 
