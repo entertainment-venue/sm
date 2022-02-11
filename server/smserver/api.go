@@ -91,9 +91,9 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 	}
 	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
 		ss.lg.Error("CreateAndGet err",
-			zap.Error(err),
 			zap.Strings("nodes", nodes),
 			zap.Strings("values", values),
+			zap.Error(err),
 		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -180,29 +180,24 @@ func (ss *shardServer) GinUpdateSpec(c *gin.Context) {
 	req.CreateTime = time.Now().Unix()
 	ss.lg.Info("receive update spec request", zap.String("request", req.String()))
 	//  查询是否存在该service
-	if _, ok := ss.container.idAndShard[req.Service]; !ok {
-		ss.lg.Error("update service err,service not exist", zap.String("service", req.Service))
+	shard, err := ss.container.GetShard(req.Service)
+	if err != nil {
+		ss.lg.Error("update service err", zap.String("service", req.Service), zap.String("err", err.Error()))
 		c.JSON(http.StatusBadRequest, gin.H{"error": "service not exist"})
 		return
 	}
 	if err := ss.container.Client.UpdateKV(context.Background(), nodeAppSpec(req.Service), req.String()); err != nil {
 		ss.lg.Error("UpdateKV err",
-			zap.Error(err),
 			zap.String("key", nodeAppSpec(req.Service)),
 			zap.String("value", req.String()),
+			zap.Error(err),
 		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	//  更新sm container内存中的值
-	if s, ok := ss.container.idAndShard[req.Service]; ok {
-		if req.MaxShardCount > 0 {
-			s.worker.spec.MaxShardCount = req.MaxShardCount
-		}
-		if req.MaxRecoveryTime > 0 {
-			s.worker.mpr.maxRecoveryTime = time.Duration(req.MaxRecoveryTime) * time.Second
-		}
-	}
+	shard.worker.SetMaxShardCount(req.MaxShardCount)
+	shard.worker.SetMaxRecoveryTime(req.MaxRecoveryTime)
 
 	ss.lg.Info("update spec success", zap.String("service", req.Service))
 	c.JSON(http.StatusOK, gin.H{})

@@ -132,6 +132,18 @@ func newWorker(lg *zap.Logger, container *smContainer, service string) (*Worker,
 	return w, nil
 }
 
+func (w *Worker) SetMaxShardCount(maxShardCount int) {
+	if maxShardCount > 0 {
+		w.spec.MaxShardCount = maxShardCount
+	}
+}
+
+func (w *Worker) SetMaxRecoveryTime(maxRecoveryTime int) {
+	if maxRecoveryTime > 0 {
+		w.mpr.maxRecoveryTime = time.Duration(maxRecoveryTime) * time.Second
+	}
+}
+
 func (w *Worker) Close() {
 	w.mpr.Close()
 	w.stopper.Close()
