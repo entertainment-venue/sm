@@ -17,6 +17,7 @@ package smserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -50,8 +51,8 @@ func (s *smAppSpec) String() string {
 	return string(b)
 }
 
-// @Description 增加spec
-// @Tags  spec管理
+// @Description add spec
+// @Tags  spec
 // @Accept  json
 // @Produce  json
 // @Param param body smAppSpec true "param"
@@ -72,10 +73,22 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 		nodes  []string
 		values []string
 	)
+
 	nodes = append(nodes, nodeAppSpec(req.Service))
 	nodes = append(nodes, apputil.EtcdPathAppShardTask(req.Service))
 	values = append(values, req.String())
 	values = append(values, "")
+
+	// 如果不是sm自己的spec,那么需要将service注册到sm的spec中
+	if ss.container.service != req.Service {
+		v := apputil.ShardSpec{
+			Service:    ss.container.service,
+			Task:       fmt.Sprintf("{\"governedService\":\"%s\"}", req.Service),
+			UpdateTime: time.Now().Unix(),
+		}
+		nodes = append(nodes, apputil.EtcdPathAppShardId(ss.container.service, req.Service))
+		values = append(values, v.String())
+	}
 	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
 		ss.lg.Error("CreateAndGet err",
 			zap.Error(err),
@@ -85,12 +98,12 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
+	ss.lg.Info("add spec success", zap.String("service", req.Service))
 	c.JSON(http.StatusOK, gin.H{})
 }
 
-// @Description 删除spec
-// @Tags  spec管理
+// @Description del spec
+// @Tags  spec
 // @Accept  json
 // @Produce  json
 // @Param service query string true "param"
@@ -102,21 +115,52 @@ func (ss *shardServer) GinDelSpec(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "service empty"})
 		return
 	}
-	resp, err := ss.container.Client.Delete(context.Background(), apputil.EtcdPathAppPrefix(service) + "/", clientv3.WithPrefix())
+	// 软删除，将删除标记写到sm container的shard中，由sm来进行删除以及资源释放
+	resp, err := ss.container.Client.Get(context.Background(), apputil.EtcdPathAppShardId(ss.container.service, service))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	if resp.Deleted == 0 {
+	if len(resp.Kvs) != 1 {
 		ss.lg.Warn("spec not exist",
 			zap.String("service", service),
 		)
 		c.JSON(http.StatusOK, gin.H{})
 		return
 	}
+	var newV apputil.ShardSpec
+	if err := json.Unmarshal(resp.Kvs[0].Value, &newV); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	newV.Type = specDelType
+
+	if err := ss.container.Client.UpdateKV(context.Background(), apputil.EtcdPathAppShardId(ss.container.service, service), newV.String()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	ss.lg.Info("delete spec success", zap.String("service", service))
 	c.JSON(http.StatusOK, gin.H{})
+}
+
+// @Description get all service
+// @Tags  spec
+// @Accept  json
+// @Produce  json
+// @success 200
+// @Router /sm/server/get-spec [get]
+func (ss *shardServer) GinGetSpec(c *gin.Context) {
+	kvs, err := ss.container.Client.GetKVs(context.Background(), apputil.EtcdPathAppShardId(ss.container.service, ""))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	var services []string
+	for s, _ := range kvs {
+		services = append(services, s)
+	}
+	ss.lg.Info("get all service success")
+	c.JSON(http.StatusOK, gin.H{"services": services})
 }
 
 type addShardRequest struct {
@@ -139,8 +183,8 @@ func (r *addShardRequest) String() string {
 	return string(b)
 }
 
-// @Description 增加shard
-// @Tags  shard管理
+// @Description add shard
+// @Tags  shard
 // @Accept  json
 // @Produce  json
 // @Param param body addShardRequest true "param"
@@ -193,8 +237,8 @@ func (r *delShardRequest) String() string {
 	return string(b)
 }
 
-// @Description 删除shard
-// @Tags  shard管理
+// @Description del shard
+// @Tags  shard
 // @Accept  json
 // @Produce  json
 // @Param param body delShardRequest true "param"
@@ -234,4 +278,30 @@ func (ss *shardServer) GinDelShard(c *gin.Context) {
 
 	ss.lg.Info("delete shard success", zap.Reflect("req", req))
 	c.JSON(http.StatusOK, gin.H{})
+}
+
+// @Description get service all shard
+// @Tags  shard
+// @Accept  json
+// @Produce  json
+// @Param service query string true "param"
+// @success 200
+// @Router /sm/server/get-shard [get]
+func (ss *shardServer) GinGetShard(c *gin.Context) {
+	service := c.Query("service")
+	if service == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "service empty"})
+		return
+	}
+	kvs, err := ss.container.Client.GetKVs(context.Background(), apputil.EtcdPathAppShardId(service, ""))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	var shards []string
+	for s, _ := range kvs {
+		shards = append(shards, s)
+	}
+	ss.lg.Info("get shards success", zap.String("service", service))
+	c.JSON(http.StatusOK, gin.H{"shards": shards})
 }
