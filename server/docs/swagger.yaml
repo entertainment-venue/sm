@@ -52,7 +52,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 增加shard
+      description: add shard
       parameters:
       - description: param
         in: body
@@ -66,12 +66,12 @@ paths:
         "200":
           description: ""
       tags:
-      - shard管理
+      - shard
   /sm/server/add-spec:
     post:
       consumes:
       - application/json
-      description: 增加spec
+      description: add spec
       parameters:
       - description: param
         in: body
@@ -85,12 +85,12 @@ paths:
         "200":
           description: ""
       tags:
-      - spec管理
+      - spec
   /sm/server/del-shard:
     post:
       consumes:
       - application/json
-      description: 删除shard
+      description: del shard
       parameters:
       - description: param
         in: body
@@ -104,12 +104,12 @@ paths:
         "200":
           description: ""
       tags:
-      - shard管理
+      - shard
   /sm/server/del-spec:
     get:
       consumes:
       - application/json
-      description: 删除spec
+      description: del spec
       parameters:
       - description: param
         in: query
@@ -122,5 +122,35 @@ paths:
         "200":
           description: ""
       tags:
-      - spec管理
+      - spec
+  /sm/server/get-shard:
+    get:
+      consumes:
+      - application/json
+      description: get service all shard
+      parameters:
+      - description: param
+        in: query
+        name: service
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: ""
+      tags:
+      - shard
+  /sm/server/get-spec:
+    get:
+      consumes:
+      - application/json
+      description: get all service
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: ""
+      tags:
+      - spec
 swagger: "2.0"
