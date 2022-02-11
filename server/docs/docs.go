@@ -25,7 +25,7 @@ var doc = `{
     "paths": {
         "/sm/server/add-shard": {
             "post": {
-                "description": "增加shard",
+                "description": "add shard",
                 "consumes": [
                     "application/json"
                 ],
@@ -33,7 +33,7 @@ var doc = `{
                     "application/json"
                 ],
                 "tags": [
-                    "shard管理"
+                    "shard"
                 ],
                 "parameters": [
                     {
@@ -55,7 +55,7 @@ var doc = `{
         },
         "/sm/server/add-spec": {
             "post": {
-                "description": "增加spec",
+                "description": "add spec",
                 "consumes": [
                     "application/json"
                 ],
@@ -63,7 +63,7 @@ var doc = `{
                     "application/json"
                 ],
                 "tags": [
-                    "spec管理"
+                    "spec"
                 ],
                 "parameters": [
                     {
@@ -85,7 +85,7 @@ var doc = `{
         },
         "/sm/server/del-shard": {
             "post": {
-                "description": "删除shard",
+                "description": "del shard",
                 "consumes": [
                     "application/json"
                 ],
@@ -93,7 +93,7 @@ var doc = `{
                     "application/json"
                 ],
                 "tags": [
-                    "shard管理"
+                    "shard"
                 ],
                 "parameters": [
                     {
@@ -115,7 +115,7 @@ var doc = `{
         },
         "/sm/server/del-spec": {
             "get": {
-                "description": "删除spec",
+                "description": "del spec",
                 "consumes": [
                     "application/json"
                 ],
@@ -123,7 +123,7 @@ var doc = `{
                     "application/json"
                 ],
                 "tags": [
-                    "spec管理"
+                    "spec"
                 ],
                 "parameters": [
                     {
@@ -133,6 +133,53 @@ var doc = `{
                         "in": "query",
                         "required": true
                     }
+                ],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/sm/server/get-shard": {
+            "get": {
+                "description": "get service all shard",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "shard"
+                ],
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "param",
+                        "name": "service",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/sm/server/get-spec": {
+            "get": {
+                "description": "get all service",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "spec"
                 ],
                 "responses": {
                     "200": {
