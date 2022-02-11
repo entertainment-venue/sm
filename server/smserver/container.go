@@ -47,13 +47,8 @@ type smContainer struct {
 	// 保证sm运行健康的goroutine，通过task节点下发任务给op
 	lw *Worker
 
-	eq *eventQueue
-
 	mu         sync.Mutex
 	idAndShard map[string]*smShard
-
-	// operator 的操作耗时可能较长，为每个service分配一个，防止一个任务stop the world
-	shardServiceAndOp map[string]*operator
 
 	// op需要监听特定app的task在etcd中的节点，保证app级别只有一个，sm放在leader中
 	op *operator
@@ -69,17 +64,15 @@ func newSMContainer(lg *zap.Logger, id, service string, c *apputil.Container) (*
 		service:   service,
 		Container: c,
 
-		gs:                &apputil.GoroutineStopper{},
-		idAndShard:        make(map[string]*smShard),
-		shardServiceAndOp: make(map[string]*operator),
+		gs:         &apputil.GoroutineStopper{},
+		idAndShard: make(map[string]*smShard),
 	}
-
-	sc.eq = newEventQueue(lg, &sc)
 
 	sc.gs.Wrap(
 		func(ctx context.Context) {
 			sc.campaign(ctx)
-		})
+		},
+	)
 
 	return &sc, nil
 }
@@ -98,10 +91,6 @@ func (c *smContainer) GetShard(service string) (*smShard, error) {
 	return ss, nil
 }
 
-func (c *smContainer) EventQueue() *eventQueue {
-	return c.eq
-}
-
 func (c *smContainer) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -111,18 +100,10 @@ func (c *smContainer) Close() {
 	if c.lw != nil {
 		c.lw.Close()
 	}
-	if c.eq != nil {
-		c.eq.Close()
-	}
 
 	// stop smShard
 	for _, s := range c.idAndShard {
 		s.Close()
-	}
-
-	// stop operator
-	for _, o := range c.shardServiceAndOp {
-		o.Close()
 	}
 
 	c.lg.Info("container closed",
@@ -225,24 +206,6 @@ func (c *smContainer) Load(id string) (string, error) {
 	return load, nil
 }
 
-func (c *smContainer) RegisterOperator(shardService string) error {
-	// lock不需要，在Add中调用该方法
-	if c.stopped {
-		c.lg.Info("container closed, give up register op", zap.String("service", shardService))
-		return nil
-	}
-
-	if _, ok := c.shardServiceAndOp[shardService]; !ok {
-		op, err := newOperator(c.lg, c, shardService)
-		if err != nil {
-			return errors.Wrap(err, "")
-		}
-		c.shardServiceAndOp[shardService] = op
-	}
-	c.lg.Info("register operator success", zap.String("shardService", shardService))
-	return nil
-}
-
 type leaderEtcdValue struct {
 	ContainerId string `json:"containerId"`
 	CreateTime  int64  `json:"createTime"`
@@ -282,16 +245,6 @@ func (c *smContainer) campaign(ctx context.Context) {
 		// leader启动时，等待一个时间段，方便所有container做至少一次heartbeat，然后开始监测是否需要进行container和shard映射关系的变更。
 		// etcd sdk中keepalive的请求发送时间时500ms，5s>>500ms，认为这个时间段内，所有container都会发heartbeat，不存在的就认为没有任务。
 		time.Sleep(defaultMaxRecoveryTime)
-
-		// leader启动operator
-		if err := c.RegisterOperator(c.service); err != nil {
-			c.lg.Error(
-				"start operator error",
-				zap.String("service", c.service),
-				zap.Error(err),
-			)
-			goto loop
-		}
 
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/sm/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF

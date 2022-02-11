@@ -205,7 +205,7 @@ func Test_reallocate(t *testing.T) {
 }
 
 func Test_shardLoadChecker(t *testing.T) {
-	eq := newEventQueue(ttLogger, nil)
+	eq := newTaskProcessor(ttLogger, nil)
 
 	ev := clientv3.Event{
 		Type: mvccpb.DELETE,
@@ -225,7 +225,7 @@ func Test_shardLoadChecker(t *testing.T) {
 }
 
 func Test_containerLoadChecker(t *testing.T) {
-	eq := newEventQueue(ttLogger, nil)
+	eq := newTaskProcessor(ttLogger, nil)
 
 	ev := clientv3.Event{
 		Type: mvccpb.DELETE,

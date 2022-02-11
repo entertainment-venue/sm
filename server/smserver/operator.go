@@ -25,7 +25,6 @@ import (
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
-	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -77,7 +76,7 @@ type operator struct {
 	hc *http.Client
 }
 
-func newOperator(lg *zap.Logger, sc *smContainer, service string) (*operator, error) {
+func newOperator(lg *zap.Logger, sc *smContainer, service string) *operator {
 	op := operator{
 		lg:      lg,
 		parent:  sc,
@@ -87,19 +86,12 @@ func newOperator(lg *zap.Logger, sc *smContainer, service string) (*operator, er
 		hc: newHttpClient(),
 	}
 
-	op.gs.Wrap(
-		func(ctx context.Context) {
-			op.moveLoop(ctx)
-		})
-
-	// TODO support scale
-
 	lg.Info(
 		"operator started",
 		zap.String("service", service),
 	)
 
-	return &op, nil
+	return &op
 }
 
 func (o *operator) Close() {
@@ -107,85 +99,6 @@ func (o *operator) Close() {
 		o.gs.Close()
 	}
 	o.lg.Info("operator closed", zap.String("service", o.service))
-}
-
-func (o *operator) moveLoop(ctx context.Context) {
-	key := apputil.EtcdPathAppShardTask(o.service)
-
-	// Move只有对特定app负责的operator
-	// 当前如果存在任务，直接开始执行
-stockTask:
-	select {
-	case <-ctx.Done():
-		o.lg.Info("operator exit", zap.String("service", o.service))
-		return
-	default:
-	}
-
-	resp, err := o.parent.Client.GetKV(ctx, key, nil)
-	if err != nil {
-		o.lg.Error("failed to GetKV",
-			zap.String("key", key),
-			zap.Error(err),
-		)
-		time.Sleep(defaultSleepTimeout)
-		goto stockTask
-	}
-	if resp.Count > 0 && string(resp.Kvs[0].Value) != "" {
-		o.lg.Info(
-			"moveLoop start, got move task",
-			zap.String("key", key),
-			zap.String("value", string(resp.Kvs[0].Value)),
-		)
-		if err := o.move(ctx, resp.Kvs[0].Value); err != nil {
-			o.lg.Error(
-				"move error",
-				zap.String("key", key),
-				zap.ByteString("value", resp.Kvs[0].Value),
-				zap.Error(err),
-			)
-
-			time.Sleep(defaultSleepTimeout)
-			goto stockTask
-		}
-	} else {
-		o.lg.Info(
-			"moveLoop start, empty move task",
-			zap.String("key", key),
-			zap.String("service", o.service),
-		)
-	}
-
-	apputil.WatchLoop(
-		ctx,
-		o.lg,
-		o.parent.Client.Client,
-		key,
-		resp.Header.Revision+1,
-		func(ctx context.Context, ev *clientv3.Event) error {
-			if ev.Type == mvccpb.DELETE {
-				o.lg.Error("unexpected event", zap.Reflect("ev", ev))
-				return nil
-			}
-
-			// 任务被清空，记录日志
-			if string(ev.Kv.Value) == "" {
-				o.lg.Info("got task erase event", zap.String("service", o.service))
-				return nil
-			}
-
-			o.lg.Info(
-				"trigger move",
-				zap.ByteString("key", ev.Kv.Key),
-				zap.ByteString("value", ev.Kv.Value),
-			)
-
-			if err := o.move(ctx, ev.Kv.Value); err != nil {
-				return errors.Wrap(err, "")
-			}
-			return nil
-		},
-	)
 }
 
 // 保证at least once
@@ -289,7 +202,7 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 		onlyDrop = true
 
 		// 没有Add节点证明要把shard清除掉
-		// if err := o.parent.Client.DelKV(ctx, apputil.EtcdPathAppShardId(ma.Service, ma.ShardId)); err != nil {
+		// if err := o.container.Client.DelKV(ctx, apputil.EtcdPathAppShardId(ma.Service, ma.ShardId)); err != nil {
 		// 	return errors.Wrap(err, "")
 		// }
 	}

@@ -17,11 +17,12 @@ package smserver
 import (
 	"container/heap"
 	"fmt"
+	"github.com/entertainment-venue/sm/pkg/apputil"
 	"testing"
 )
 
 func Test_PriorityQueue(t *testing.T) {
-	var evPQ PriorityQueue
+	var evPQ apputil.PriorityQueue
 	heap.Init(&evPQ)
 
 	ev := mvEvent{
@@ -30,21 +31,21 @@ func Test_PriorityQueue(t *testing.T) {
 		EnqueueTime: 1,
 	}
 
-	item := Item{
+	item := apputil.Item{
 		Value:    ev.String(),
 		Priority: 3,
 		Index:    0,
 	}
 	heap.Push(&evPQ, &item)
 
-	item2 := Item{
+	item2 := apputil.Item{
 		Value:    ev.String(),
 		Priority: 2,
 		Index:    0,
 	}
 	heap.Push(&evPQ, &item2)
 
-	item3 := Item{
+	item3 := apputil.Item{
 		Value:    ev.String(),
 		Priority: 1,
 		Index:    0,

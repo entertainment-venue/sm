@@ -58,11 +58,6 @@ func newShard(lg *zap.Logger, sc *smContainer, id string, spec *apputil.ShardSpe
 		service:   st.GovernedService,
 	}
 
-	// 每个service共用一个operator，防止无意义的重复计算和下发任务，也保证逻辑简单
-	if err := s.parent.RegisterOperator(s.service); err != nil {
-		return nil, errors.Wrap(err, "")
-	}
-
 	var err error
 	s.worker, err = newWorker(lg, s.parent, s.service)
 	if err != nil {

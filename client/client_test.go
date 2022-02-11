@@ -14,8 +14,8 @@ func TestNewClient(t *testing.T) {
 	port := 8888
 	ginSrv := gin.Default()
 	_, err := NewClient(ClientWithRouter(ginSrv),
-		ClientWithContainerId(fmt.Sprintf("%s:%d", "127.0.0.1", port)),
-		ClientWithEtcdAddr([]string{"127.0.0.1:2379"}),
+		ClientWithContainerId(fmt.Sprintf("%s:%d", "10.59.192.45", port)),
+		ClientWithEtcdAddr([]string{"10.189.73.122:8989"}),
 		ClientWithService("proxy.dev"),
 		ClientWithImplementation(&testShard{ids: make(map[string]string)}))
 	if err != nil {
