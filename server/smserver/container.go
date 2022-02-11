@@ -88,6 +88,16 @@ func (c *smContainer) Service() string {
 	return c.service
 }
 
+func (c *smContainer) GetShard(service string) (*smShard, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ss, ok := c.idAndShard[service]
+	if !ok {
+		return nil, errors.New("not exist")
+	}
+	return ss, nil
+}
+
 func (c *smContainer) EventQueue() *eventQueue {
 	return c.eq
 }

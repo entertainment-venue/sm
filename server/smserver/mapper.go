@@ -78,8 +78,10 @@ func newMapper(lg *zap.Logger, container *smContainer, appSpec *smAppSpec) (*map
 	_ = mpr.trigger.Register(containerTrigger, mpr.UpdateState)
 	_ = mpr.trigger.Register(shardTrigger, mpr.UpdateState)
 
-	if mpr.appSpec.MaxRecoveryTime <= 0 {
+	if mpr.appSpec.MaxRecoveryTime <= 0 && time.Duration(mpr.appSpec.MaxRecoveryTime)*time.Second > maxRecoveryWaitTime{
 		mpr.maxRecoveryTime = defaultMaxRecoveryTime
+	} else {
+		mpr.maxRecoveryTime = time.Duration(mpr.appSpec.MaxRecoveryTime) * time.Second
 	}
 
 	if err := mpr.initAndWatch(containerTrigger); err != nil {
