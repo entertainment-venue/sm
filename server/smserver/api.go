@@ -68,7 +68,7 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 	req.CreateTime = time.Now().Unix()
 	ss.lg.Info("receive add spec request", zap.String("request", req.String()))
 
-	//  写入app spec和app task和sm shard节点在一个tx
+	//  写入app spec和app task节点在一个tx
 	var (
 		nodes  []string
 		values []string
