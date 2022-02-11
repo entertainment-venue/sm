@@ -140,7 +140,7 @@ func (lm *mapper) initAndWatch(typ string) error {
 				lm.lg,
 				lm.container.Client.Client,
 				pfx,
-				fmt.Sprintf("initAndWatch %s exit", pfx),
+				startRev,
 				func(ctx context.Context, ev *clientv3.Event) error {
 					// pkg中会先lock，然后再写入心跳内容
 					if ev.Type != mvccpb.DELETE && ev.Kv.Value == nil {
@@ -153,7 +153,6 @@ func (lm *mapper) initAndWatch(typ string) error {
 					}
 					return nil
 				},
-				watchOpts...,
 			)
 		},
 	)

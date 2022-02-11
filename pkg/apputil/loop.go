@@ -53,7 +53,10 @@ loop:
 	)
 
 	opts = append(opts, clientv3.WithPrefix())
-	opts = append(opts, clientv3.WithRev(startRev))
+	// 允许不关注rev的watch
+	if startRev >= 0 {
+		opts = append(opts, clientv3.WithRev(startRev))
+	}
 	wch = client.Watch(ctx, key, opts...)
 	for {
 		var wr clientv3.WatchResponse
