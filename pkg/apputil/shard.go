@@ -45,6 +45,9 @@ type ShardSpec struct {
 	// Group 同一个service需要区分不同种类的shard，
 	// 这些shard之间不相关的balance到现有container上
 	Group string `json:"group"`
+
+	// Type del:用于标记删除spec
+	Type string `json:"type"`
 }
 
 func (ss *ShardSpec) String() string {
