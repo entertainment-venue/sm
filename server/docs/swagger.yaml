@@ -153,4 +153,23 @@ paths:
           description: ""
       tags:
       - spec
+  /sm/server/update-spec:
+    post:
+      consumes:
+      - application/json
+      description: update spec
+      parameters:
+      - description: param
+        in: body
+        name: param
+        required: true
+        schema:
+          $ref: '#/definitions/smserver.smAppSpec'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: ""
+      tags:
+      - spec
 swagger: "2.0"

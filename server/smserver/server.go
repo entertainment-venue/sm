@@ -200,6 +200,7 @@ func (s *Server) run() error {
 	routeAndHandler["/sm/server/add-spec"] = apiSrv.GinAddSpec
 	routeAndHandler["/sm/server/del-spec"] = apiSrv.GinDelSpec
 	routeAndHandler["/sm/server/get-spec"] = apiSrv.GinGetSpec
+	routeAndHandler["/sm/server/update-spec"] = apiSrv.GinUpdateSpec
 	routeAndHandler["/sm/server/add-shard"] = apiSrv.GinAddShard
 	routeAndHandler["/sm/server/del-shard"] = apiSrv.GinDelShard
 	routeAndHandler["/sm/server/get-shard"] = apiSrv.GinGetShard
