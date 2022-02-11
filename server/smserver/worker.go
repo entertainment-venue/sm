@@ -139,7 +139,7 @@ func (w *Worker) SetMaxShardCount(maxShardCount int) {
 }
 
 func (w *Worker) SetMaxRecoveryTime(maxRecoveryTime int) {
-	if maxRecoveryTime > 0 && time.Duration(maxRecoveryTime)*time.Second < maxRecoveryWaitTime {
+	if maxRecoveryTime > 0 && time.Duration(maxRecoveryTime)*time.Second <= maxRecoveryWaitTime {
 		w.mpr.maxRecoveryTime = time.Duration(maxRecoveryTime) * time.Second
 	}
 }
