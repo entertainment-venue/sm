@@ -73,17 +73,22 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 		nodes  []string
 		values []string
 	)
-	v := apputil.ShardSpec{
-		Service:    ss.container.service,
-		Task:       fmt.Sprintf("{\"governedService\":\"%s\"}", req.Service),
-		UpdateTime: time.Now().Unix(),
-	}
+
 	nodes = append(nodes, nodeAppSpec(req.Service))
 	nodes = append(nodes, apputil.EtcdPathAppShardTask(req.Service))
-	nodes = append(nodes, apputil.EtcdPathAppShardId(ss.container.service, req.Service))
 	values = append(values, req.String())
 	values = append(values, "")
-	values = append(values, v.String())
+
+	// 如果不是sm自己的spec,那么需要将service注册到sm的spec中
+	if ss.container.service != req.Service {
+		v := apputil.ShardSpec{
+			Service:    ss.container.service,
+			Task:       fmt.Sprintf("{\"governedService\":\"%s\"}", req.Service),
+			UpdateTime: time.Now().Unix(),
+		}
+		nodes = append(nodes, apputil.EtcdPathAppShardId(ss.container.service, req.Service))
+		values = append(values, v.String())
+	}
 	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
 		ss.lg.Error("CreateAndGet err",
 			zap.Error(err),
