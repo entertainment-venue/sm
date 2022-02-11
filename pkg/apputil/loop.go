@@ -37,34 +37,60 @@ func TickerLoop(ctx context.Context, lg *zap.Logger, duration time.Duration, exi
 	}
 }
 
-func WatchLoop(ctx context.Context, lg *zap.Logger, client *clientv3.Client, node string, exitMsg string, fn func(ctx context.Context, ev *clientv3.Event) error, opts ...clientv3.OpOption) {
-	var wch clientv3.WatchChan
+func WatchLoop(ctx context.Context, lg *zap.Logger, client *clientv3.Client, key string, rev int64, fn func(ctx context.Context, ev *clientv3.Event) error) {
+	var (
+		startRev int64
+		opts     []clientv3.OpOption
+		wch      clientv3.WatchChan
+	)
+	startRev = rev
 
-watchLoop:
-	if len(opts) > 0 {
-		wch = client.Watch(ctx, node, opts...)
-	} else {
-		wch = client.Watch(ctx, node)
-	}
+loop:
+	lg.Info(
+		"WatchLoop start",
+		zap.String("key", key),
+		zap.Int64("startRev", startRev),
+	)
+
+	opts = append(opts, clientv3.WithPrefix())
+	opts = append(opts, clientv3.WithRev(startRev))
+	wch = client.Watch(ctx, key, opts...)
 	for {
 		var wr clientv3.WatchResponse
 		select {
 		case wr = <-wch:
 		case <-ctx.Done():
-			lg.Info(exitMsg)
+			lg.Info(
+				"WatchLoop exit",
+				zap.String("key", key),
+				zap.Int64("startRev", startRev),
+			)
 			return
 		}
 		if err := wr.Err(); err != nil {
-			lg.Error("watch err", zap.Error(err))
-			goto watchLoop
+			lg.Error(
+				"WatchLoop error",
+				zap.String("key", key),
+				zap.Int64("startRev", startRev),
+				zap.Error(err),
+			)
+			goto loop
 		}
 
 		for _, ev := range wr.Events {
 			if err := fn(ctx, ev); err != nil {
-				lg.Error("fn err", zap.Error(err))
+				lg.Error(
+					"WatchLoop error when call fn",
+					zap.String("key", key),
+					zap.Int64("startRev", startRev),
+					zap.Error(err),
+				)
 				time.Sleep(3 * time.Second)
-				goto watchLoop
+				goto loop
 			}
 		}
+
+		// 发生错误时，从上次的rev开始watch
+		startRev = wr.Header.GetRevision() + 1
 	}
 }

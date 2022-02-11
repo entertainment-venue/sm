@@ -61,10 +61,9 @@ the [source code](https://github.com/entertainment-venue/sm/blob/main/pkg/apputi
 
 ```
 type ShardInterface interface {
-	Add(ctx context.Context, id string, spec *ShardSpec) error
-	Drop(ctx context.Context, id string) error
-	Load(ctx context.Context, id string) (string, error)
-	Shards(ctx context.Context) ([]string, error)
+	Add(id string, spec *ShardSpec) error
+	Drop(id string) error
+	Load(id string) (string, error)
 }
 ```
 
