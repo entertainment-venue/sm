@@ -98,7 +98,7 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
+	ss.lg.Info("add spec success", zap.String("service", req.Service))
 	c.JSON(http.StatusOK, gin.H{})
 }
 
