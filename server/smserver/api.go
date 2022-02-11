@@ -75,9 +75,7 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 	)
 
 	nodes = append(nodes, nodeAppSpec(req.Service))
-	nodes = append(nodes, apputil.EtcdPathAppShardTask(req.Service))
 	values = append(values, req.String())
-	values = append(values, "")
 
 	// 如果不是sm自己的spec,那么需要将service注册到sm的spec中
 	if ss.container.service != req.Service {

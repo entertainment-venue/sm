@@ -43,7 +43,3 @@ func EtcdPathAppShardHbId(service, id string) string {
 func EtcdPathAppShardId(service, id string) string {
 	return fmt.Sprintf("%s/shard/%s", EtcdPathAppPrefix(service), id)
 }
-
-func EtcdPathAppShardTask(service string) string {
-	return fmt.Sprintf("%s/task", EtcdPathAppPrefix(service))
-}

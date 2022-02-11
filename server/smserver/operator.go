@@ -25,7 +25,6 @@ import (
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -148,26 +147,6 @@ func (o *operator) move(ctx context.Context, value []byte) error {
 		zap.Bool("succ", succ),
 		zap.String("value", valueStr),
 	)
-
-	// 利用etcd tx清空任务节点，任务节点已经空就停止
-	taskKey := apputil.EtcdPathAppShardTask(o.service)
-	if _, err := o.parent.Client.CompareAndSwap(ctx, taskKey, valueStr, "", clientv3.NoLease); err != nil {
-		// 节点数据被破坏，需要人工介入
-		o.lg.Error(
-			"CompareAndSwap error",
-			zap.String("key", taskKey),
-			zap.String("value", valueStr),
-			zap.Error(err),
-		)
-		// 这块不能重试，可能会因为网络问题(例如：etcd更新成功，但是返回err)卡在CompareAndSwap
-	} else {
-		o.lg.Info(
-			"CompareAndSwap succ",
-			zap.String("key", taskKey),
-			zap.String("value", valueStr),
-		)
-	}
-
 	return nil
 }
 
@@ -200,12 +179,8 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 
 	} else {
 		onlyDrop = true
-
-		// 没有Add节点证明要把shard清除掉
-		// if err := o.container.Client.DelKV(ctx, apputil.EtcdPathAppShardId(ma.Service, ma.ShardId)); err != nil {
-		// 	return errors.Wrap(err, "")
-		// }
 	}
+
 	o.lg.Info("move shard request success",
 		zap.Reflect("ma", ma),
 		zap.Bool("onlyAdd", onlyAdd),
