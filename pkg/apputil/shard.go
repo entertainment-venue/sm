@@ -108,8 +108,7 @@ type ShardOpReceiver interface {
 
 // ShardServer 直接帮助接入方把服务器端启动好，引入gin框架，和sarama sdk的接入方式相似，提供消息的chan或者callback func给到接入app的业务逻辑
 type ShardServer struct {
-	stopper  *GoroutineStopper
-	taskNode string
+	stopper *GoroutineStopper
 
 	// 在Close方法中需要能被close掉
 	srv *http.Server
@@ -219,11 +218,9 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 	InitEtcdPrefix(ops.etcdPrefix)
 
 	ss := ShardServer{
-		stopper:  &GoroutineStopper{},
-		taskNode: EtcdPathAppShardTask(ops.container.Service()),
-
-		donec: make(chan struct{}),
-		opts:  ops,
+		stopper: &GoroutineStopper{},
+		donec:   make(chan struct{}),
+		opts:    ops,
 	}
 
 	// keeper: 向调用方下发shard move指令，提供本地持久存储能力

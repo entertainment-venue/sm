@@ -25,13 +25,37 @@ import (
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
-	clientv3 "go.etcd.io/etcd/client/v3"
+	"github.com/zd3tl/evtrigger"
 	"go.uber.org/zap"
 )
 
-var (
+type workerEventType int
+
+const (
+	tShardChanged workerEventType = iota + 1
+	tShardLoadChanged
+	tContainerChanged
+	tContainerLoadChanged
+	tContainerInit
+
+	workerTrigger = "workerTrigger"
+
 	defaultMaxShardCount = math.MaxInt
 )
+
+type workerTriggerEvent struct {
+	// Service 预留
+	Service string `json:"service"`
+
+	// Type 预留，用于在process中区分事件类型进行处理
+	Type workerEventType `json:"type"`
+
+	// EnqueueTime 预留，防止需要做延时
+	EnqueueTime int64 `json:"enqueueTime"`
+
+	// Value 存储moveActionList
+	Value []byte `json:"value"`
+}
 
 // Worker 管理某个sm app的shard
 type Worker struct {
@@ -39,7 +63,7 @@ type Worker struct {
 	lg      *zap.Logger
 	stopper *apputil.GoroutineStopper
 
-	// 从属于leader或者sm smShard，service和container不一定一样
+	// service 从属于leader或者sm smShard，service和container不一定一样
 	service string
 
 	// spec 需要通过配置影响balance算法
@@ -47,6 +71,11 @@ type Worker struct {
 
 	// mpr 存储当前存活的container和shard信息，代理etcd访问
 	mpr *mapper
+
+	// trigger 负责分片移动任务的任务提交和处理
+	trigger *evtrigger.Trigger
+	// operator 对接接入方，通过http请求下发shard move指令
+	operator *operator
 }
 
 func newWorker(lg *zap.Logger, container *smContainer, service string) (*Worker, error) {
@@ -75,6 +104,15 @@ func newWorker(lg *zap.Logger, container *smContainer, service string) (*Worker,
 		stopper: &apputil.GoroutineStopper{},
 		spec:    &appSpec,
 	}
+
+	// 封装事件异步处理
+	trigger, _ := evtrigger.NewTrigger(
+		evtrigger.WithLogger(lg),
+		evtrigger.WithWorkerSize(1),
+	)
+	_ = trigger.Register(containerTrigger, w.processEvent)
+	w.trigger = trigger
+	w.operator = newOperator(lg, container, service)
 
 	// TODO 参数传递的有些冗余，需要重新梳理
 	w.mpr, err = newMapper(lg, container, &appSpec)
@@ -247,7 +285,7 @@ func (w *Worker) allocateChecker(ctx context.Context) error {
 		if len(etcdHbContainerIdAndAny) == 0 {
 			continue
 		}
-		var typ eventType
+		var typ workerEventType
 		if containerChanged {
 			typ = tContainerChanged
 		} else {
@@ -256,23 +294,17 @@ func (w *Worker) allocateChecker(ctx context.Context) error {
 
 		r := w.reallocate(bg.fixShardIdAndManualContainerId, etcdHbContainerIdAndAny, bg.hbShardIdAndContainerId)
 		if len(r) > 0 {
-			ev := mvEvent{
+			ev := workerTriggerEvent{
 				Service:     w.service,
 				Type:        typ,
 				EnqueueTime: time.Now().Unix(),
-				Value:       r.String(),
+				Value:       []byte(r.String()),
 			}
-			item := Item{
-				Value:    ev.String(),
-				Priority: time.Now().Unix(),
-			}
-			w.parent.eq.push(&item, true)
-
-			w.lg.Info("item enqueue",
+			_ = w.trigger.Put(&evtrigger.TriggerEvent{Key: workerTrigger, Value: &ev})
+			w.lg.Info("event enqueue",
 				zap.String("service", w.service),
-				zap.Reflect("item", item),
+				zap.Reflect("event", ev),
 			)
-
 			continue
 		}
 		// 当survive的container为nil的时候，不能形成有效的分配，直接返回即可
@@ -493,41 +525,21 @@ func (w *Worker) maxHold(containerCnt, shardCnt int) int {
 	return r
 }
 
-func (w *Worker) shardLoadChecker(_ context.Context, ev *clientv3.Event) error {
-	// 只关注hb节点的load变化
-	if !ev.IsModify() {
-		return nil
+func (w *Worker) processEvent(key string, value interface{}) error {
+	event := value.(*workerTriggerEvent)
+	w.lg.Info(
+		"event received",
+		zap.String("key", key),
+		zap.Reflect("ev", event),
+	)
+	if err := w.operator.move(context.TODO(), event.Value); err != nil {
+		w.lg.Error(
+			"move error",
+			zap.String("key", key),
+			zap.Reflect("ev", event),
+			zap.Error(err),
+		)
+		return errors.Wrap(err, "")
 	}
-	// TODO 判断本次load时间是否需要出发shard move
-	return nil
-
-	start := time.Now()
-	qev := mvEvent{
-		Service:     w.service,
-		Type:        tShardLoadChanged,
-		EnqueueTime: start.Unix(),
-		Value:       string(ev.Kv.Value),
-	}
-	item := Item{Priority: start.Unix(), Value: qev.String()}
-	w.parent.eq.push(&item, true)
-	return nil
-}
-
-func (w *Worker) containerLoadChecker(_ context.Context, ev *clientv3.Event) error {
-	if !ev.IsModify() {
-		return nil
-	}
-	// TODO 判断本次load时间是否需要出发shard move
-	return nil
-
-	start := time.Now()
-	qev := mvEvent{
-		Service:     w.service,
-		Type:        tContainerLoadChanged,
-		EnqueueTime: start.Unix(),
-		Value:       string(ev.Kv.Value),
-	}
-	item := Item{Priority: start.Unix(), Value: qev.String()}
-	w.parent.eq.push(&item, true)
 	return nil
 }
