@@ -50,9 +50,6 @@ type smContainer struct {
 	mu         sync.Mutex
 	idAndShard map[string]*smShard
 
-	// op需要监听特定app的task在etcd中的节点，保证app级别只有一个，sm放在leader中
-	op *operator
-
 	// 利用gs实现的graceful stop，container进入stopped状态
 	stopped bool
 }
