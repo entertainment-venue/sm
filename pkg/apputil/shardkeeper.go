@@ -166,7 +166,7 @@ func (sk *shardKeeper) sync() error {
 			return err
 		}
 
-		if !dv.Disp {
+		if dv.Disp {
 			return nil
 		}
 
@@ -176,7 +176,7 @@ func (sk *shardKeeper) sync() error {
 			return sk.trigger.Put(
 				&evtrigger.TriggerEvent{
 					Key:   dropTrigger,
-					Value: shardKeeperTriggerValue{shardId: shardId},
+					Value: &shardKeeperTriggerValue{shardId: shardId},
 				},
 			)
 		}
@@ -184,7 +184,7 @@ func (sk *shardKeeper) sync() error {
 		return sk.trigger.Put(
 			&evtrigger.TriggerEvent{
 				Key:   addTrigger,
-				Value: shardKeeperTriggerValue{shardKeeperDbValue: dv, shardId: shardId},
+				Value: &shardKeeperTriggerValue{shardKeeperDbValue: dv, shardId: shardId},
 			},
 		)
 	}

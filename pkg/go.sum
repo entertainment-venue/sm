@@ -177,10 +177,6 @@ github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9dec
 github.com/yuin/goldmark v1.3.5/go.mod h1:mwnBkeHKe2W/ZEtQ+71ViKU8L12m81fl3OWwC1Zlc8k=
 github.com/yusufpapurcu/wmi v1.2.2 h1:KBNDSne4vP5mbSWnJbO+51IMOXJB67QiYCSBrubbPRg=
 github.com/yusufpapurcu/wmi v1.2.2/go.mod h1:SBZ9tNy3G9/m5Oi98Zks0QjeHVDvuK0qfxQmPyzfmi0=
-github.com/zd3tl/evtrigger v0.0.0-20220208033025-c6595f82ad39 h1:HPrfb2cqsPZW4mHkQwiU8rbBIwXHLUFNxmXrDbxwwAM=
-github.com/zd3tl/evtrigger v0.0.0-20220208033025-c6595f82ad39/go.mod h1:jS9rwkmqfOQZ0u04EEgHlIbd4oCkqNvl1uLR7z1f/ak=
-github.com/zd3tl/evtrigger v0.0.0-20220209145619-30571d0f0c4e h1:knm7EJkffJRp7Fee+g1i6q9IYIbUQ+0KWm1LProJcjc=
-github.com/zd3tl/evtrigger v0.0.0-20220209145619-30571d0f0c4e/go.mod h1:jS9rwkmqfOQZ0u04EEgHlIbd4oCkqNvl1uLR7z1f/ak=
 github.com/zd3tl/evtrigger v0.0.0-20220210031052-b4ea6139b28c h1:f9xc8i+n2cHrsFZ2cfrH1j0NSU9aqExvnYaA0qMaZ50=
 github.com/zd3tl/evtrigger v0.0.0-20220210031052-b4ea6139b28c/go.mod h1:jS9rwkmqfOQZ0u04EEgHlIbd4oCkqNvl1uLR7z1f/ak=
 go.etcd.io/bbolt v1.3.6 h1:/ecaJf0sk1l4l6V4awd65v2C3ILy7MSj+s/x1ADCIMU=
