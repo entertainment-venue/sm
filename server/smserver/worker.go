@@ -159,6 +159,17 @@ func (w *Worker) Close() {
 // 1 smContainer 的增加/减少是优先级最高，目前可能涉及大量shard move
 // 2 smShard 被漏掉作为container检测的补充，最后校验，这种情况只涉及到漏掉的shard任务下发下去
 func (w *Worker) allocateChecker(ctx context.Context) error {
+	// 现有存活containers
+	etcdHbContainerIdAndAny := w.mpr.AliveContainers()
+	// 没有存活的container，不需要做shard移动
+	if len(etcdHbContainerIdAndAny.KeyList()) == 0 {
+		w.lg.Warn(
+			"no survive container",
+			zap.String("service", w.service),
+		)
+		return nil
+	}
+
 	groups := make(map[string]*balancerGroup)
 
 	// 获取当前所有shard配置
@@ -213,9 +224,6 @@ func (w *Worker) allocateChecker(ctx context.Context) error {
 		groups[group].hbShardIdAndContainerId[shardId] = value.curContainerId
 	}
 
-	// 现有存活containers
-	etcdHbContainerIdAndAny := w.mpr.AliveContainers()
-
 	// 增加阈值限制，防止单进程过载导致雪崩
 	maxHold := w.maxHold(len(etcdHbContainerIdAndAny), len(etcdShardIdAndAny))
 	if maxHold > w.spec.MaxShardCount {
@@ -233,15 +241,6 @@ func (w *Worker) allocateChecker(ctx context.Context) error {
 
 	for group, bg := range groups {
 		hbContainerIds := etcdHbContainerIdAndAny.KeyList()
-		// 没有存活的container，不需要做shard移动
-		if len(hbContainerIds) == 0 {
-			w.lg.Warn(
-				"no survive container",
-				zap.String("service", w.service),
-			)
-			break
-		}
-
 		fixShardIds := bg.fixShardIdAndManualContainerId.KeyList()
 		hbShardIds := bg.hbShardIdAndContainerId.KeyList()
 		// 没有存活分片，且没有分片待分配
