@@ -78,7 +78,7 @@ func newMapper(lg *zap.Logger, container *smContainer, appSpec *smAppSpec) (*map
 	_ = mpr.trigger.Register(containerTrigger, mpr.UpdateState)
 	_ = mpr.trigger.Register(shardTrigger, mpr.UpdateState)
 
-	if mpr.appSpec.MaxRecoveryTime <= 0 && time.Duration(mpr.appSpec.MaxRecoveryTime)*time.Second > maxRecoveryWaitTime {
+	if mpr.appSpec.MaxRecoveryTime <= 0 || time.Duration(mpr.appSpec.MaxRecoveryTime)*time.Second > maxRecoveryWaitTime {
 		mpr.maxRecoveryTime = defaultMaxRecoveryTime
 	} else {
 		mpr.maxRecoveryTime = time.Duration(mpr.appSpec.MaxRecoveryTime) * time.Second
@@ -132,9 +132,6 @@ func (lm *mapper) initAndWatch(typ string) error {
 
 	lm.stopper.Wrap(
 		func(ctx context.Context) {
-			var watchOpts []clientv3.OpOption
-			watchOpts = append(watchOpts, clientv3.WithPrefix())
-			watchOpts = append(watchOpts, clientv3.WithRev(startRev))
 			apputil.WatchLoop(
 				ctx,
 				lm.lg,
@@ -222,7 +219,7 @@ func (lm *mapper) UpdateState(key string, value interface{}) error {
 
 	// 通过后面的时间检测是否container已经回来，这块有两种方案：
 	// 1. 轮询探测
-	// 2. 便利evtrigger中的事件，如果有该container的put事件，直接return，否则删除掉
+	// 2. 遍历evtrigger中的事件，如果有该container的put事件，直接return，否则删除掉
 	var hasCreate bool
 	findCreate := func(it interface{}) error {
 		triggerEvent := it.(*evtrigger.TriggerEvent)
@@ -430,16 +427,6 @@ func (s *mapperState) Wait(id string) error {
 	// 判断是否需要等待一会再处理该事件，队列中的事件在第一个等待事件完结后，可能都已经达到需要被处理的时间点
 	timeElapsed := time.Since(cur.lastHeartbeatTime)
 	waitTime := s.mpr.maxRecoveryTime - timeElapsed
-	if waitTime > maxRecoveryWaitTime {
-		s.mpr.lg.Warn(
-			"maxRecoveryWaitTime exceeded",
-			zap.String("service", s.mpr.appSpec.Service),
-			zap.String("id", id),
-			zap.Duration("maxRecoveryTime", s.mpr.maxRecoveryTime),
-			zap.Duration("timeElapsed", time.Since(cur.lastHeartbeatTime)),
-		)
-		waitTime = maxRecoveryWaitTime
-	}
 	if waitTime > 0 {
 		s.mpr.lg.Info(
 			"wait until timeout",

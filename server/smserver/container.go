@@ -231,8 +231,8 @@ func (c *smContainer) campaign(ctx context.Context) {
 		election := concurrency.NewElection(c.Session, leaderNodePrefix)
 		if err := election.Campaign(ctx, lvalue.String()); err != nil {
 			c.lg.Error("failed to campaign",
-				zap.Error(err),
 				zap.String("service", c.service),
+				zap.Error(err),
 			)
 			time.Sleep(defaultSleepTimeout)
 			goto loop

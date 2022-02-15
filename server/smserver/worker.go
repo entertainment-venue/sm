@@ -93,7 +93,7 @@ func newWorker(lg *zap.Logger, container *smContainer, service string) (*Worker,
 	if err := json.Unmarshal(resp.Kvs[0].Value, &appSpec); err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	if appSpec.MaxShardCount == 0 {
+	if appSpec.MaxShardCount <= 0 {
 		appSpec.MaxShardCount = defaultMaxShardCount
 	}
 
@@ -237,10 +237,9 @@ func (w *Worker) allocateChecker(ctx context.Context) error {
 		if len(hbContainerIds) == 0 {
 			w.lg.Warn(
 				"no survive container",
-				zap.String("group", group),
 				zap.String("service", w.service),
 			)
-			continue
+			break
 		}
 
 		fixShardIds := bg.fixShardIdAndManualContainerId.KeyList()
