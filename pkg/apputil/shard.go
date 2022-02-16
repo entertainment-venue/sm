@@ -30,6 +30,12 @@ import (
 	"go.uber.org/zap"
 )
 
+type ShardAction int
+
+const (
+	ShardActionDelete ShardAction = iota + 1
+)
+
 type ShardSpec struct {
 	// 存储下，方便开发
 	Service string `json:"service"`
@@ -46,8 +52,8 @@ type ShardSpec struct {
 	// 这些shard之间不相关的balance到现有container上
 	Group string `json:"group"`
 
-	// Type del:用于标记删除spec
-	Type string `json:"type"`
+	// ActionType 标记当前ShardSpec所处状态，smserver删除分片
+	Action ShardAction `json:"action"`
 }
 
 func (ss *ShardSpec) String() string {
