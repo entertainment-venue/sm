@@ -21,7 +21,9 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/pkg/errors"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
@@ -63,6 +65,14 @@ func newSMContainer(lg *zap.Logger, id, service string, c *apputil.Container) (*
 
 		gs:         &apputil.GoroutineStopper{},
 		idAndShard: make(map[string]*smShard),
+	}
+	// 判断sm的spec是否存在,如果不存在，那么进行创建,可以通过接口进行参数更改
+	if err := c.Client.CreateAndGet(
+		context.Background(),
+		[]string{nodeAppSpec(service)},
+		[]string{(&smAppSpec{Service: service, CreateTime: time.Now().Unix()}).String()},
+		clientv3.NoLease); err != nil && err != etcdutil.ErrEtcdNodeExist {
+		return nil, errors.Wrap(err, "")
 	}
 
 	sc.gs.Wrap(

@@ -409,6 +409,7 @@ func (ss *ShardServer) close() {
 			zap.Error(err),
 		)
 	}
+	ss.keeper.Close()
 
 	if ss.srv != nil {
 		if err := ss.srv.Shutdown(ctx); err != nil {

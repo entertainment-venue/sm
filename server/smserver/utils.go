@@ -15,6 +15,7 @@
 package smserver
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -81,4 +82,21 @@ func newHttpClient() *http.Client {
 		},
 		Timeout: 3 * time.Second,
 	}
+}
+
+func GetLocalIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		fmt.Printf("get local IP failed, error is %+v\n", err)
+		return ""
+	}
+	for _, address := range addrs {
+		// check the address type and if it is not a loopback the display it
+		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				return ipnet.IP.String()
+			}
+		}
+	}
+	return ""
 }

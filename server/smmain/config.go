@@ -20,9 +20,8 @@ func (h *MultiOption) Set(value string) error {
 }
 
 type Config struct {
-	Id        string      `json:"id"`
 	Service   string      `json:"service"`
-	Addr      string      `json:"addr"`
+	Port      string      `json:"port"`
 	Endpoints MultiOption `json:"endpoints"`
 
 	EtcdPrefix string `json:"etcdPrefix"`
@@ -42,9 +41,8 @@ func usage() {
 func init() {
 	flag.Usage = usage
 	flag.StringVar(&cfg.ConfigFile, "config-file", "", "You can use config file to save your common config.")
-	flag.StringVar(&cfg.Id, "id", "", "Identify current container, should changed after container restarted.")
 	flag.StringVar(&cfg.Service, "service", "", "The sharded application service name, should be used in service discovery")
-	flag.StringVar(&cfg.Addr, "addr", "", "Http server listen port like ':8888'")
+	flag.StringVar(&cfg.Port, "port", "", "Http server listen port like '8888'")
 	flag.Var(&cfg.Endpoints, "endpoints", "The etcd cluster server list")
 	flag.StringVar(&cfg.EtcdPrefix, "", "/sm", "Etcd namespace, default '/sm'")
 }
@@ -55,16 +53,12 @@ func checkSettings() {
 		return
 	}
 
-	if cfg.Id == "" {
-		fmt.Printf("Err: Id require\n")
-		usage()
-	}
 	if cfg.Service == "" {
 		fmt.Printf("Err: Service require\n")
 		usage()
 	}
-	if cfg.Addr == "" {
-		fmt.Printf("Err: Addr require\n")
+	if cfg.Port == "" {
+		fmt.Printf("Err: Port require\n")
 		usage()
 	}
 	if len(cfg.Endpoints) == 0 {

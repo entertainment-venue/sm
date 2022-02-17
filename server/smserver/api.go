@@ -208,7 +208,7 @@ type addShardRequest struct {
 	Service string `json:"service" binding:"required"`
 
 	// 业务app自己定义task内容
-	Task string `json:"task" binding:"required"`
+	Task string `json:"task"`
 
 	ManualContainerId string `json:"manualContainerId"`
 

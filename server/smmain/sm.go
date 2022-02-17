@@ -45,9 +45,9 @@ func startSM() error {
 	go handleSigs(cancel, lg)
 
 	if _, err := smserver.NewServer(
-		smserver.WithId(cfg.Id),
+		smserver.WithId(fmt.Sprintf("%s:%s", smserver.GetLocalIP(), cfg.Port)),
 		smserver.WithService(cfg.Service),
-		smserver.WithAddr(cfg.Addr),
+		smserver.WithAddr(fmt.Sprintf(":%s", cfg.Port)),
 		smserver.WithEndpoints(cfg.Endpoints),
 		smserver.WithCtx(ctx),
 		smserver.WithStopped(stopped),
