@@ -191,6 +191,7 @@ func (lm *mapper) Close() {
 	if lm.stopper != nil {
 		lm.stopper.Close()
 	}
+	lm.trigger.Close()
 }
 
 func (lm *mapper) UpdateState(key string, value interface{}) error {
@@ -220,14 +221,14 @@ func (lm *mapper) UpdateState(key string, value interface{}) error {
 	// 通过后面的时间检测是否container已经回来，这块有两种方案：
 	// 1. 轮询探测
 	// 2. 遍历evtrigger中的事件，如果有该container的put事件，直接return，否则删除掉
+	// 3. 可能会出现该container最终需要删除，但是存在put事件，轮询的时候直接返回了，导致效率可能不是很高。
+	// 这里不做最终是否删除判断，等最后一个删除事件自己删除即可
 	var hasCreate bool
 	findCreate := func(it interface{}) error {
 		triggerEvent := it.(*evtrigger.TriggerEvent)
 		ev := triggerEvent.Value.(*clientv3.Event)
-		if ev.IsCreate() {
+		if lm.extractId(string(ev.Kv.Key)) == id && ev.IsCreate() {
 			hasCreate = true
-		} else if ev.Type == mvccpb.DELETE {
-			hasCreate = false
 		}
 		return nil
 	}
