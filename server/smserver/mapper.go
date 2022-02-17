@@ -191,6 +191,7 @@ func (lm *mapper) Close() {
 	if lm.stopper != nil {
 		lm.stopper.Close()
 	}
+	lm.trigger.Close()
 }
 
 func (lm *mapper) UpdateState(key string, value interface{}) error {
@@ -224,10 +225,8 @@ func (lm *mapper) UpdateState(key string, value interface{}) error {
 	findCreate := func(it interface{}) error {
 		triggerEvent := it.(*evtrigger.TriggerEvent)
 		ev := triggerEvent.Value.(*clientv3.Event)
-		if ev.IsCreate() {
+		if string(ev.Kv.Key) == id && ev.IsCreate() {
 			hasCreate = true
-		} else if ev.Type == mvccpb.DELETE {
-			hasCreate = false
 		}
 		return nil
 	}
