@@ -14,9 +14,9 @@ func TestNewClient(t *testing.T) {
 	port := 8888
 	ginSrv := gin.Default()
 	_, err := NewClient(ClientWithRouter(ginSrv),
-		ClientWithContainerId(fmt.Sprintf("%s:%d", "10.59.193.124", port)),
+		ClientWithContainerId(fmt.Sprintf("%s:%d", "127.0.0.1", port)),
 		ClientWithEtcdAddr([]string{"127.0.0.1:2379"}),
-		ClientWithService("wkw-test"),
+		ClientWithService("test-service"),
 		ClientWithImplementation(&testShard{ids: make(map[string]string)}))
 	if err != nil {
 		log.Fatal(err)
