@@ -225,7 +225,7 @@ func (lm *mapper) UpdateState(key string, value interface{}) error {
 	findCreate := func(it interface{}) error {
 		triggerEvent := it.(*evtrigger.TriggerEvent)
 		ev := triggerEvent.Value.(*clientv3.Event)
-		if string(ev.Kv.Key) == id && ev.IsCreate() {
+		if lm.extractId(string(ev.Kv.Key)) == id && ev.IsCreate() {
 			hasCreate = true
 		}
 		return nil

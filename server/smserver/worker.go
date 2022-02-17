@@ -152,7 +152,6 @@ func (w *Worker) SetMaxRecoveryTime(maxRecoveryTime int) {
 
 func (w *Worker) Close() {
 	w.mpr.Close()
-	w.operator.Close()
 	w.trigger.Close()
 	w.stopper.Close()
 	w.lg.Info("Worker stopped", zap.String("service", w.service))
