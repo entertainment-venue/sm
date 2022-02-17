@@ -46,6 +46,6 @@ func (s *testShard) Drop(id string) error {
 }
 
 func (s *testShard) Load(id string) (string, error) {
-	//fmt.Printf("load op %s\n", id)
+	fmt.Printf("load op %s\n", id)
 	return "", nil
 }
