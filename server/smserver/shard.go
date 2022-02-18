@@ -27,6 +27,15 @@ type shardTask struct {
 	GovernedService string `json:"governedService"`
 }
 
+func (t *shardTask) String() string {
+	b, _ := json.Marshal(t)
+	return string(b)
+}
+
+func (t *shardTask) Validate() bool {
+	return t.GovernedService != ""
+}
+
 type smShard struct {
 	// smContainer 是真实的资源，包括：etcd client
 	parent *smContainer

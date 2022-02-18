@@ -92,21 +92,6 @@ type ShardInterface interface {
 	Load(id string) (string, error)
 }
 
-type ShardOpMessage struct {
-	Id      string `json:"id"`
-	Type    OpType `json:"type"`
-	TraceId string `json:"traceId"`
-}
-
-type OpType int
-
-const (
-	// OpTypeAdd 0保留，因为go默认int的值是0，防止无意识的错误
-	// 参考：https://github.com/etcd-io/etcd/blob/main/client/v3/op.go#L22
-	OpTypeAdd OpType = iota + 1
-	OpTypeDrop
-)
-
 type ShardOpReceiver interface {
 	AddShard(c *gin.Context)
 	DropShard(c *gin.Context)
@@ -442,82 +427,76 @@ func (ss *ShardServer) Container() *Container {
 	return ss.opts.container
 }
 
+// ShardMessage sm服务下发的分片
+type ShardMessage struct {
+	Id   string     `json:"id"`
+	Spec *ShardSpec `json:"spec"`
+}
+
 func (ss *ShardServer) AddShard(c *gin.Context) {
-	var req ShardOpMessage
+	var req ShardMessage
 	if err := c.ShouldBind(&req); err != nil {
 		ss.opts.lg.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	req.Type = OpTypeAdd
 
-	shardNode := EtcdPathAppShardId(ss.opts.container.Service(), req.Id)
-	sresp, err := ss.opts.container.Client.GetKV(context.TODO(), shardNode, nil)
-	if err != nil {
-		ss.opts.lg.Error("GetKV err",
-			zap.Error(err),
-			zap.String("shardNode", shardNode),
-		)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	var spec ShardSpec
-	if err := json.Unmarshal(sresp.Kvs[0].Value, &spec); err != nil {
-		ss.opts.lg.Error("Unmarshal err",
-			zap.Error(err),
-			zap.ByteString("value", sresp.Kvs[0].Value),
-		)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
 	// shard属性校验
-	if err := spec.Validate(); err != nil {
-		ss.opts.lg.Error("shard spec etcd value err",
+	if err := req.Spec.Validate(); err != nil {
+		ss.opts.lg.Error(
+			"Validate err",
+			zap.Reflect("req", req),
 			zap.Error(err),
-			zap.String("value", string(sresp.Kvs[0].Value)),
 		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	// container校验
-	if spec.ManualContainerId != "" && spec.ManualContainerId != ss.opts.container.Id() {
-		ss.opts.lg.Error("unexpected container for shard",
+	if req.Spec.ManualContainerId != "" && req.Spec.ManualContainerId != ss.opts.container.Id() {
+		ss.opts.lg.Error(
+			"unexpected container for shard",
+			zap.Reflect("req", req),
 			zap.String("service", ss.opts.container.Service()),
 			zap.String("actual", ss.opts.container.Id()),
-			zap.String("expect", spec.ManualContainerId),
+			zap.String("expect", req.Spec.ManualContainerId),
 		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unexpected container"})
 		return
 	}
 
-	if err := ss.keeper.Add(req.Id, &spec); err != nil {
-		ss.opts.lg.Error("Add err",
+	if err := ss.keeper.Add(req.Id, req.Spec); err != nil {
+		ss.opts.lg.Error(
+			"Add err",
+			zap.Reflect("req", req),
 			zap.Error(err),
-			zap.String("id", req.Id),
-			zap.Reflect("spec", spec),
 		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	ss.opts.lg.Info("add shard request success", zap.Reflect("request", req))
+	ss.opts.lg.Info(
+		"add shard success",
+		zap.Reflect("req", req),
+	)
 
 	c.JSON(http.StatusOK, gin.H{})
 }
 
 func (ss *ShardServer) DropShard(c *gin.Context) {
-	var req ShardOpMessage
+	var req ShardMessage
 	if err := c.ShouldBind(&req); err != nil {
-		ss.opts.lg.Error("ShouldBind err", zap.Error(err))
+		ss.opts.lg.Error(
+			"ShouldBind err",
+			zap.Error(err),
+		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	req.Type = OpTypeDrop
 
 	if err := ss.keeper.Drop(req.Id); err != nil {
-		ss.opts.lg.Error("Drop err",
+		ss.opts.lg.Error(
+			"Drop err",
 			zap.Error(err),
 			zap.String("id", req.Id),
 		)
@@ -525,6 +504,9 @@ func (ss *ShardServer) DropShard(c *gin.Context) {
 		return
 	}
 
-	ss.opts.lg.Info("drop shard success", zap.Reflect("req", req))
+	ss.opts.lg.Info(
+		"drop shard success",
+		zap.Reflect("req", req),
+	)
 	c.JSON(http.StatusOK, gin.H{})
 }

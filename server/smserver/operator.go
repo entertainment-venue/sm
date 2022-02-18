@@ -35,11 +35,11 @@ type moveAction struct {
 	DropEndpoint string `json:"dropEndpoint"`
 	AddEndpoint  string `json:"addEndpoint"`
 
-	// container场景下，leader的init操作可以放弃
+	// AllowDrop container场景下，leader的init操作可以放弃
 	AllowDrop bool `json:"allowDrop"`
 
-	// 方便追溯每一个ma的执行结果和轨迹，方便追查问题
-	TraceId string `json:"traceId"`
+	// Spec 存储分片具体信息
+	Spec *apputil.ShardSpec `json:"spec"`
 }
 
 func (action *moveAction) String() string {
@@ -71,18 +71,15 @@ type operator struct {
 	// operator 属于接入业务的service
 	service string
 
-	gs *apputil.GoroutineStopper
-	hc *http.Client
+	httpClient *http.Client
 }
 
 func newOperator(lg *zap.Logger, sc *smContainer, service string) *operator {
 	op := operator{
-		lg:      lg,
-		parent:  sc,
-		service: service,
-
-		gs: &apputil.GoroutineStopper{},
-		hc: newHttpClient(),
+		lg:         lg,
+		parent:     sc,
+		service:    service,
+		httpClient: newHttpClient(),
 	}
 
 	lg.Info(
@@ -91,13 +88,6 @@ func newOperator(lg *zap.Logger, sc *smContainer, service string) *operator {
 	)
 
 	return &op
-}
-
-func (o *operator) Close() {
-	if o.gs != nil {
-		o.gs.Close()
-	}
-	o.lg.Info("operator closed", zap.String("service", o.service))
 }
 
 // 保证at least once
@@ -157,7 +147,7 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 	)
 
 	if ma.DropEndpoint != "" {
-		if err := o.send(ctx, ma.ShardId, ma.DropEndpoint, "drop", ma.TraceId); err != nil {
+		if err := o.send(ctx, ma.ShardId, ma.Spec, ma.DropEndpoint, "drop"); err != nil {
 			return errors.Wrap(err, "")
 		}
 	} else {
@@ -165,7 +155,7 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 	}
 
 	if ma.AddEndpoint != "" {
-		if err := o.send(ctx, ma.ShardId, ma.AddEndpoint, "add", ma.TraceId); err != nil {
+		if err := o.send(ctx, ma.ShardId, ma.Spec, ma.AddEndpoint, "add"); err != nil {
 			if !ma.AllowDrop {
 				return errors.Wrap(err, "")
 			}
@@ -176,12 +166,12 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 			)
 			return nil
 		}
-
 	} else {
 		onlyDrop = true
 	}
 
-	o.lg.Info("move shard request success",
+	o.lg.Info(
+		"move shard request success",
 		zap.Reflect("ma", ma),
 		zap.Bool("onlyAdd", onlyAdd),
 		zap.Bool("onlyDrop", onlyDrop),
@@ -189,8 +179,8 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 	return nil
 }
 
-func (o *operator) send(_ context.Context, id string, endpoint string, action string, traceId string) error {
-	msg := apputil.ShardOpMessage{Id: id, TraceId: traceId}
+func (o *operator) send(_ context.Context, id string, spec *apputil.ShardSpec, endpoint string, action string) error {
+	msg := apputil.ShardMessage{Id: id, Spec: spec}
 	b, err := json.Marshal(msg)
 	if err != nil {
 		return errors.Wrap(err, "")
@@ -203,7 +193,7 @@ func (o *operator) send(_ context.Context, id string, endpoint string, action st
 	}
 	req.Header.Add("Content-Type", "application/json")
 
-	resp, err := o.hc.Do(req)
+	resp, err := o.httpClient.Do(req)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -216,7 +206,7 @@ func (o *operator) send(_ context.Context, id string, endpoint string, action st
 
 	o.lg.Info("http request success",
 		zap.String("urlStr", urlStr),
-		zap.ByteString("request", b),
+		zap.Reflect("request", msg),
 		zap.ByteString("response", rb),
 	)
 	return nil

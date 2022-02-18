@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -92,7 +91,7 @@ func Test_operator_move(t *testing.T) {
 
 	o := operator{lg: ttLogger, service: "foo.bar"}
 	o.parent = &sc
-	o.hc = newHttpClient()
+	o.httpClient = newHttpClient()
 
 	time.Sleep(3 * time.Second)
 
@@ -110,7 +109,7 @@ func Test_operator_dropOrAdd(t *testing.T) {
 
 	o := operator{lg: ttLogger}
 	o.parent = &sc
-	o.hc = newHttpClient()
+	o.httpClient = newHttpClient()
 
 	ma := moveAction{
 		Service:     "foo.bar",
@@ -130,9 +129,9 @@ func Test_operator_send(t *testing.T) {
 
 	o := operator{lg: ttLogger}
 	o.parent = &sc
-	o.hc = newHttpClient()
+	o.httpClient = newHttpClient()
 
-	if err := o.send(context.TODO(), "1", "127.0.0.1:8889", "add", uuid.NewString()); err != nil {
+	if err := o.send(context.TODO(), "1", &apputil.ShardSpec{}, "127.0.0.1:8889", "add"); err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
 	}

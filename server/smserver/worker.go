@@ -32,11 +32,8 @@ import (
 type workerEventType int
 
 const (
-	tShardChanged workerEventType = iota + 1
-	tShardLoadChanged
-	tContainerChanged
-	tContainerLoadChanged
-	tContainerInit
+	workerEventShardChanged workerEventType = iota + 1
+	workerEventContainerChanged
 
 	workerTrigger = "workerTrigger"
 
@@ -59,9 +56,9 @@ type workerTriggerEvent struct {
 
 // Worker 管理某个sm app的shard
 type Worker struct {
-	parent  *smContainer
-	lg      *zap.Logger
-	stopper *apputil.GoroutineStopper
+	container *smContainer
+	lg        *zap.Logger
+	stopper   *apputil.GoroutineStopper
 
 	// service 从属于leader或者sm smShard，service和container不一定一样
 	service string
@@ -80,7 +77,7 @@ type Worker struct {
 
 func newWorker(lg *zap.Logger, container *smContainer, service string) (*Worker, error) {
 	// worker需要service的配置信息，作为balance的因素
-	appSpecNode := nodeAppSpec(service)
+	appSpecNode := container.nodeManager.nodeServiceSpec(service)
 	resp, err := container.Client.GetKV(context.TODO(), appSpecNode, nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
@@ -98,11 +95,11 @@ func newWorker(lg *zap.Logger, container *smContainer, service string) (*Worker,
 	}
 
 	w := &Worker{
-		lg:      lg,
-		parent:  container,
-		service: service,
-		stopper: &apputil.GoroutineStopper{},
-		spec:    &appSpec,
+		lg:        lg,
+		container: container,
+		service:   service,
+		stopper:   &apputil.GoroutineStopper{},
+		spec:      &appSpec,
 	}
 
 	// 封装事件异步处理
@@ -178,8 +175,8 @@ func (w *Worker) allocateChecker(ctx context.Context) error {
 		etcdShardIdAndAny ArmorMap
 		err               error
 	)
-	shardKey := nodeAppShard(w.service)
-	etcdShardIdAndAny, err = w.parent.Client.GetKVs(ctx, shardKey)
+	shardKey := w.container.nodeManager.nodeServiceShard(w.service, "")
+	etcdShardIdAndAny, err = w.container.Client.GetKVs(ctx, shardKey)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -192,11 +189,14 @@ func (w *Worker) allocateChecker(ctx context.Context) error {
 	}
 	// 支持手动指定container
 	shardIdAndGroup := make(ArmorMap)
+	// 提供给 moveAction，做内容下发，防止sdk再次获取，sdk不会有sm空间的访问权限
+	shardIdAndShardSpec := make(map[string]*apputil.ShardSpec)
 	for id, value := range etcdShardIdAndAny {
 		var ss apputil.ShardSpec
 		if err := json.Unmarshal([]byte(value), &ss); err != nil {
 			return errors.Wrap(err, "")
 		}
+		shardIdAndShardSpec[id] = &ss
 
 		// 按照group聚合
 		bg := groups[ss.Group]
@@ -286,12 +286,12 @@ func (w *Worker) allocateChecker(ctx context.Context) error {
 		}
 		var typ workerEventType
 		if containerChanged {
-			typ = tContainerChanged
+			typ = workerEventContainerChanged
 		} else {
-			typ = tShardChanged
+			typ = workerEventShardChanged
 		}
 
-		r := w.reallocate(bg.fixShardIdAndManualContainerId, etcdHbContainerIdAndAny, bg.hbShardIdAndContainerId)
+		r := w.reallocate(bg.fixShardIdAndManualContainerId, etcdHbContainerIdAndAny, bg.hbShardIdAndContainerId, shardIdAndShardSpec)
 		if len(r) > 0 {
 			ev := workerTriggerEvent{
 				Service:     w.service,
@@ -326,7 +326,7 @@ func (w *Worker) changed(a []string, b []string) bool {
 	return !reflect.DeepEqual(a, b)
 }
 
-func (w *Worker) reallocate(fixShardIdAndManualContainerId ArmorMap, hbContainerIdAndAny ArmorMap, hbShardIdAndContainerId ArmorMap) moveActionList {
+func (w *Worker) reallocate(fixShardIdAndManualContainerId ArmorMap, hbContainerIdAndAny ArmorMap, hbShardIdAndContainerId ArmorMap, shardIdAndShardSpec map[string]*apputil.ShardSpec) moveActionList {
 	if len(hbContainerIdAndAny) == 0 {
 		w.lg.Info(
 			"empty container, can not trigger rebalance",
@@ -349,7 +349,7 @@ func (w *Worker) reallocate(fixShardIdAndManualContainerId ArmorMap, hbContainer
 	}
 
 	var (
-		mals []*moveAction
+		mals moveActionList
 
 		// 在最后做shard分配的时候合并到大集合中
 		adding []string
@@ -388,12 +388,14 @@ func (w *Worker) reallocate(fixShardIdAndManualContainerId ArmorMap, hbContainer
 		currentContainerId, ok := hbShardIdAndContainerId[fixShardId]
 		if !ok {
 			if manualContainerId != "" {
+				spec := shardIdAndShardSpec[fixShardId]
 				mals = append(
 					mals,
 					&moveAction{
 						Service:     w.service,
 						ShardId:     fixShardId,
 						AddEndpoint: manualContainerId,
+						Spec:        spec,
 					},
 				)
 
@@ -408,6 +410,7 @@ func (w *Worker) reallocate(fixShardIdAndManualContainerId ArmorMap, hbContainer
 		// 不在要求的container上
 		if manualContainerId != "" {
 			if currentContainerId != manualContainerId {
+				spec := shardIdAndShardSpec[fixShardId]
 				mals = append(
 					mals,
 					&moveAction{
@@ -415,6 +418,7 @@ func (w *Worker) reallocate(fixShardIdAndManualContainerId ArmorMap, hbContainer
 						ShardId:      fixShardId,
 						DropEndpoint: currentContainerId,
 						AddEndpoint:  manualContainerId,
+						Spec:         spec,
 					},
 				)
 
@@ -484,11 +488,29 @@ func (w *Worker) reallocate(fixShardIdAndManualContainerId ArmorMap, hbContainer
 				}
 
 				shardId := adding[idx]
+				spec := shardIdAndShardSpec[shardId]
 				from, ok := dropFroms[shardId]
 				if ok {
-					mals = append(mals, &moveAction{Service: w.service, ShardId: adding[idx], DropEndpoint: from, AddEndpoint: bc.id})
+					mals = append(
+						mals,
+						&moveAction{
+							Service:      w.service,
+							ShardId:      adding[idx],
+							DropEndpoint: from,
+							AddEndpoint:  bc.id,
+							Spec:         spec,
+						},
+					)
 				} else {
-					mals = append(mals, &moveAction{Service: w.service, ShardId: adding[idx], AddEndpoint: bc.id})
+					mals = append(
+						mals,
+						&moveAction{
+							Service:     w.service,
+							ShardId:     adding[idx],
+							AddEndpoint: bc.id,
+							Spec:        spec,
+						},
+					)
 				}
 				idx++
 			}
