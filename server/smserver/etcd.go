@@ -20,25 +20,37 @@ import (
 	"github.com/entertainment-venue/sm/pkg/apputil"
 )
 
-// /sm/proxy/admin/leader
-func nodeLeader(service string) string {
-	return fmt.Sprintf("%s/leader", apputil.EtcdPathAppPrefix(service))
+// nodeManager 管理sm的etcd prefix
+type nodeManager struct {
+	smService string
 }
 
-func nodeAppContainerHb(service string) string {
-	return fmt.Sprintf("%s/containerhb/", apputil.EtcdPathAppPrefix(service))
+// /sm/app/foo.bar
+func (n *nodeManager) nodeSM() string {
+	return apputil.EtcdPathAppPrefix(n.smService)
 }
 
-// 存储分配当前关系
-func nodeAppShard(service string) string {
-	return fmt.Sprintf("%s/shard/", apputil.EtcdPathAppPrefix(service))
+// /sm/app/foo.bar/leader
+func (n *nodeManager) nodeSMLeader() string {
+	return fmt.Sprintf("%s/leader", n.nodeSM())
 }
 
-func nodeAppShardHb(service string) string {
-	return fmt.Sprintf("%s/shardhb/", apputil.EtcdPathAppPrefix(service))
+// /sm/app/foo.bar/service/proxy.dev/spec
+func (n *nodeManager) nodeServiceSpec(appService string) string {
+	return fmt.Sprintf("%s/service/%s/spec", n.nodeSM(), appService)
 }
 
-// /sm/app/proxy/spec 存储app的基本信息
-func nodeAppSpec(service string) string {
-	return fmt.Sprintf("%s/spec", apputil.EtcdPathAppPrefix(service))
+// /sm/app/foo.bar/service/proxy.dev/shard/s1
+func (n *nodeManager) nodeServiceShard(appService, shardId string) string {
+	return fmt.Sprintf("%s/service/%s/shard/%s", n.nodeSM(), appService, shardId)
+}
+
+// /sm/app/proxy.dev/shardhb/
+func (n *nodeManager) nodeServiceShardHb(appService string) string {
+	return fmt.Sprintf("%s/shardhb/", apputil.EtcdPathAppPrefix(appService))
+}
+
+// /sm/app/proxy.dev/containerhb/
+func (n *nodeManager) nodeServiceContainerHb(appService string) string {
+	return fmt.Sprintf("%s/containerhb/", apputil.EtcdPathAppPrefix(appService))
 }

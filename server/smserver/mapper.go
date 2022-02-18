@@ -449,9 +449,9 @@ func (s *mapperState) Wait(id string) error {
 func (s *mapperState) Prefix() string {
 	switch s.typ {
 	case shardTrigger:
-		return nodeAppShardHb(s.mpr.appSpec.Service)
+		return s.mpr.container.nodeManager.nodeServiceShardHb(s.mpr.appSpec.Service)
 	case containerTrigger:
-		return nodeAppContainerHb(s.mpr.appSpec.Service)
+		return s.mpr.container.nodeManager.nodeServiceContainerHb(s.mpr.appSpec.Service)
 	default:
 		panic(fmt.Sprintf("unknown %s", s.typ))
 	}

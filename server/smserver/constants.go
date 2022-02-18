@@ -22,8 +22,6 @@ import (
 const (
 	defaultSleepTimeout = 3 * time.Second
 	defaultLoopInterval = 3 * time.Second
-
-	specDelType = "del"
 )
 
 var (

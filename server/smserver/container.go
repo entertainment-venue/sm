@@ -42,7 +42,7 @@ type smContainer struct {
 	service string
 
 	// 管理自己的goroutine
-	gs *apputil.GoroutineStopper
+	stopper *apputil.GoroutineStopper
 
 	lg *zap.Logger
 
@@ -52,8 +52,11 @@ type smContainer struct {
 	mu         sync.Mutex
 	idAndShard map[string]*smShard
 
-	// 利用gs实现的graceful stop，container进入stopped状态
+	// 利用 stopper 实现的graceful stop，container进入stopped状态
 	stopped bool
+
+	// nodeManager 管理 smContainer 内部的etcd节点的pfx
+	nodeManager *nodeManager
 }
 
 func newSMContainer(lg *zap.Logger, id, service string, c *apputil.Container) (*smContainer, error) {
@@ -63,19 +66,20 @@ func newSMContainer(lg *zap.Logger, id, service string, c *apputil.Container) (*
 		service:   service,
 		Container: c,
 
-		gs:         &apputil.GoroutineStopper{},
-		idAndShard: make(map[string]*smShard),
+		stopper:     &apputil.GoroutineStopper{},
+		idAndShard:  make(map[string]*smShard),
+		nodeManager: &nodeManager{smService: service},
 	}
 	// 判断sm的spec是否存在,如果不存在，那么进行创建,可以通过接口进行参数更改
 	if err := c.Client.CreateAndGet(
 		context.Background(),
-		[]string{nodeAppSpec(service)},
+		[]string{sc.nodeManager.nodeServiceSpec(sc.Service())},
 		[]string{(&smAppSpec{Service: service, CreateTime: time.Now().Unix()}).String()},
 		clientv3.NoLease); err != nil && err != etcdutil.ErrEtcdNodeExist {
 		return nil, errors.Wrap(err, "")
 	}
 
-	sc.gs.Wrap(
+	sc.stopper.Wrap(
 		func(ctx context.Context) {
 			sc.campaign(ctx)
 		},
@@ -233,7 +237,7 @@ func (c *smContainer) campaign(ctx context.Context) {
 		default:
 		}
 
-		leaderNodePrefix := nodeLeader(c.service)
+		leaderNodePrefix := c.nodeManager.nodeSMLeader()
 		lvalue := leaderEtcdValue{ContainerId: c.id, CreateTime: time.Now().Unix()}
 		election := concurrency.NewElection(c.Session, leaderNodePrefix)
 		if err := election.Campaign(ctx, lvalue.String()); err != nil {
@@ -245,7 +249,7 @@ func (c *smContainer) campaign(ctx context.Context) {
 			goto loop
 		}
 		c.lg.Info("campaign leader success",
-			zap.String("node", leaderNodePrefix),
+			zap.String("pfx", leaderNodePrefix),
 			zap.Int64("lease", int64(c.Session.Lease())),
 		)
 
