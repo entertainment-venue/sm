@@ -9,6 +9,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/zd3tl/evtrigger"
 	bolt "go.etcd.io/bbolt"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -23,7 +24,8 @@ const (
 
 // shardKeeper 参考raft中log replication节点的实现机制，记录日志到boltdb，开goroutine异步下发指令给调用方
 type shardKeeper struct {
-	lg *zap.Logger
+	lg        *zap.Logger
+	container *Container
 
 	// db 本次持久存储
 	db *bolt.DB
@@ -204,6 +206,36 @@ func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
 	var opErr error
 	switch typ {
 	case addTrigger:
+		// lock shard
+		lockPfx := EtcdPathAppShardHbId(sk.container.Service(), shardId)
+		mutex := concurrency.NewMutex(sk.container.Session, lockPfx)
+		if err := mutex.Lock(sk.container.Client.Client.Ctx()); err != nil {
+			// lock被占用
+			if err == concurrency.ErrLocked {
+				// opt: 确认lock被占用，清理掉本地shard
+				if err := sk.delete(shardId); err != nil {
+					return errors.Wrapf(err, "shardId: %s", shardId)
+				}
+
+				// 确定被别的container占有
+				sk.lg.Error(
+					"lock occupied and deleted",
+					zap.String("pfx", lockPfx),
+					zap.String("typ", typ),
+					zap.Reflect("tv", tv),
+					zap.Error(err),
+				)
+				return nil
+			}
+			// 上lock失败，可能有两种情况:
+			// 1 etcd连接不上
+			// 2 shard已经被占用
+			// 无论哪种，等在这里就行，1的情况依赖etcd可用性
+			return errors.Wrapf(err, "pfx: %s", lockPfx)
+		}
+
+		// 有lock的前提下，下发boltdb中的分片给调用方，这里存在异常情况：
+		// 1 lock失效，并已经下发给调用方，此处逻辑以boltdb中的shard为准，lock失效会触发shardKeeper的Close，
 		spec := tv.Spec
 		opErr = sk.shardImpl.Add(shardId, spec)
 		if opErr == nil {
@@ -214,31 +246,33 @@ func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
 				return b.Put([]byte(shardId), []byte(tv.String()))
 			})
 			if err != nil {
-				return err
+				return errors.Wrapf(err, "shardId: %s", shardId)
 			}
 			sk.lg.Info(
 				"add ok",
 				zap.String("typ", typ),
-				zap.String("shardId", shardId),
-				zap.String("spec", spec.String()),
+				zap.Reflect("tv", tv),
 			)
 			return nil
 		}
 	case dropTrigger:
+		// unlock shard
 		opErr = sk.shardImpl.Drop(shardId)
 		if opErr == nil {
-			// 下发成功后更新boltdb
-			err := sk.db.Update(func(tx *bolt.Tx) error {
-				b := tx.Bucket([]byte(sk.service))
-				return b.Delete([]byte(shardId))
-			})
-			if err != nil {
-				return err
+			lockPfx := EtcdPathAppShardHbId(sk.container.Service(), shardId)
+			mutex := concurrency.NewMutex(sk.container.Session, lockPfx)
+			if err := mutex.Unlock(context.TODO()); err != nil {
+				return errors.Wrapf(err, "pfx: %s", lockPfx)
+			}
+
+			// 清理掉shard
+			if err := sk.delete(shardId); err != nil {
+				return errors.Wrapf(err, "shardId: %s", shardId)
 			}
 			sk.lg.Info(
 				"drop ok",
 				zap.String("typ", typ),
-				zap.String("shardId", shardId),
+				zap.Reflect("tv", tv),
 			)
 			return nil
 		}
@@ -249,9 +283,19 @@ func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
 	sk.lg.Error(
 		"op error, wait next round",
 		zap.String("typ", typ),
-		zap.String("shardId", shardId),
+		zap.Reflect("tv", tv),
 		zap.Error(opErr),
 	)
 
 	return errors.Wrap(opErr, "")
+}
+
+func (sk *shardKeeper) delete(shardId string) error {
+	return errors.Wrap(
+		sk.db.Update(func(tx *bolt.Tx) error {
+			b := tx.Bucket([]byte(sk.service))
+			return b.Delete([]byte(shardId))
+		}),
+		"",
+	)
 }

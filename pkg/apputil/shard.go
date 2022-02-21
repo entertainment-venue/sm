@@ -403,7 +403,6 @@ func (ss *ShardServer) close() {
 				zap.Error(err),
 				zap.String("service", ss.opts.container.Service()),
 			)
-
 		} else {
 			ss.opts.lg.Info(
 				"Shutdown success",
