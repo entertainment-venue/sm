@@ -125,7 +125,7 @@ func newWorker(lg *zap.Logger, container *smContainer, service string) (*Worker,
 				defaultLoopInterval,
 				fmt.Sprintf("[lw] service %s ShardAllocateLoop exit", w.service),
 				func(ctx context.Context) error {
-					return w.allocateChecker(ctx)
+					return w.balanceChecker(ctx)
 				},
 			)
 		},
@@ -156,11 +156,11 @@ func (w *Worker) Close() {
 
 // 1 smContainer 的增加/减少是优先级最高，目前可能涉及大量shard move
 // 2 smShard 被漏掉作为container检测的补充，最后校验，这种情况只涉及到漏掉的shard任务下发下去
-func (w *Worker) allocateChecker(ctx context.Context) error {
+func (w *Worker) balanceChecker(ctx context.Context) error {
 	// 现有存活containers
 	etcdHbContainerIdAndAny := w.mpr.AliveContainers()
 	// 没有存活的container，不需要做shard移动
-	if len(etcdHbContainerIdAndAny.KeyList()) == 0 {
+	if len(etcdHbContainerIdAndAny) == 0 {
 		w.lg.Warn(
 			"no survive container",
 			zap.String("service", w.service),
@@ -179,13 +179,6 @@ func (w *Worker) allocateChecker(ctx context.Context) error {
 	etcdShardIdAndAny, err = w.container.Client.GetKVs(ctx, shardKey)
 	if err != nil {
 		return errors.Wrap(err, "")
-	}
-	if len(etcdShardIdAndAny) == 0 {
-		w.lg.Info("service not init, because no shard registered",
-			zap.String("service", w.service),
-			zap.String("node", shardKey),
-		)
-		return nil
 	}
 	// 支持手动指定container
 	shardIdAndGroup := make(ArmorMap)
@@ -225,6 +218,44 @@ func (w *Worker) allocateChecker(ctx context.Context) error {
 		groups[group].hbShardIdAndContainerId[shardId] = value.curContainerId
 	}
 
+	// shard被清除的场景，从rebalance方法中提前到这里，应对完全不配置shard，且sdk本地存活的场景
+	// 提取需要被移除的shard
+	var mals moveActionList
+	for hbShardId, value := range etcdHbShardIdAndValue {
+		if _, ok := etcdShardIdAndAny[hbShardId]; !ok {
+			mals = append(
+				mals,
+				&moveAction{
+					Service:      w.service,
+					ShardId:      hbShardId,
+					DropEndpoint: value.curContainerId,
+				},
+			)
+			delete(etcdHbShardIdAndValue, hbShardId)
+		}
+	}
+	if len(mals) > 0 {
+		ev := workerTriggerEvent{
+			Service:     w.service,
+			Type:        workerEventShardChanged,
+			EnqueueTime: time.Now().Unix(),
+			Value:       []byte(mals.String()),
+		}
+		_ = w.trigger.Put(&evtrigger.TriggerEvent{Key: workerTrigger, Value: &ev})
+		w.lg.Info("delete shard event enqueue",
+			zap.String("service", w.service),
+			zap.Reflect("event", ev),
+		)
+	}
+	if len(etcdShardIdAndAny) == 0 {
+		w.lg.Info(
+			"shards cleared",
+			zap.String("service", w.service),
+			zap.Reflect("mals", mals),
+		)
+		return nil
+	}
+
 	// 增加阈值限制，防止单进程过载导致雪崩
 	maxHold := w.maxHold(len(etcdHbContainerIdAndAny), len(etcdShardIdAndAny))
 	if maxHold > w.spec.MaxShardCount {
@@ -240,6 +271,7 @@ func (w *Worker) allocateChecker(ctx context.Context) error {
 		return err
 	}
 
+	// 现存shard的分配
 	for group, bg := range groups {
 		hbContainerIds := etcdHbContainerIdAndAny.KeyList()
 		fixShardIds := bg.fixShardIdAndManualContainerId.KeyList()
@@ -291,7 +323,7 @@ func (w *Worker) allocateChecker(ctx context.Context) error {
 			typ = workerEventShardChanged
 		}
 
-		r := w.reallocate(bg.fixShardIdAndManualContainerId, etcdHbContainerIdAndAny, bg.hbShardIdAndContainerId, shardIdAndShardSpec)
+		r := w.rebalance(bg.fixShardIdAndManualContainerId, etcdHbContainerIdAndAny, bg.hbShardIdAndContainerId, shardIdAndShardSpec)
 		if len(r) > 0 {
 			ev := workerTriggerEvent{
 				Service:     w.service,
@@ -307,7 +339,7 @@ func (w *Worker) allocateChecker(ctx context.Context) error {
 			continue
 		}
 		// 当survive的container为nil的时候，不能形成有效的分配，直接返回即可
-		w.lg.Warn("can not reallocate",
+		w.lg.Warn("can not rebalance",
 			zap.String("service", w.service),
 			zap.Bool("container-changed", containerChanged),
 			zap.Bool("shard-changed", shardChanged),
@@ -326,15 +358,8 @@ func (w *Worker) changed(a []string, b []string) bool {
 	return !reflect.DeepEqual(a, b)
 }
 
-func (w *Worker) reallocate(fixShardIdAndManualContainerId ArmorMap, hbContainerIdAndAny ArmorMap, hbShardIdAndContainerId ArmorMap, shardIdAndShardSpec map[string]*apputil.ShardSpec) moveActionList {
-	if len(hbContainerIdAndAny) == 0 {
-		w.lg.Info(
-			"empty container, can not trigger rebalance",
-			zap.String("service", w.service),
-		)
-		return nil
-	}
-
+// 只负责shard移动的场景，删除在balanceChecker中处理
+func (w *Worker) rebalance(fixShardIdAndManualContainerId ArmorMap, hbContainerIdAndAny ArmorMap, hbShardIdAndContainerId ArmorMap, shardIdAndShardSpec map[string]*apputil.ShardSpec) moveActionList {
 	// 保证shard在hb中上报的container和存活container一致
 	containerIdAndHbShardIds := hbShardIdAndContainerId.SwapKV()
 	for containerId := range containerIdAndHbShardIds {
@@ -358,29 +383,6 @@ func (w *Worker) reallocate(fixShardIdAndManualContainerId ArmorMap, hbContainer
 			bcs: make(map[string]*balancerContainer),
 		}
 	)
-
-	// 提取需要被移除的shard
-	for hbShardId, containerId := range hbShardIdAndContainerId {
-		_, ok := fixShardIdAndManualContainerId[hbShardId]
-		if !ok {
-			mals = append(
-				mals,
-				&moveAction{
-					Service:      w.service,
-					ShardId:      hbShardId,
-					DropEndpoint: containerId,
-				},
-			)
-		}
-	}
-	if len(fixShardIdAndManualContainerId) == 0 {
-		w.lg.Info(
-			"remove all shard",
-			zap.String("service", w.service),
-			zap.Reflect("mals", mals),
-		)
-		return mals
-	}
 
 	// 构建container和shard的关系
 	for fixShardId, manualContainerId := range fixShardIdAndManualContainerId {
