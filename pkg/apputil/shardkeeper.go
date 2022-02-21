@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
+	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/pkg/errors"
 	"github.com/zd3tl/evtrigger"
 	bolt "go.etcd.io/bbolt"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -24,19 +27,25 @@ const (
 // shardKeeper 参考raft中log replication节点的实现机制，记录日志到boltdb，开goroutine异步下发指令给调用方
 type shardKeeper struct {
 	lg *zap.Logger
+	// container *Container
 
 	// db 本次持久存储
 	db *bolt.DB
-	// service 作为bucket的key，区分度足够
-	service string
-
-	// shardImpl 接入方的分片实现
-	shardImpl ShardInterface
 
 	// trigger 从boltdb中提取的待提交内容，放入队列顺序执行，也可以并发(trigger有点硬用了)，算是对性能和可读性的优化吧
 	trigger *evtrigger.Trigger
 
 	stopper *GoroutineStopper
+
+	// 以下字段从ShardServer初始化
+	service   string
+	shardImpl ShardInterface
+	client    *etcdutil.EtcdClient
+	session   *concurrency.Session
+
+	// Unlock保证使用的相同mutex，否则myKey设定不上
+	mu           sync.Mutex
+	shardMutexes map[string]*concurrency.Mutex
 }
 
 type shardKeeperTriggerValue struct {
@@ -63,12 +72,17 @@ func (v *shardKeeperDbValue) String() string {
 	return string(b)
 }
 
-func newShardKeeper(lg *zap.Logger, service string, impl ShardInterface) (*shardKeeper, error) {
-	lk := shardKeeper{
-		lg:        lg,
-		service:   service,
-		shardImpl: impl,
-		stopper:   &GoroutineStopper{},
+func newShardKeeper(lg *zap.Logger, ss *ShardServer) (*shardKeeper, error) {
+	sk := shardKeeper{
+		lg:      lg,
+		stopper: &GoroutineStopper{},
+
+		service:   ss.Container().Service(),
+		shardImpl: ss.opts.impl,
+		client:    ss.Container().Client,
+		session:   ss.Container().Session,
+
+		shardMutexes: make(map[string]*concurrency.Mutex),
 	}
 
 	db, err := bolt.Open("shard.db", 0600, nil)
@@ -76,20 +90,20 @@ func newShardKeeper(lg *zap.Logger, service string, impl ShardInterface) (*shard
 		return nil, errors.Wrap(err, "")
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists([]byte(service))
+		_, err := tx.CreateBucketIfNotExists([]byte(sk.service))
 		return err
 	}); err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	lk.db = db
+	sk.db = db
 
 	tgr, _ := evtrigger.NewTrigger(
 		evtrigger.WithLogger(lg),
 		evtrigger.WithWorkerSize(1),
 	)
-	_ = tgr.Register(addTrigger, lk.Dispatch)
-	_ = tgr.Register(dropTrigger, lk.Dispatch)
-	lk.trigger = tgr
+	_ = tgr.Register(addTrigger, sk.Dispatch)
+	_ = tgr.Register(dropTrigger, sk.Dispatch)
+	sk.trigger = tgr
 
 	// 基于boltdb当前内容做shard下发
 	initFn := func(k, v []byte) error {
@@ -98,26 +112,26 @@ func newShardKeeper(lg *zap.Logger, service string, impl ShardInterface) (*shard
 			return err
 		}
 		// 使用shardImpl还是lk.Add要区分清楚，forEach中如果有boltdb访问会block
-		return lk.shardImpl.Add(string(k), value.Spec)
+		return sk.shardImpl.Add(string(k), value.Spec)
 	}
-	if err := lk.forEach(initFn); err != nil {
+	if err := sk.forEach(initFn); err != nil {
 		return nil, errors.Wrap(err, "")
 	}
 
 	// 启动同步goroutine，对shard做move动作
-	lk.stopper.Wrap(func(ctx context.Context) {
+	sk.stopper.Wrap(func(ctx context.Context) {
 		TickerLoop(
 			ctx,
-			lk.lg,
+			sk.lg,
 			defaultSyncInterval,
-			fmt.Sprintf("shardkeeper: service %s sync exit", lk.service),
+			fmt.Sprintf("shardkeeper: service %s sync exit", sk.service),
 			func(ctx context.Context) error {
-				return lk.sync()
+				return sk.sync()
 			},
 		)
 	})
 
-	return &lk, nil
+	return &sk, nil
 }
 
 func (sk *shardKeeper) Add(id string, spec *ShardSpec) error {
@@ -135,16 +149,27 @@ func (sk *shardKeeper) Add(id string, spec *ShardSpec) error {
 func (sk *shardKeeper) Drop(id string) error {
 	return sk.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(sk.service))
-
 		raw := b.Get([]byte(id))
+
+		// 多次下发drop指令，发现boltdb中为nil，return ASAP
+		if raw == nil {
+			sk.lg.Warn(
+				"drop shard again",
+				zap.String("service", sk.service),
+				zap.String("id", id),
+			)
+			sk.unlock(id)
+			return nil
+		}
+
 		var dv shardKeeperDbValue
 		if err := json.Unmarshal(raw, &dv); err != nil {
-			return err
+			return errors.Wrap(err, string(raw))
 		}
 		dv.Disp = false
 		dv.Drop = true
 
-		return b.Put([]byte(id), []byte(dv.String()))
+		return errors.Wrap(b.Put([]byte(id), []byte(dv.String())), "")
 	})
 }
 
@@ -192,9 +217,9 @@ func (sk *shardKeeper) sync() error {
 }
 
 func (sk *shardKeeper) Close() {
-	sk.stopper.Close()
-	sk.trigger.Close()
-	_ = sk.db.Close()
+	// sk.stopper.Close()
+	// sk.trigger.Close()
+	// _ = sk.db.Close()
 }
 
 func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
@@ -204,6 +229,12 @@ func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
 	var opErr error
 	switch typ {
 	case addTrigger:
+		if err := sk.lock(shardId); err != nil {
+			return errors.Wrap(err, "")
+		}
+
+		// 有lock的前提下，下发boltdb中的分片给调用方，这里存在异常情况：
+		// 1 lock失效，并已经下发给调用方，此处逻辑以boltdb中的shard为准，lock失效会触发shardKeeper的Close，
 		spec := tv.Spec
 		opErr = sk.shardImpl.Add(shardId, spec)
 		if opErr == nil {
@@ -214,31 +245,30 @@ func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
 				return b.Put([]byte(shardId), []byte(tv.String()))
 			})
 			if err != nil {
-				return err
+				return errors.Wrapf(err, "shardId: %s", shardId)
 			}
 			sk.lg.Info(
 				"add ok",
 				zap.String("typ", typ),
-				zap.String("shardId", shardId),
-				zap.String("spec", spec.String()),
+				zap.Reflect("tv", tv),
 			)
 			return nil
 		}
 	case dropTrigger:
 		opErr = sk.shardImpl.Drop(shardId)
 		if opErr == nil {
-			// 下发成功后更新boltdb
-			err := sk.db.Update(func(tx *bolt.Tx) error {
-				b := tx.Bucket([]byte(sk.service))
-				return b.Delete([]byte(shardId))
-			})
-			if err != nil {
-				return err
+			if err := sk.unlock(shardId); err != nil {
+				return errors.Wrap(err, "")
+			}
+
+			// 清理掉shard
+			if err := sk.delete(shardId); err != nil {
+				return errors.Wrapf(err, "shardId: %s", shardId)
 			}
 			sk.lg.Info(
 				"drop ok",
 				zap.String("typ", typ),
-				zap.String("shardId", shardId),
+				zap.Reflect("tv", tv),
 			)
 			return nil
 		}
@@ -249,9 +279,70 @@ func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
 	sk.lg.Error(
 		"op error, wait next round",
 		zap.String("typ", typ),
-		zap.String("shardId", shardId),
+		zap.Reflect("tv", tv),
 		zap.Error(opErr),
 	)
 
 	return errors.Wrap(opErr, "")
+}
+
+func (sk *shardKeeper) delete(shardId string) error {
+	return errors.Wrap(
+		sk.db.Update(func(tx *bolt.Tx) error {
+			b := tx.Bucket([]byte(sk.service))
+			return b.Delete([]byte(shardId))
+		}),
+		"",
+	)
+}
+
+func (sk *shardKeeper) lock(shardId string) error {
+	sk.mu.Lock()
+	defer sk.mu.Unlock()
+
+	lockPfx := EtcdPathAppShardHbId(sk.service, shardId)
+	mutex := concurrency.NewMutex(sk.session, lockPfx)
+	if err := mutex.Lock(sk.client.Client.Ctx()); err != nil {
+		// lock被占用
+		if err == concurrency.ErrLocked {
+			// opt: 确认lock被占用，清理掉本地shard
+			if err := sk.delete(shardId); err != nil {
+				return errors.Wrapf(err, "shardId: %s", shardId)
+			}
+
+			// 确定被别的container占有
+			sk.lg.Error(
+				"lock occupied and deleted",
+				zap.String("pfx", lockPfx),
+				zap.Error(err),
+			)
+			return nil
+		}
+		// 上lock失败，可能有两种情况:
+		// 1 etcd连接不上
+		// 2 shard已经被占用
+		// 无论哪种，等在这里就行，1的情况依赖etcd可用性
+		return errors.Wrapf(err, "pfx: %s", lockPfx)
+	}
+	sk.shardMutexes[shardId] = mutex
+	return nil
+}
+
+func (sk *shardKeeper) unlock(shardId string) error {
+	sk.mu.Lock()
+	defer sk.mu.Unlock()
+
+	mu, ok := sk.shardMutexes[shardId]
+	if ok {
+		// unlock和删除node是两回事，mutex.Unlock调用一次后内部的myKey就失效，但是drop的goroutine和心跳的goroutine是异步的，在Unlock之后，还没有删除node之前，可能会触发heartbeat把节点加回来
+		if _, err := sk.client.Delete(context.TODO(), mu.Key()); err != nil {
+			return errors.Wrapf(err, "shardId %s", shardId)
+		}
+		sk.lg.Info(
+			"unlock ok",
+			zap.String("service", sk.service),
+			zap.String("shardId", shardId),
+		)
+	}
+	return nil
 }

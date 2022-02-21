@@ -25,6 +25,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
@@ -215,7 +216,7 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 	}
 
 	// keeper: 向调用方下发shard move指令，提供本地持久存储能力
-	keeper, err := newShardKeeper(ops.lg, ops.container.Service(), ops.impl)
+	keeper, err := newShardKeeper(ops.lg, &ss)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -253,11 +254,18 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 					lockPfx := EtcdPathAppShardHbId(ss.opts.container.Service(), id)
 					mutex := concurrency.NewMutex(session, lockPfx)
 					if err := mutex.Lock(ss.opts.container.Client.Client.Ctx()); err != nil {
-						ops.lg.Error(
-							"lock error",
-							zap.String("pfx", lockPfx),
-							zap.Error(err),
-						)
+						if err == rpctypes.ErrLeaseNotFound {
+							ops.lg.Info(
+								"lock released",
+								zap.String("pfx", lockPfx),
+							)
+						} else {
+							ops.lg.Error(
+								"lock error",
+								zap.String("pfx", lockPfx),
+								zap.Error(err),
+							)
+						}
 						return nil
 					}
 
@@ -403,7 +411,6 @@ func (ss *ShardServer) close() {
 				zap.Error(err),
 				zap.String("service", ss.opts.container.Service()),
 			)
-
 		} else {
 			ss.opts.lg.Info(
 				"Shutdown success",
