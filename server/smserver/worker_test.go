@@ -196,7 +196,7 @@ func Test_reallocate(t *testing.T) {
 	w := Worker{service: "foo.bar", lg: logger}
 
 	for idx, tt := range tests {
-		r := w.reallocate(tt.fixShardIdAndManualContainerId, tt.hbContainerIdAndAny, tt.hbShardIdAndContainerId)
+		r := w.rebalance(tt.fixShardIdAndManualContainerId, tt.hbContainerIdAndAny, tt.hbShardIdAndContainerId)
 		if !reflect.DeepEqual(r, tt.expect) {
 			t.Errorf("idx: %d actual: %s, expect: %s", idx, r.String(), tt.expect.String())
 			t.SkipNow()
