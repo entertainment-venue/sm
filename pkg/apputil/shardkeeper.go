@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/pkg/errors"
 	"github.com/zd3tl/evtrigger"
 	bolt "go.etcd.io/bbolt"
-	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
@@ -44,6 +44,7 @@ type shardKeeper struct {
 	session   *concurrency.Session
 
 	// Unlock保证使用的相同mutex，否则myKey设定不上
+	mu           sync.Mutex
 	shardMutexes map[string]*concurrency.Mutex
 }
 
@@ -157,6 +158,7 @@ func (sk *shardKeeper) Drop(id string) error {
 				zap.String("service", sk.service),
 				zap.String("id", id),
 			)
+			sk.unlock(id)
 			return nil
 		}
 
@@ -215,9 +217,9 @@ func (sk *shardKeeper) sync() error {
 }
 
 func (sk *shardKeeper) Close() {
-	sk.stopper.Close()
-	sk.trigger.Close()
-	_ = sk.db.Close()
+	// sk.stopper.Close()
+	// sk.trigger.Close()
+	// _ = sk.db.Close()
 }
 
 func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
@@ -227,34 +229,9 @@ func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
 	var opErr error
 	switch typ {
 	case addTrigger:
-		// lock shard
-		lockPfx := EtcdPathAppShardHbId(sk.service, shardId)
-		mutex := concurrency.NewMutex(sk.session, lockPfx)
-		if err := mutex.Lock(sk.client.Client.Ctx()); err != nil {
-			// lock被占用
-			if err == concurrency.ErrLocked {
-				// opt: 确认lock被占用，清理掉本地shard
-				if err := sk.delete(shardId); err != nil {
-					return errors.Wrapf(err, "shardId: %s", shardId)
-				}
-
-				// 确定被别的container占有
-				sk.lg.Error(
-					"lock occupied and deleted",
-					zap.String("pfx", lockPfx),
-					zap.String("typ", typ),
-					zap.Reflect("tv", tv),
-					zap.Error(err),
-				)
-				return nil
-			}
-			// 上lock失败，可能有两种情况:
-			// 1 etcd连接不上
-			// 2 shard已经被占用
-			// 无论哪种，等在这里就行，1的情况依赖etcd可用性
-			return errors.Wrapf(err, "pfx: %s", lockPfx)
+		if err := sk.lock(shardId); err != nil {
+			return errors.Wrap(err, "")
 		}
-		sk.shardMutexes[shardId] = mutex
 
 		// 有lock的前提下，下发boltdb中的分片给调用方，这里存在异常情况：
 		// 1 lock失效，并已经下发给调用方，此处逻辑以boltdb中的shard为准，lock失效会触发shardKeeper的Close，
@@ -278,21 +255,10 @@ func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
 			return nil
 		}
 	case dropTrigger:
-		// unlock shard
 		opErr = sk.shardImpl.Drop(shardId)
 		if opErr == nil {
-			mu, ok := sk.shardMutexes[shardId]
-			if ok {
-				if err := mu.Unlock(context.TODO()); err != nil {
-					if rpctypes.ErrGRPCKeyNotFound != err {
-						return errors.Wrapf(err, "shardId: %s", shardId)
-					}
-				}
-				sk.lg.Info(
-					"Unlock ok",
-					zap.String("service", sk.service),
-					zap.String("shardId", shardId),
-				)
+			if err := sk.unlock(shardId); err != nil {
+				return errors.Wrap(err, "")
 			}
 
 			// 清理掉shard
@@ -328,4 +294,55 @@ func (sk *shardKeeper) delete(shardId string) error {
 		}),
 		"",
 	)
+}
+
+func (sk *shardKeeper) lock(shardId string) error {
+	sk.mu.Lock()
+	defer sk.mu.Unlock()
+
+	lockPfx := EtcdPathAppShardHbId(sk.service, shardId)
+	mutex := concurrency.NewMutex(sk.session, lockPfx)
+	if err := mutex.Lock(sk.client.Client.Ctx()); err != nil {
+		// lock被占用
+		if err == concurrency.ErrLocked {
+			// opt: 确认lock被占用，清理掉本地shard
+			if err := sk.delete(shardId); err != nil {
+				return errors.Wrapf(err, "shardId: %s", shardId)
+			}
+
+			// 确定被别的container占有
+			sk.lg.Error(
+				"lock occupied and deleted",
+				zap.String("pfx", lockPfx),
+				zap.Error(err),
+			)
+			return nil
+		}
+		// 上lock失败，可能有两种情况:
+		// 1 etcd连接不上
+		// 2 shard已经被占用
+		// 无论哪种，等在这里就行，1的情况依赖etcd可用性
+		return errors.Wrapf(err, "pfx: %s", lockPfx)
+	}
+	sk.shardMutexes[shardId] = mutex
+	return nil
+}
+
+func (sk *shardKeeper) unlock(shardId string) error {
+	sk.mu.Lock()
+	defer sk.mu.Unlock()
+
+	mu, ok := sk.shardMutexes[shardId]
+	if ok {
+		// unlock和删除node是两回事，mutex.Unlock调用一次后内部的myKey就失效，但是drop的goroutine和心跳的goroutine是异步的，在Unlock之后，还没有删除node之前，可能会触发heartbeat把节点加回来
+		if _, err := sk.client.Delete(context.TODO(), mu.Key()); err != nil {
+			return errors.Wrapf(err, "shardId %s", shardId)
+		}
+		sk.lg.Info(
+			"unlock ok",
+			zap.String("service", sk.service),
+			zap.String("shardId", shardId),
+		)
+	}
+	return nil
 }
