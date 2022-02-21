@@ -217,9 +217,9 @@ func (sk *shardKeeper) sync() error {
 }
 
 func (sk *shardKeeper) Close() {
-	// sk.stopper.Close()
-	// sk.trigger.Close()
-	// _ = sk.db.Close()
+	sk.stopper.Close()
+	sk.trigger.Close()
+	_ = sk.db.Close()
 }
 
 func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
