@@ -25,6 +25,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
@@ -253,11 +254,18 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 					lockPfx := EtcdPathAppShardHbId(ss.opts.container.Service(), id)
 					mutex := concurrency.NewMutex(session, lockPfx)
 					if err := mutex.Lock(ss.opts.container.Client.Client.Ctx()); err != nil {
-						ops.lg.Error(
-							"lock error",
-							zap.String("pfx", lockPfx),
-							zap.Error(err),
-						)
+						if err == rpctypes.ErrLeaseNotFound {
+							ops.lg.Info(
+								"lock released",
+								zap.String("pfx", lockPfx),
+							)
+						} else {
+							ops.lg.Error(
+								"lock error",
+								zap.String("pfx", lockPfx),
+								zap.Error(err),
+							)
+						}
 						return nil
 					}
 

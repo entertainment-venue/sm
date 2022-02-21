@@ -10,6 +10,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/zd3tl/evtrigger"
 	bolt "go.etcd.io/bbolt"
+	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
@@ -41,6 +42,9 @@ type shardKeeper struct {
 	shardImpl ShardInterface
 	client    *etcdutil.EtcdClient
 	session   *concurrency.Session
+
+	// Unlock保证使用的相同mutex，否则myKey设定不上
+	shardMutexes map[string]*concurrency.Mutex
 }
 
 type shardKeeperTriggerValue struct {
@@ -76,6 +80,8 @@ func newShardKeeper(lg *zap.Logger, ss *ShardServer) (*shardKeeper, error) {
 		shardImpl: ss.opts.impl,
 		client:    ss.Container().Client,
 		session:   ss.Container().Session,
+
+		shardMutexes: make(map[string]*concurrency.Mutex),
 	}
 
 	db, err := bolt.Open("shard.db", 0600, nil)
@@ -142,16 +148,26 @@ func (sk *shardKeeper) Add(id string, spec *ShardSpec) error {
 func (sk *shardKeeper) Drop(id string) error {
 	return sk.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(sk.service))
-
 		raw := b.Get([]byte(id))
+
+		// 多次下发drop指令，发现boltdb中为nil，return ASAP
+		if raw == nil {
+			sk.lg.Warn(
+				"drop shard again",
+				zap.String("service", sk.service),
+				zap.String("id", id),
+			)
+			return nil
+		}
+
 		var dv shardKeeperDbValue
 		if err := json.Unmarshal(raw, &dv); err != nil {
-			return err
+			return errors.Wrap(err, string(raw))
 		}
 		dv.Disp = false
 		dv.Drop = true
 
-		return b.Put([]byte(id), []byte(dv.String()))
+		return errors.Wrap(b.Put([]byte(id), []byte(dv.String())), "")
 	})
 }
 
@@ -238,6 +254,7 @@ func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
 			// 无论哪种，等在这里就行，1的情况依赖etcd可用性
 			return errors.Wrapf(err, "pfx: %s", lockPfx)
 		}
+		sk.shardMutexes[shardId] = mutex
 
 		// 有lock的前提下，下发boltdb中的分片给调用方，这里存在异常情况：
 		// 1 lock失效，并已经下发给调用方，此处逻辑以boltdb中的shard为准，lock失效会触发shardKeeper的Close，
@@ -264,10 +281,18 @@ func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
 		// unlock shard
 		opErr = sk.shardImpl.Drop(shardId)
 		if opErr == nil {
-			lockPfx := EtcdPathAppShardHbId(sk.service, shardId)
-			mutex := concurrency.NewMutex(sk.session, lockPfx)
-			if err := mutex.Unlock(context.TODO()); err != nil {
-				return errors.Wrapf(err, "pfx: %s", lockPfx)
+			mu, ok := sk.shardMutexes[shardId]
+			if ok {
+				if err := mu.Unlock(context.TODO()); err != nil {
+					if rpctypes.ErrGRPCKeyNotFound != err {
+						return errors.Wrapf(err, "shardId: %s", shardId)
+					}
+				}
+				sk.lg.Info(
+					"Unlock ok",
+					zap.String("service", sk.service),
+					zap.String("shardId", shardId),
+				)
 			}
 
 			// 清理掉shard
