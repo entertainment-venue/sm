@@ -17,6 +17,7 @@ package smserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -86,17 +87,15 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 	nodes = append(nodes, ss.container.nodeManager.nodeServiceSpec(req.Service))
 	values = append(values, req.String())
 
-	// 如果不是sm自己的spec,那么需要将service注册到sm的spec中
-	if ss.container.service != req.Service {
-		t := shardTask{GovernedService: req.Service}
-		v := apputil.ShardSpec{
-			Service:    ss.container.service,
-			Task:       t.String(),
-			UpdateTime: time.Now().Unix(),
-		}
-		nodes = append(nodes, ss.container.nodeManager.nodeServiceShard(ss.container.Service(), req.Service))
-		values = append(values, v.String())
+	// 需要将service注册到sm的spec中
+	t := shardTask{GovernedService: req.Service}
+	v := apputil.ShardSpec{
+		Service:    ss.container.service,
+		Task:       t.String(),
+		UpdateTime: time.Now().Unix(),
 	}
+	nodes = append(nodes, ss.container.nodeManager.nodeServiceShard(ss.container.Service(), req.Service))
+	values = append(values, v.String())
 	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
 		ss.lg.Error("CreateAndGet err",
 			zap.Strings("nodes", nodes),
@@ -270,28 +269,18 @@ func (ss *shardServer) GinAddShard(c *gin.Context) {
 
 	// sm本身的shard是和service添加绑定的，不需要走这个接口
 	if req.Service == ss.container.Service() {
-		// 为sm增加分片的场景，分片的名字要限定为service的名称，和add-spec接口一致
-		t := shardTask{}
-		if err := json.Unmarshal([]byte(req.Task), &t); err != nil {
-			ss.lg.Error(
-				"Unmarshal err",
-				zap.Reflect("req", req),
-				zap.Error(err),
-			)
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		if t.GovernedService == ss.container.Service() || !t.Validate() {
-			err := errors.New("param error")
-			ss.lg.Error(
-				"param error",
-				zap.Reflect("req", req),
-				zap.Error(err),
-			)
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		req.ShardId = t.GovernedService
+		err := errors.Errorf("shard manager's service not allow api add shard")
+		ss.lg.Error("service error", zap.Error(err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 检查是否存在该service
+	if _, ok := ss.container.idAndShard[req.Service]; !ok {
+		err := errors.Errorf(fmt.Sprintf("service[%s] not exist", req.Service))
+		ss.lg.Error("service error", zap.Error(err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	spec := apputil.ShardSpec{
