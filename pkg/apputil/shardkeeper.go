@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/pkg/errors"
 	"github.com/zd3tl/evtrigger"
 	bolt "go.etcd.io/bbolt"
@@ -24,21 +25,22 @@ const (
 
 // shardKeeper 参考raft中log replication节点的实现机制，记录日志到boltdb，开goroutine异步下发指令给调用方
 type shardKeeper struct {
-	lg        *zap.Logger
-	container *Container
+	lg *zap.Logger
+	// container *Container
 
 	// db 本次持久存储
 	db *bolt.DB
-	// service 作为bucket的key，区分度足够
-	service string
-
-	// shardImpl 接入方的分片实现
-	shardImpl ShardInterface
 
 	// trigger 从boltdb中提取的待提交内容，放入队列顺序执行，也可以并发(trigger有点硬用了)，算是对性能和可读性的优化吧
 	trigger *evtrigger.Trigger
 
 	stopper *GoroutineStopper
+
+	// 以下字段从ShardServer初始化
+	service   string
+	shardImpl ShardInterface
+	client    *etcdutil.EtcdClient
+	session   *concurrency.Session
 }
 
 type shardKeeperTriggerValue struct {
@@ -65,12 +67,15 @@ func (v *shardKeeperDbValue) String() string {
 	return string(b)
 }
 
-func newShardKeeper(lg *zap.Logger, service string, impl ShardInterface) (*shardKeeper, error) {
-	lk := shardKeeper{
-		lg:        lg,
-		service:   service,
-		shardImpl: impl,
-		stopper:   &GoroutineStopper{},
+func newShardKeeper(lg *zap.Logger, ss *ShardServer) (*shardKeeper, error) {
+	sk := shardKeeper{
+		lg:      lg,
+		stopper: &GoroutineStopper{},
+
+		service:   ss.Container().Service(),
+		shardImpl: ss.opts.impl,
+		client:    ss.Container().Client,
+		session:   ss.Container().Session,
 	}
 
 	db, err := bolt.Open("shard.db", 0600, nil)
@@ -78,20 +83,20 @@ func newShardKeeper(lg *zap.Logger, service string, impl ShardInterface) (*shard
 		return nil, errors.Wrap(err, "")
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists([]byte(service))
+		_, err := tx.CreateBucketIfNotExists([]byte(sk.service))
 		return err
 	}); err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	lk.db = db
+	sk.db = db
 
 	tgr, _ := evtrigger.NewTrigger(
 		evtrigger.WithLogger(lg),
 		evtrigger.WithWorkerSize(1),
 	)
-	_ = tgr.Register(addTrigger, lk.Dispatch)
-	_ = tgr.Register(dropTrigger, lk.Dispatch)
-	lk.trigger = tgr
+	_ = tgr.Register(addTrigger, sk.Dispatch)
+	_ = tgr.Register(dropTrigger, sk.Dispatch)
+	sk.trigger = tgr
 
 	// 基于boltdb当前内容做shard下发
 	initFn := func(k, v []byte) error {
@@ -100,26 +105,26 @@ func newShardKeeper(lg *zap.Logger, service string, impl ShardInterface) (*shard
 			return err
 		}
 		// 使用shardImpl还是lk.Add要区分清楚，forEach中如果有boltdb访问会block
-		return lk.shardImpl.Add(string(k), value.Spec)
+		return sk.shardImpl.Add(string(k), value.Spec)
 	}
-	if err := lk.forEach(initFn); err != nil {
+	if err := sk.forEach(initFn); err != nil {
 		return nil, errors.Wrap(err, "")
 	}
 
 	// 启动同步goroutine，对shard做move动作
-	lk.stopper.Wrap(func(ctx context.Context) {
+	sk.stopper.Wrap(func(ctx context.Context) {
 		TickerLoop(
 			ctx,
-			lk.lg,
+			sk.lg,
 			defaultSyncInterval,
-			fmt.Sprintf("shardkeeper: service %s sync exit", lk.service),
+			fmt.Sprintf("shardkeeper: service %s sync exit", sk.service),
 			func(ctx context.Context) error {
-				return lk.sync()
+				return sk.sync()
 			},
 		)
 	})
 
-	return &lk, nil
+	return &sk, nil
 }
 
 func (sk *shardKeeper) Add(id string, spec *ShardSpec) error {
@@ -207,9 +212,9 @@ func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
 	switch typ {
 	case addTrigger:
 		// lock shard
-		lockPfx := EtcdPathAppShardHbId(sk.container.Service(), shardId)
-		mutex := concurrency.NewMutex(sk.container.Session, lockPfx)
-		if err := mutex.Lock(sk.container.Client.Client.Ctx()); err != nil {
+		lockPfx := EtcdPathAppShardHbId(sk.service, shardId)
+		mutex := concurrency.NewMutex(sk.session, lockPfx)
+		if err := mutex.Lock(sk.client.Client.Ctx()); err != nil {
 			// lock被占用
 			if err == concurrency.ErrLocked {
 				// opt: 确认lock被占用，清理掉本地shard
@@ -259,8 +264,8 @@ func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
 		// unlock shard
 		opErr = sk.shardImpl.Drop(shardId)
 		if opErr == nil {
-			lockPfx := EtcdPathAppShardHbId(sk.container.Service(), shardId)
-			mutex := concurrency.NewMutex(sk.container.Session, lockPfx)
+			lockPfx := EtcdPathAppShardHbId(sk.service, shardId)
+			mutex := concurrency.NewMutex(sk.session, lockPfx)
 			if err := mutex.Unlock(context.TODO()); err != nil {
 				return errors.Wrapf(err, "pfx: %s", lockPfx)
 			}

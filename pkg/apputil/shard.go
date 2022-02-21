@@ -215,7 +215,7 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 	}
 
 	// keeper: 向调用方下发shard move指令，提供本地持久存储能力
-	keeper, err := newShardKeeper(ops.lg, ops.container.Service(), ops.impl)
+	keeper, err := newShardKeeper(ops.lg, &ss)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
