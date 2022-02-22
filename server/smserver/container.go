@@ -35,67 +35,57 @@ var (
 type smContainer struct {
 	*apputil.Container
 
-	// 容器的唯一标记，是container在sm的唯一标记，每次启动得保持不变，防止在分配shard时有问题
-	id string
-
-	// 所属业务标记，在etcd中作为数据隔离的path
-	service string
-
-	// 管理自己的goroutine
-	stopper *apputil.GoroutineStopper
-
 	lg *zap.Logger
-
-	// 保证sm运行健康的goroutine，通过task节点下发任务给op
-	lw *Worker
-
-	mu         sync.Mutex
-	idAndShard map[string]*smShard
-
-	// 利用 stopper 实现的graceful stop，container进入stopped状态
-	stopped bool
-
 	// nodeManager 管理 smContainer 内部的etcd节点的pfx
 	nodeManager *nodeManager
+
+	// mu 保护closed和shards
+	mu sync.Mutex
+
+	// 利用 stopper 实现的graceful stop，container进入stopped状态
+	closed bool
+	// stopper 管理campaign
+	stopper *apputil.GoroutineStopper
+
+	// 保证sm运行健康的goroutine，通过task节点下发任务给op
+	worker *Worker
+
+	// shards 存储分片
+	shards map[string]*smShard
 }
 
-func newSMContainer(lg *zap.Logger, id, service string, c *apputil.Container) (*smContainer, error) {
-	sc := smContainer{
+func newSMContainer(lg *zap.Logger, c *apputil.Container) (*smContainer, error) {
+	container := smContainer{
 		lg:        lg,
-		id:        id,
-		service:   service,
 		Container: c,
 
 		stopper:     &apputil.GoroutineStopper{},
-		idAndShard:  make(map[string]*smShard),
-		nodeManager: &nodeManager{smService: service},
+		shards:      make(map[string]*smShard),
+		nodeManager: &nodeManager{smService: c.Service()},
 	}
 	// 判断sm的spec是否存在,如果不存在，那么进行创建,可以通过接口进行参数更改
 	if err := c.Client.CreateAndGet(
 		context.Background(),
-		[]string{sc.nodeManager.nodeServiceSpec(sc.Service())},
-		[]string{(&smAppSpec{Service: service, CreateTime: time.Now().Unix()}).String()},
-		clientv3.NoLease); err != nil && err != etcdutil.ErrEtcdNodeExist {
+		[]string{container.nodeManager.nodeServiceSpec(container.Service())},
+		[]string{(&smAppSpec{Service: c.Service(), CreateTime: time.Now().Unix()}).String()},
+		clientv3.NoLease,
+	); err != nil && err != etcdutil.ErrEtcdNodeExist {
 		return nil, errors.Wrap(err, "")
 	}
 
-	sc.stopper.Wrap(
+	container.stopper.Wrap(
 		func(ctx context.Context) {
-			sc.campaign(ctx)
+			container.campaign(ctx)
 		},
 	)
 
-	return &sc, nil
-}
-
-func (c *smContainer) Service() string {
-	return c.service
+	return &container, nil
 }
 
 func (c *smContainer) GetShard(service string) (*smShard, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	ss, ok := c.idAndShard[service]
+	ss, ok := c.shards[service]
 	if !ok {
 		return nil, errors.New("not exist")
 	}
@@ -106,20 +96,22 @@ func (c *smContainer) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.stopped = true
+	c.closed = true
 
-	if c.lw != nil {
-		c.lw.Close()
+	// 需要判断是否为nil，worker是在竞选leader时初始化的
+	if c.worker != nil {
+		c.worker.Close()
 	}
 
-	// stop smShard
-	for _, s := range c.idAndShard {
+	// 关闭分片
+	for _, s := range c.shards {
 		s.Close()
 	}
 
-	c.lg.Info("container closed",
-		zap.String("id", c.id),
-		zap.String("service", c.service),
+	c.lg.Info(
+		"smContainer closed",
+		zap.String("id", c.Id()),
+		zap.String("service", c.Service()),
 	)
 }
 
@@ -127,20 +119,20 @@ func (c *smContainer) Add(id string, spec *apputil.ShardSpec) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.stopped {
+	if c.closed {
 		c.lg.Info("container closed, give up add",
 			zap.String("id", id),
-			zap.String("service", c.service),
+			zap.String("service", c.Service()),
 		)
 		return nil
 	}
 
-	ss, ok := c.idAndShard[id]
+	ss, ok := c.shards[id]
 	if ok {
 		if ss.Spec().Task == spec.Task {
 			c.lg.Info("shard already existed and task not changed",
 				zap.String("id", id),
-				zap.String("service", c.service),
+				zap.String("service", c.Service()),
 				zap.String("task", spec.Task),
 			)
 			return nil
@@ -161,7 +153,7 @@ func (c *smContainer) Add(id string, spec *apputil.ShardSpec) error {
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
-	c.idAndShard[id] = shard
+	c.shards[id] = shard
 	c.lg.Info("shard added",
 		zap.String("id", id),
 		zap.Reflect("spec", *spec),
@@ -173,21 +165,21 @@ func (c *smContainer) Drop(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.stopped {
+	if c.closed {
 		c.lg.Info("container closed, give up drop",
 			zap.String("id", id),
-			zap.String("service", c.service),
+			zap.String("service", c.Service()),
 		)
 		return nil
 	}
 
-	sd, ok := c.idAndShard[id]
+	sd, ok := c.shards[id]
 	if !ok {
 		c.lg.Info("shard not existed", zap.String("id", id))
 		return errors.Wrap(errNotExist, "")
 	}
 	sd.Close()
-	delete(c.idAndShard, id)
+	delete(c.shards, id)
 	c.lg.Info("shard dropped", zap.String("id", id))
 	return nil
 }
@@ -196,15 +188,15 @@ func (c *smContainer) Load(id string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.stopped {
+	if c.closed {
 		c.lg.Info("container closed, give up load",
 			zap.String("id", id),
-			zap.String("service", c.service),
+			zap.String("service", c.Service()),
 		)
 		return "", nil
 	}
 
-	sd, ok := c.idAndShard[id]
+	sd, ok := c.shards[id]
 	if !ok {
 		c.lg.Warn("shard not exist", zap.String("id", id))
 		return "", errors.Wrap(errNotExist, "")
@@ -232,17 +224,18 @@ func (c *smContainer) campaign(ctx context.Context) {
 	loop:
 		select {
 		case <-ctx.Done():
-			c.lg.Info("leader exit campaign", zap.String("service", c.service))
+			c.lg.Info("leader exit campaign", zap.String("service", c.Service()))
 			return
 		default:
 		}
 
 		leaderNodePrefix := c.nodeManager.nodeSMLeader()
-		lvalue := leaderEtcdValue{ContainerId: c.id, CreateTime: time.Now().Unix()}
+		lvalue := leaderEtcdValue{ContainerId: c.Id(), CreateTime: time.Now().Unix()}
 		election := concurrency.NewElection(c.Session, leaderNodePrefix)
 		if err := election.Campaign(ctx, lvalue.String()); err != nil {
-			c.lg.Error("failed to campaign",
-				zap.String("service", c.service),
+			c.lg.Error(
+				"Campaign error",
+				zap.String("service", c.Service()),
 				zap.Error(err),
 			)
 			time.Sleep(defaultSleepTimeout)
@@ -260,22 +253,22 @@ func (c *smContainer) campaign(ctx context.Context) {
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/sm/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
 		var err error
-		c.lw, err = newWorker(c.lg, c, c.service)
+		c.worker, err = newWorker(c.lg, c, c.Service())
 		if err != nil {
 			c.lg.Error(
 				"newWorker error",
-				zap.String("service", c.service),
+				zap.String("service", c.Service()),
 				zap.Error(err),
 			)
 			goto loop
 		}
 
 		// block until出现需要放弃leader职权的事件
-		c.lg.Info("leader completed op", zap.String("service", c.service))
+		c.lg.Info("leader completed op", zap.String("service", c.Service()))
 		select {
 		case <-ctx.Done():
-			c.lg.Info("leader exit", zap.String("service", c.service))
-			c.lw = nil
+			c.lg.Info("leader exit", zap.String("service", c.Service()))
+			c.worker = nil
 			return
 		}
 	}

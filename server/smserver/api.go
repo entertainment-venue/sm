@@ -70,7 +70,7 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 	ss.lg.Info("receive add spec request", zap.Reflect("request", req))
 
 	// sm的service是保留service，在程序启动的时候初始化
-	if req.Service == ss.container.service {
+	if req.Service == ss.container.Service() {
 		err := errors.Errorf("Same as shard manager's service")
 		ss.lg.Error("service error", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -90,7 +90,7 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 	// 需要将service注册到sm的spec中
 	t := shardTask{GovernedService: req.Service}
 	v := apputil.ShardSpec{
-		Service:    ss.container.service,
+		Service:    ss.container.Service(),
 		Task:       t.String(),
 		UpdateTime: time.Now().Unix(),
 	}
@@ -132,7 +132,7 @@ func (ss *shardServer) GinDelSpec(c *gin.Context) {
 		return
 	}
 	// 不允许删除sm
-	if service == ss.container.service {
+	if service == ss.container.Service() {
 		err := errors.Errorf("param error")
 		ss.lg.Error(
 			"try to delete sm",
@@ -276,7 +276,7 @@ func (ss *shardServer) GinAddShard(c *gin.Context) {
 	}
 
 	// 检查是否存在该service
-	if _, ok := ss.container.idAndShard[req.Service]; !ok {
+	if _, ok := ss.container.shards[req.Service]; !ok {
 		err := errors.Errorf(fmt.Sprintf("service[%s] not exist", req.Service))
 		ss.lg.Error("service error", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

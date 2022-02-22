@@ -18,6 +18,7 @@ func TestNewClient(t *testing.T) {
 		ClientWithEtcdAddr([]string{"127.0.0.1:2379"}),
 		ClientWithService("test-service"),
 		ClientWithImplementation(&testShard{ids: make(map[string]string)}))
+		ClientWithContainerId(fmt.Sprintf("%s:%d", "10.59.192.36", port)),
 	if err != nil {
 		log.Fatal(err)
 	}

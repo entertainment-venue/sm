@@ -1,7 +1,6 @@
 package smmain
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -40,51 +39,44 @@ func startSM() error {
 	}
 	defer lg.Sync()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	stopped := make(chan error)
-	go handleSigs(cancel, lg)
-
-	if _, err := smserver.NewServer(
+	srv, err := smserver.NewServer(
 		smserver.WithId(fmt.Sprintf("%s:%s", smserver.GetLocalIP(), cfg.Port)),
 		smserver.WithService(cfg.Service),
 		smserver.WithAddr(fmt.Sprintf(":%s", cfg.Port)),
 		smserver.WithEndpoints(cfg.Endpoints),
-		smserver.WithCtx(ctx),
-		smserver.WithStopped(stopped),
 		smserver.WithLogger(lg),
-		smserver.WithEtcdPrefix(cfg.EtcdPrefix)); err != nil {
+		smserver.WithEtcdPrefix(cfg.EtcdPrefix))
+	if err != nil {
 		lg.Panic(
-			"failed to start sm server",
+			"NewServer error",
 			zap.Reflect("cfg", cfg),
 			zap.Error(err),
 		)
 	}
 
-	<-stopped
-	lg.Info("sm exit", zap.Reflect("cfg", cfg))
+	// 监听信号
+	go func() {
+		sigChan := make(chan os.Signal)
+		signals := []os.Signal{
+			syscall.SIGINT,
+			syscall.SIGTERM,
+		}
+		signal.Notify(sigChan, signals...)
+		for {
+			sig := <-sigChan
+			switch sig {
+			case syscall.SIGINT, syscall.SIGTERM:
+				lg.Warn("Received exit signal", zap.String("sig", sig.String()))
+				srv.Close()
+				return
+			default:
+				lg.Warn("Received unexpected signal", zap.String("sig", sig.String()))
+			}
+		}
+	}()
+
+	<-srv.Done()
+	lg.Info("ShardManager exit", zap.Reflect("cfg", cfg))
 
 	return nil
-}
-
-func handleSigs(cancel context.CancelFunc, lg *zap.Logger) {
-	sigChan := make(chan os.Signal)
-
-	signals := []os.Signal{
-		syscall.SIGINT,
-		syscall.SIGTERM,
-	}
-
-	signal.Notify(sigChan, signals...)
-
-	for {
-		sig := <-sigChan
-		switch sig {
-		case syscall.SIGINT, syscall.SIGTERM:
-			lg.Warn("Received exit signal", zap.String("sig", sig.String()))
-			cancel()
-			return
-		default:
-			lg.Warn("Received unexpected signal", zap.String("sig", sig.String()))
-		}
-	}
 }

@@ -220,6 +220,10 @@ func (sk *shardKeeper) Close() {
 	sk.stopper.Close()
 	sk.trigger.Close()
 	_ = sk.db.Close()
+	sk.lg.Info(
+		"active closed",
+		zap.String("service", sk.service),
+	)
 }
 
 func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {

@@ -374,7 +374,7 @@ func (ss *ShardServer) Close() {
 	ss.close()
 
 	ss.opts.lg.Info(
-		"shardserver: closed",
+		"active closed",
 		zap.String("service", ss.opts.container.Service()),
 	)
 }
@@ -382,12 +382,10 @@ func (ss *ShardServer) Close() {
 func (ss *ShardServer) close() {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
+
 	if ss.closed {
 		return
 	}
-
-	// TODO ctx在interface中限定，但是没有用处
-	ctx := context.TODO()
 
 	// 保证shard回收的手段，允许调用方启动for不断尝试重新加入存活container中
 	// FIXME session会触发drop动作，不允许失败，但也是潜在风险，一般的sdk使用者，不了解close的机制
@@ -405,7 +403,7 @@ func (ss *ShardServer) close() {
 	ss.keeper.Close()
 
 	if ss.srv != nil {
-		if err := ss.srv.Shutdown(ctx); err != nil {
+		if err := ss.srv.Shutdown(context.TODO()); err != nil {
 			ss.opts.lg.Error(
 				"Shutdown error",
 				zap.Error(err),
@@ -423,7 +421,10 @@ func (ss *ShardServer) close() {
 	}
 	close(ss.donec)
 
-	ss.opts.lg.Info("shard server closed", zap.String("service", ss.opts.container.Service()))
+	ss.opts.lg.Info(
+		"close completed",
+		zap.String("service", ss.opts.container.Service()),
+	)
 }
 
 func (ss *ShardServer) Done() <-chan struct{} {

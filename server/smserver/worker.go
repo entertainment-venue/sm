@@ -123,7 +123,7 @@ func newWorker(lg *zap.Logger, container *smContainer, service string) (*Worker,
 				ctx,
 				w.lg,
 				defaultLoopInterval,
-				fmt.Sprintf("[lw] service %s ShardAllocateLoop exit", w.service),
+				fmt.Sprintf("balanceChecker exit, service %s ", w.service),
 				func(ctx context.Context) error {
 					return w.balanceChecker(ctx)
 				},
@@ -149,9 +149,18 @@ func (w *Worker) SetMaxRecoveryTime(maxRecoveryTime int) {
 
 func (w *Worker) Close() {
 	w.mpr.Close()
+
 	w.trigger.Close()
+	w.lg.Info(
+		"trigger closed",
+		zap.String("service", w.service),
+	)
+
 	w.stopper.Close()
-	w.lg.Info("Worker stopped", zap.String("service", w.service))
+	w.lg.Info(
+		"worker closed",
+		zap.String("service", w.service),
+	)
 }
 
 // 1 smContainer 的增加/减少是优先级最高，目前可能涉及大量shard move
