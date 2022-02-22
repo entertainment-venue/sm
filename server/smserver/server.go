@@ -126,9 +126,31 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 
 		// 被动关闭: 观测ShardServer退出，可能因为session的关闭导致
 		case <-srv.shardServer.Done():
-			// 不需要再次停止shardServer，所以不能调用Close
 			srv.close()
 			ops.lg.Info("server passive exit")
+
+			// 尝试重启
+			for {
+				select {
+				case <-srv.donec:
+					ops.lg.Info(
+						"server active exit when retry run server",
+						zap.String("service", ops.service),
+					)
+					return
+				default:
+				}
+				// 监控异常关闭，不退出服务，container需要刷新
+				err := srv.run()
+				if err == nil {
+					break
+				}
+				ops.lg.Error(
+					"run error",
+					zap.String("service", ops.service),
+					zap.Error(err),
+				)
+			}
 		}
 	}()
 

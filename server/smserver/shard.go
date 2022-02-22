@@ -38,7 +38,7 @@ func (t *shardTask) Validate() bool {
 
 type smShard struct {
 	// smContainer 是真实的资源，包括：etcd client
-	parent *smContainer
+	container *smContainer
 
 	// 通过sm的管理接口录入，业务可以自己指定
 	id string
@@ -60,7 +60,7 @@ func newShard(lg *zap.Logger, sc *smContainer, id string, spec *apputil.ShardSpe
 	}
 
 	s := smShard{
-		parent:    sc,
+		container: sc,
 		id:        id,
 		lg:        lg,
 		shardSpec: spec,
@@ -68,7 +68,7 @@ func newShard(lg *zap.Logger, sc *smContainer, id string, spec *apputil.ShardSpe
 	}
 
 	var err error
-	s.worker, err = newWorker(lg, s.parent, s.service)
+	s.worker, err = newWorker(lg, s.container, s.service)
 	if err != nil {
 		return nil, err
 	}
