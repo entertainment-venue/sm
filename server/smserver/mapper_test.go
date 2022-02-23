@@ -20,7 +20,7 @@ func Test_mapperState_Create(t *testing.T) {
 
 	hb := apputil.Heartbeat{Timestamp: time.Now().Unix()}
 	b, _ := json.Marshal(hb)
-	mprs.Create([]byte("foo"), b)
+	mprs.Create("foo", b)
 }
 
 func Test_mapperState_Delete(t *testing.T) {
@@ -35,7 +35,7 @@ func Test_mapperState_Delete(t *testing.T) {
 	// 4 test
 	hb := apputil.Heartbeat{Timestamp: time.Now().Unix()}
 	b, _ := json.Marshal(hb)
-	mprs.Create([]byte("foo"), b)
+	mprs.Create("foo", b)
 
 	mprs.Delete("foo")
 }
@@ -52,7 +52,7 @@ func Test_mapperState_Refresh(t *testing.T) {
 	// 4 test
 	hb := apputil.Heartbeat{Timestamp: time.Now().Unix()}
 	b, _ := json.Marshal(hb)
-	mprs.Create([]byte("foo"), b)
+	mprs.Create("foo", b)
 
 	time.Sleep(time.Second)
 
@@ -73,7 +73,7 @@ func Test_mapperState_ForEach(t *testing.T) {
 	// 4 test
 	hb := apputil.Heartbeat{Timestamp: time.Now().Unix()}
 	b, _ := json.Marshal(hb)
-	mprs.Create([]byte("foo"), b)
+	mprs.Create("foo", b)
 
 	f := func(id string, tmp *temporary) error {
 		fmt.Println(id, tmp.lastHeartbeatTime)
@@ -95,7 +95,7 @@ func Test_mapperState_Wait(t *testing.T) {
 	// 4 test
 	hb := apputil.Heartbeat{Timestamp: time.Now().Unix()}
 	b, _ := json.Marshal(hb)
-	mprs.Create([]byte("foo"), b)
+	mprs.Create("foo", b)
 
 	mprs.Wait("foo")
 }

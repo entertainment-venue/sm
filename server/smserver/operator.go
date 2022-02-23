@@ -35,9 +35,6 @@ type moveAction struct {
 	DropEndpoint string `json:"dropEndpoint"`
 	AddEndpoint  string `json:"addEndpoint"`
 
-	// AllowDrop container场景下，leader的init操作可以放弃
-	AllowDrop bool `json:"allowDrop"`
-
 	// Spec 存储分片具体信息
 	Spec *apputil.ShardSpec `json:"spec"`
 }
@@ -65,8 +62,7 @@ func (l moveActionList) Swap(i, j int) {
 
 // container和shard上报两个维度的load，leader(sm)或者shard(app)探测到异常，会发布任务出来，operator就是这个任务的执行者
 type operator struct {
-	parent *smContainer
-	lg     *zap.Logger
+	lg *zap.Logger
 
 	// operator 属于接入业务的service
 	service string
@@ -74,10 +70,9 @@ type operator struct {
 	httpClient *http.Client
 }
 
-func newOperator(lg *zap.Logger, sc *smContainer, service string) *operator {
+func newOperator(lg *zap.Logger, service string) *operator {
 	op := operator{
 		lg:         lg,
-		parent:     sc,
 		service:    service,
 		httpClient: newHttpClient(),
 	}
@@ -156,13 +151,10 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 
 	if ma.AddEndpoint != "" {
 		if err := o.send(ctx, ma.ShardId, ma.Spec, ma.AddEndpoint, "add"); err != nil {
-			if !ma.AllowDrop {
-				return errors.Wrap(err, "")
-			}
-
-			o.lg.Error("failed to add",
-				zap.Error(err),
+			o.lg.Error(
+				"send error",
 				zap.Reflect("value", ma),
+				zap.Error(err),
 			)
 			return nil
 		}

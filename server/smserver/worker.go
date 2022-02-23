@@ -109,7 +109,7 @@ func newWorker(lg *zap.Logger, container *smContainer, service string) (*Worker,
 	)
 	_ = trigger.Register(workerTrigger, w.processEvent)
 	w.trigger = trigger
-	w.operator = newOperator(lg, container, service)
+	w.operator = newOperator(lg, service)
 
 	// TODO 参数传递的有些冗余，需要重新梳理
 	w.mpr, err = newMapper(lg, container, &appSpec)
@@ -131,7 +131,7 @@ func newWorker(lg *zap.Logger, container *smContainer, service string) (*Worker,
 		},
 	)
 
-	w.lg.Info("Worker started", zap.String("service", w.service))
+	w.lg.Info("worker started", zap.String("service", w.service))
 	return w, nil
 }
 
