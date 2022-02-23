@@ -122,9 +122,14 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 		select {
 		// 主动关闭: Close方法调用
 		case <-srv.donec:
-			ops.lg.Info("server active exit")
+			ops.lg.Info(
+				"server active exit",
+				zap.String("service", srv.opts.service),
+			)
+			// 主动关闭可以直接退出goroutine
+			return
 
-		// 被动关闭: 观测ShardServer退出，可能因为session的关闭导致
+		// 被动关闭: 观测ShardServer或者smContainer都预Session相关退出，可能因为session的关闭导致
 		case <-srv.shardServer.Done():
 			srv.close()
 			ops.lg.Info("server passive exit")

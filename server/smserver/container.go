@@ -32,6 +32,7 @@ var (
 	_ apputil.ShardInterface = new(smContainer)
 )
 
+// smContainer 竞争leader，管理sm整个集群
 type smContainer struct {
 	*apputil.Container
 
@@ -64,10 +65,11 @@ func newSMContainer(lg *zap.Logger, c *apputil.Container) (*smContainer, error) 
 		nodeManager: &nodeManager{smService: c.Service()},
 	}
 	// 判断sm的spec是否存在,如果不存在，那么进行创建,可以通过接口进行参数更改
+	spec := smAppSpec{Service: c.Service(), CreateTime: time.Now().Unix()}
 	if err := c.Client.CreateAndGet(
-		context.Background(),
+		context.TODO(),
 		[]string{container.nodeManager.nodeServiceSpec(container.Service())},
-		[]string{(&smAppSpec{Service: c.Service(), CreateTime: time.Now().Unix()}).String()},
+		[]string{spec.String()},
 		clientv3.NoLease,
 	); err != nil && err != etcdutil.ErrEtcdNodeExist {
 		return nil, errors.Wrap(err, "")
@@ -97,6 +99,10 @@ func (c *smContainer) Close() {
 	defer c.mu.Unlock()
 
 	c.closed = true
+
+	if c.stopper != nil {
+		c.stopper.Close()
+	}
 
 	// 需要判断是否为nil，worker是在竞选leader时初始化的
 	if c.worker != nil {
