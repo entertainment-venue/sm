@@ -60,7 +60,7 @@ func (l moveActionList) Swap(i, j int) {
 	l[i], l[j] = l[j], l[i]
 }
 
-// container和shard上报两个维度的load，leader(sm)或者shard(app)探测到异常，会发布任务出来，operator就是这个任务的执行者
+// operator 负责下发http请求
 type operator struct {
 	lg *zap.Logger
 
@@ -71,32 +71,19 @@ type operator struct {
 }
 
 func newOperator(lg *zap.Logger, service string) *operator {
-	op := operator{
+	return &operator{
 		lg:         lg,
 		service:    service,
 		httpClient: newHttpClient(),
 	}
-
-	lg.Info(
-		"operator started",
-		zap.String("service", service),
-	)
-
-	return &op
 }
 
-// 保证at least once
-func (o *operator) move(ctx context.Context, value []byte) error {
-	var mal moveActionList
-	if err := json.Unmarshal(value, &mal); err != nil {
-		o.lg.Error("failed to unmarshal",
-			zap.ByteString("value", value),
-			zap.Error(err),
-		)
-		// return ASAP unmarshal失败重试没意义，需要人工接入进行数据修正
-		return errors.Wrap(err, "")
-	}
-	o.lg.Info("receive move action list", zap.Reflect("mal", mal))
+// move 明确参数类型，预防编程错误
+func (o *operator) move(ctx context.Context, mal moveActionList) error {
+	o.lg.Info(
+		"start move",
+		zap.Reflect("mal", mal),
+	)
 
 	var (
 		// 增加重试机制
@@ -117,7 +104,10 @@ func (o *operator) move(ctx context.Context, value []byte) error {
 			})
 		}
 		if err := g.Wait(); err != nil {
-			o.lg.Error("dropOrAdd err", zap.Error(err))
+			o.lg.Error(
+				"Wait err",
+				zap.Error(err),
+			)
 			counter++
 		} else {
 			succ = true
@@ -125,48 +115,30 @@ func (o *operator) move(ctx context.Context, value []byte) error {
 		}
 	}
 
-	valueStr := string(value)
-
 	o.lg.Info(
 		"complete move",
 		zap.Bool("succ", succ),
-		zap.String("value", valueStr),
+		zap.Reflect("mal", mal),
 	)
 	return nil
 }
 
 func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
-	var (
-		onlyAdd  bool
-		onlyDrop bool
-	)
-
 	if ma.DropEndpoint != "" {
 		if err := o.send(ctx, ma.ShardId, ma.Spec, ma.DropEndpoint, "drop"); err != nil {
 			return errors.Wrap(err, "")
 		}
-	} else {
-		onlyAdd = true
 	}
 
 	if ma.AddEndpoint != "" {
 		if err := o.send(ctx, ma.ShardId, ma.Spec, ma.AddEndpoint, "add"); err != nil {
-			o.lg.Error(
-				"send error",
-				zap.Reflect("value", ma),
-				zap.Error(err),
-			)
-			return nil
+			return errors.Wrap(err, "")
 		}
-	} else {
-		onlyDrop = true
 	}
 
 	o.lg.Info(
-		"move shard request success",
+		"dropOrAdd success",
 		zap.Reflect("ma", ma),
-		zap.Bool("onlyAdd", onlyAdd),
-		zap.Bool("onlyDrop", onlyDrop),
 	)
 	return nil
 }
@@ -193,18 +165,14 @@ func (o *operator) send(_ context.Context, id string, spec *apputil.ShardSpec, e
 	rb, _ := ioutil.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return errors.Errorf("[operator] FAILED to %s move shard %s, not 200", action, id)
+		return errors.Errorf("FAILED to %s move shard %s, not 200", action, id)
 	}
 
-	o.lg.Info("http request success",
+	o.lg.Info(
+		"send success",
 		zap.String("urlStr", urlStr),
-		zap.Reflect("request", msg),
+		zap.Reflect("msg", msg),
 		zap.ByteString("response", rb),
 	)
 	return nil
-}
-
-func (o *operator) Scale() {
-	// TODO
-	panic("unsupported Scale")
 }

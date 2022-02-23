@@ -564,7 +564,26 @@ func (w *Worker) processEvent(key string, value interface{}) error {
 		zap.String("key", key),
 		zap.Reflect("ev", event),
 	)
-	if err := w.operator.move(context.TODO(), event.Value); err != nil {
+
+	var mal moveActionList
+	if err := json.Unmarshal(event.Value, &mal); err != nil {
+		w.lg.Error(
+			"Unmarshal error",
+			zap.ByteString("value", event.Value),
+			zap.Error(err),
+		)
+		// return ASAP unmarshal失败重试没意义，需要人工接入进行数据修正
+		return errors.Wrap(err, "")
+	}
+	if len(mal) == 0 {
+		w.lg.Warn(
+			"empty move actions",
+			zap.ByteString("value", event.Value),
+		)
+		return nil
+	}
+
+	if err := w.operator.move(context.TODO(), mal); err != nil {
 		w.lg.Error(
 			"move error",
 			zap.String("key", key),

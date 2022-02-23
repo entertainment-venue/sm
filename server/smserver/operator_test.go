@@ -16,6 +16,7 @@ package smserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
@@ -74,7 +75,9 @@ func Test_operator_move(t *testing.T) {
 
 	// ./etcdctl put /bd/app/foo.bar/task '[{"service":"foo.bar","shardId":"1","dropEndpoint":"","addEndpoint":"127.0.0.1:8889","allowDrop":false}]'
 	value := `[{"service":"foo.bar","shardId":"1","dropEndpoint":"","addEndpoint":"127.0.0.1:8889","allowDrop":false}]`
-	o.move(context.TODO(), []byte(value))
+	mal := moveActionList{}
+	json.Unmarshal([]byte(value), &mal)
+	o.move(context.TODO(), moveActionList{})
 
 	stopch := make(chan struct{})
 	<-stopch
