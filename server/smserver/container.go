@@ -103,18 +103,23 @@ func (c *smContainer) Close() {
 	}
 	c.closing = true
 
-	if c.stopper != nil {
-		c.stopper.Close()
+	// 回收sm当前container负责的分片，后面关闭可能的leader身份，
+	// 既然处于关闭状态，也不能再接收shard的移动请求，但是此时http api可能还在工作，
+	// 其他选举出来的leader可能会下发失败的请求，最大限度避免掉。
+	for _, s := range c.shards {
+		s.Close()
 	}
 
 	// 需要判断是否为nil，worker是在竞选leader时初始化的
 	if c.worker != nil {
+		// stopper的Close会导致leader的重新选举，新的leader开启rebalance，
+		// 尽量防止两个leader的工作在运行，所以worker的停止要在stopper之后
 		c.worker.Close()
 	}
 
-	// 关闭分片
-	for _, s := range c.shards {
-		s.Close()
+	// 放弃leader竞选的工作，在资源回收之前，保证自己还是leader
+	if c.stopper != nil {
+		c.stopper.Close()
 	}
 
 	c.lg.Info(

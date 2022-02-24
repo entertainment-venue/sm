@@ -205,10 +205,18 @@ func (s *Server) run() error {
 	return nil
 }
 
+// Close 在进程收到退出信号时触发，和NewServer中的goroutine可能并发执行，
+// shardServer的Close是threadsafe的，但是shardServer的Done先触发被动关闭，close方法会被调用两次，
+// 虽然smContainer的Close是threadsafe，但两个组件会被关闭两次，请发发生比较少
 func (s *Server) Close() {
 	// 主动关闭: 需要关闭shardServer
+	// shardServer的关闭会触发NewServer中的goroutine被动关闭
 	s.shardServer.Close()
+
+	// 通知调用方，因为是主动关闭
 	close(s.donec)
+
+	// 关闭后，进程退出，至于smContainer的关闭依赖shardServer即可
 }
 
 func (s *Server) close() {
