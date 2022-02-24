@@ -79,7 +79,7 @@ func newShard(lg *zap.Logger, sc *smContainer, id string, spec *apputil.ShardSpe
 func (s *smShard) Close() {
 	s.worker.Close()
 
-	s.lg.Info("closed",
+	s.lg.Info("closing",
 		zap.String("id", s.id),
 		zap.String("service", s.service),
 		zap.Reflect("spec", s.shardSpec),

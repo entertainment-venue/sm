@@ -152,13 +152,13 @@ func (w *Worker) Close() {
 
 	w.trigger.Close()
 	w.lg.Info(
-		"trigger closed",
+		"trigger closing",
 		zap.String("service", w.service),
 	)
 
 	w.stopper.Close()
 	w.lg.Info(
-		"worker closed",
+		"worker closing",
 		zap.String("service", w.service),
 	)
 }

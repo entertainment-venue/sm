@@ -42,17 +42,16 @@ type smContainer struct {
 
 	// mu 保护closed和shards
 	mu sync.Mutex
+	// closing 利用 stopper 实现的graceful stop，container进入stopped状态
+	closing bool
+	// shards 存储分片
+	shards map[string]*smShard
 
-	// 利用 stopper 实现的graceful stop，container进入stopped状态
-	closed bool
 	// stopper 管理campaign
 	stopper *apputil.GoroutineStopper
 
-	// 保证sm运行健康的goroutine，通过task节点下发任务给op
+	// worker 保证sm运行健康的goroutine，通过task节点下发任务给op
 	worker *Worker
-
-	// shards 存储分片
-	shards map[string]*smShard
 }
 
 func newSMContainer(lg *zap.Logger, c *apputil.Container) (*smContainer, error) {
@@ -98,7 +97,11 @@ func (c *smContainer) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.closed = true
+	// 保证只被停止一次
+	if c.closing {
+		return
+	}
+	c.closing = true
 
 	if c.stopper != nil {
 		c.stopper.Close()
@@ -115,7 +118,7 @@ func (c *smContainer) Close() {
 	}
 
 	c.lg.Info(
-		"smContainer closed",
+		"smContainer closing",
 		zap.String("id", c.Id()),
 		zap.String("service", c.Service()),
 	)
@@ -125,8 +128,8 @@ func (c *smContainer) Add(id string, spec *apputil.ShardSpec) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.closed {
-		c.lg.Info("container closed, give up add",
+	if c.closing {
+		c.lg.Info("container closing, give up add",
 			zap.String("id", id),
 			zap.String("service", c.Service()),
 		)
@@ -147,7 +150,7 @@ func (c *smContainer) Add(id string, spec *apputil.ShardSpec) error {
 		// 判断是否需要更新shard的工作内容，task有变更停掉当前shard，重新启动
 		if ss.Spec().Task != spec.Task {
 			ss.Close()
-			c.lg.Info("shard task changed, current shard closed",
+			c.lg.Info("shard task changed, current shard closing",
 				zap.String("id", id),
 				zap.String("cur", ss.Spec().Task),
 				zap.String("new", spec.Task),
@@ -171,8 +174,8 @@ func (c *smContainer) Drop(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.closed {
-		c.lg.Info("container closed, give up drop",
+	if c.closing {
+		c.lg.Info("container closing, give up drop",
 			zap.String("id", id),
 			zap.String("service", c.Service()),
 		)
@@ -194,8 +197,8 @@ func (c *smContainer) Load(id string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.closed {
-		c.lg.Info("container closed, give up load",
+	if c.closing {
+		c.lg.Info("container closing, give up load",
 			zap.String("id", id),
 			zap.String("service", c.Service()),
 		)
