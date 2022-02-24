@@ -260,9 +260,15 @@ func (c *smContainer) campaign(ctx context.Context) {
 			zap.Int64("lease", int64(c.Session.Lease())),
 		)
 
-		// leader启动时，等待一个时间段，方便所有container做至少一次heartbeat，然后开始监测是否需要进行container和shard映射关系的变更。
-		// etcd sdk中keepalive的请求发送时间时500ms，5s>>500ms，认为这个时间段内，所有container都会发heartbeat，不存在的就认为没有任务。
-		time.Sleep(defaultMaxRecoveryTime)
+		// leader有几种情况会重新选举：
+		// 1 重启
+		// 2 和etcd之间网络问题
+		//
+		// 新的leader诞生后，面临的整体container的状态：
+		// container也在发布中，存活的数量不确定，发布的并行度（推荐是1，虽然在worker给container提供重启时间，但会引起事件排队增加worker负载，这里没做过压测）
+		//
+		// leader更换，需要重新构建mapper(存活container)，最差情况是一个container不存活，触发rebalance，
+		// 旧的container加回来，发现不能lock shard，剔除掉shard即可，所以这块不用等待
 
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/sm/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
