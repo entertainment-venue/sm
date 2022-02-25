@@ -16,7 +16,6 @@ package smserver
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -79,7 +78,7 @@ func newOperator(lg *zap.Logger, service string) *operator {
 }
 
 // move 明确参数类型，预防编程错误
-func (o *operator) move(ctx context.Context, mal moveActionList) error {
+func (o *operator) move(mal moveActionList) error {
 	o.lg.Info(
 		"start move",
 		zap.Reflect("mal", mal),
@@ -100,7 +99,7 @@ func (o *operator) move(ctx context.Context, mal moveActionList) error {
 		for _, ma := range mal {
 			ma := ma
 			g.Go(func() error {
-				return o.dropOrAdd(ctx, ma)
+				return o.dropOrAdd(ma)
 			})
 		}
 		if err := g.Wait(); err != nil {
@@ -123,15 +122,15 @@ func (o *operator) move(ctx context.Context, mal moveActionList) error {
 	return nil
 }
 
-func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
+func (o *operator) dropOrAdd(ma *moveAction) error {
 	if ma.DropEndpoint != "" {
-		if err := o.send(ctx, ma.ShardId, ma.Spec, ma.DropEndpoint, "drop"); err != nil {
+		if err := o.send(ma.ShardId, ma.Spec, ma.DropEndpoint, "drop"); err != nil {
 			return errors.Wrap(err, "")
 		}
 	}
 
 	if ma.AddEndpoint != "" {
-		if err := o.send(ctx, ma.ShardId, ma.Spec, ma.AddEndpoint, "add"); err != nil {
+		if err := o.send(ma.ShardId, ma.Spec, ma.AddEndpoint, "add"); err != nil {
 			return errors.Wrap(err, "")
 		}
 	}
@@ -143,7 +142,7 @@ func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
 	return nil
 }
 
-func (o *operator) send(_ context.Context, id string, spec *apputil.ShardSpec, endpoint string, action string) error {
+func (o *operator) send(id string, spec *apputil.ShardSpec, endpoint string, action string) error {
 	msg := apputil.ShardMessage{Id: id, Spec: spec}
 	b, err := json.Marshal(msg)
 	if err != nil {

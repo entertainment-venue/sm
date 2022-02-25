@@ -15,7 +15,6 @@
 package smserver
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -77,7 +76,7 @@ func Test_operator_move(t *testing.T) {
 	value := `[{"service":"foo.bar","shardId":"1","dropEndpoint":"","addEndpoint":"127.0.0.1:8889","allowDrop":false}]`
 	mal := moveActionList{}
 	json.Unmarshal([]byte(value), &mal)
-	o.move(context.TODO(), moveActionList{})
+	o.move(moveActionList{})
 
 	stopch := make(chan struct{})
 	<-stopch
@@ -92,7 +91,7 @@ func Test_operator_dropOrAdd(t *testing.T) {
 		ShardId:     "1",
 		AddEndpoint: "127.0.0.1:8889",
 	}
-	o.dropOrAdd(context.TODO(), &ma)
+	o.dropOrAdd(&ma)
 
 	stopch := make(chan struct{})
 	<-stopch
@@ -102,7 +101,7 @@ func Test_operator_send(t *testing.T) {
 	o := operator{lg: ttLogger}
 	o.httpClient = newHttpClient()
 
-	if err := o.send(context.TODO(), "1", &apputil.ShardSpec{}, "127.0.0.1:8889", "add"); err != nil {
+	if err := o.send("1", &apputil.ShardSpec{}, "127.0.0.1:8889", "add"); err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
 	}

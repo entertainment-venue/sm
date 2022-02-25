@@ -583,7 +583,7 @@ func (w *Worker) processEvent(key string, value interface{}) error {
 		return nil
 	}
 
-	if err := w.operator.move(context.TODO(), mal); err != nil {
+	if err := w.operator.move(mal); err != nil {
 		w.lg.Error(
 			"move error",
 			zap.String("key", key),
