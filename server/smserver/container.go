@@ -45,13 +45,16 @@ type smContainer struct {
 	// closing 利用 stopper 实现的graceful stop，container进入stopped状态
 	closing bool
 	// shards 存储分片
-	shards map[string]*smShard
+	shards map[string]Shard
 
 	// stopper 管理campaign
 	stopper *apputil.GoroutineStopper
 
 	// worker 保证sm运行健康的goroutine，通过task节点下发任务给op
 	worker *Worker
+
+	// shardWrapper 4 unit test，隔离shard和container
+	shardWrapper ShardWrapper
 }
 
 func newSMContainer(lg *zap.Logger, c *apputil.Container) (*smContainer, error) {
@@ -59,9 +62,10 @@ func newSMContainer(lg *zap.Logger, c *apputil.Container) (*smContainer, error) 
 		lg:        lg,
 		Container: c,
 
-		stopper:     &apputil.GoroutineStopper{},
-		shards:      make(map[string]*smShard),
-		nodeManager: &nodeManager{smService: c.Service()},
+		stopper:      &apputil.GoroutineStopper{},
+		shards:       make(map[string]Shard),
+		nodeManager:  &nodeManager{smService: c.Service()},
+		shardWrapper: &smShardWrapper{},
 	}
 	// 判断sm的spec是否存在,如果不存在，那么进行创建,可以通过接口进行参数更改
 	spec := smAppSpec{Service: c.Service(), CreateTime: time.Now().Unix()}
@@ -83,7 +87,7 @@ func newSMContainer(lg *zap.Logger, c *apputil.Container) (*smContainer, error) 
 	return &container, nil
 }
 
-func (c *smContainer) GetShard(service string) (*smShard, error) {
+func (c *smContainer) GetShard(service string) (Shard, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ss, ok := c.shards[service]
@@ -93,13 +97,13 @@ func (c *smContainer) GetShard(service string) (*smShard, error) {
 	return ss, nil
 }
 
-func (c *smContainer) Close() {
+func (c *smContainer) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	// 保证只被停止一次
 	if c.closing {
-		return
+		return apputil.ErrClosing
 	}
 	c.closing = true
 
@@ -127,6 +131,7 @@ func (c *smContainer) Close() {
 		zap.String("id", c.Id()),
 		zap.String("service", c.Service()),
 	)
+	return nil
 }
 
 func (c *smContainer) Add(id string, spec *apputil.ShardSpec) error {
@@ -137,33 +142,38 @@ func (c *smContainer) Add(id string, spec *apputil.ShardSpec) error {
 		c.lg.Info("container closing, give up add",
 			zap.String("id", id),
 			zap.String("service", c.Service()),
+			zap.Reflect("spec", spec),
 		)
-		return nil
+		// 4 unit test 提升代码分支可测试性
+		// 异常情况不吞掉，反馈给server端，server端也不会一直重试，而是等待下次rebalance
+		return apputil.ErrClosing
 	}
 
-	ss, ok := c.shards[id]
+	sd, ok := c.shards[id]
 	if ok {
-		if ss.Spec().Task == spec.Task {
-			c.lg.Info("shard already existed and task not changed",
+		if sd.Spec().Task == spec.Task {
+			c.lg.Info("shard existed and task not changed",
 				zap.String("id", id),
 				zap.String("service", c.Service()),
-				zap.String("task", spec.Task),
+				zap.Reflect("spec", spec),
 			)
-			return nil
+			// 4 unit test 提升代码分支可测试性
+			return apputil.ErrExist
 		}
 
 		// 判断是否需要更新shard的工作内容，task有变更停掉当前shard，重新启动
-		if ss.Spec().Task != spec.Task {
-			ss.Close()
-			c.lg.Info("shard task changed, current shard closing",
+		if sd.Spec().Task != spec.Task {
+			sd.Close()
+			c.lg.Info("shard task changed, current shard closed",
 				zap.String("id", id),
-				zap.String("cur", ss.Spec().Task),
+				zap.String("cur", sd.Spec().Task),
 				zap.String("new", spec.Task),
 			)
 		}
 	}
 
-	shard, err := newShard(c.lg, c, id, spec)
+	spec.Id = id
+	shard, err := c.shardWrapper.NewShard(c, spec)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -184,17 +194,25 @@ func (c *smContainer) Drop(id string) error {
 			zap.String("id", id),
 			zap.String("service", c.Service()),
 		)
-		return nil
+		return apputil.ErrClosing
 	}
 
 	sd, ok := c.shards[id]
 	if !ok {
-		c.lg.Info("shard not existed", zap.String("id", id))
-		return errors.Wrap(errNotExist, "")
+		c.lg.Info(
+			"shard not existed",
+			zap.String("id", id),
+			zap.String("service", c.Service()),
+		)
+		return errNotExist
 	}
 	sd.Close()
 	delete(c.shards, id)
-	c.lg.Info("shard dropped", zap.String("id", id))
+	c.lg.Info(
+		"shard dropped",
+		zap.String("id", id),
+		zap.String("service", c.Service()),
+	)
 	return nil
 }
 
@@ -207,17 +225,22 @@ func (c *smContainer) Load(id string) (string, error) {
 			zap.String("id", id),
 			zap.String("service", c.Service()),
 		)
-		return "", nil
+		return "", apputil.ErrClosing
 	}
 
 	sd, ok := c.shards[id]
 	if !ok {
-		c.lg.Warn("shard not exist", zap.String("id", id))
-		return "", errors.Wrap(errNotExist, "")
+		c.lg.Warn(
+			"shard not exist",
+			zap.String("id", id),
+			zap.String("service", c.Service()),
+		)
+		return "", errNotExist
 	}
-	load := sd.GetLoad()
+	load := sd.Load()
 	c.lg.Debug("get load success",
 		zap.String("id", id),
+		zap.String("service", c.Service()),
 		zap.String("load", load),
 	)
 	return load, nil

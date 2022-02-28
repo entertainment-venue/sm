@@ -153,7 +153,7 @@ func (ss *shardServer) GinDelSpec(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	shard.worker.Close()
+	shard.Worker().Close()
 
 	// 清除etcd数据
 	pfx := ss.container.nodeManager.nodeServiceShard(ss.container.Service(), service)
@@ -224,8 +224,8 @@ func (ss *shardServer) GinUpdateSpec(c *gin.Context) {
 		return
 	}
 	//  更新sm container内存中的值
-	shard.worker.SetMaxShardCount(req.MaxShardCount)
-	shard.worker.SetMaxRecoveryTime(req.MaxRecoveryTime)
+	shard.Worker().SetMaxShardCount(req.MaxShardCount)
+	shard.Worker().SetMaxRecoveryTime(req.MaxRecoveryTime)
 
 	ss.lg.Info("update spec success", zap.String("pfx", pfx))
 	c.JSON(http.StatusOK, gin.H{})
