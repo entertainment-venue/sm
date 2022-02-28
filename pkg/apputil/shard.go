@@ -38,10 +38,14 @@ const (
 )
 
 type ShardSpec struct {
-	// 存储下，方便开发
+	// Id 方法传递的时候可以内容可以自识别，否则，添加分片相关的方法的生命一般是下面的样子：
+	// newShard(id string, spec *apputil.ShardSpec)
+	Id string `json:"id"`
+
+	// Service 标记自己所在服务，不需要去etcd路径中解析，增加spec的描述性质
 	Service string `json:"service"`
 
-	// 任务内容
+	// Task service管理的分片任务内容
 	Task string `json:"task"`
 
 	UpdateTime int64 `json:"updateTime"`
@@ -53,7 +57,7 @@ type ShardSpec struct {
 	// 这些shard之间不相关的balance到现有container上
 	Group string `json:"group"`
 
-	// ActionType 标记当前ShardSpec所处状态，smserver删除分片
+	// Action 标记当前ShardSpec所处状态，smserver删除分片
 	Action ShardAction `json:"action"`
 }
 
