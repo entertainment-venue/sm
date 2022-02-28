@@ -37,6 +37,12 @@ const (
 	ShardActionDelete ShardAction = iota + 1
 )
 
+var (
+	ErrClosing  = errors.New("closing")
+	ErrExist    = errors.New("exist")
+	ErrNotExist = errors.New("not exist")
+)
+
 type ShardSpec struct {
 	// Id 方法传递的时候可以内容可以自识别，否则，添加分片相关的方法的生命一般是下面的样子：
 	// newShard(id string, spec *apputil.ShardSpec)

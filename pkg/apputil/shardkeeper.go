@@ -241,7 +241,7 @@ func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
 		// 1 lock失效，并已经下发给调用方，此处逻辑以boltdb中的shard为准，lock失效会触发shardKeeper的Close，
 		spec := tv.Spec
 		opErr = sk.shardImpl.Add(shardId, spec)
-		if opErr == nil {
+		if opErr == nil || opErr == ErrExist {
 			// 下发成功后更新boltdb
 			tv.Disp = true
 			err := sk.db.Update(func(tx *bolt.Tx) error {
@@ -260,7 +260,7 @@ func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
 		}
 	case dropTrigger:
 		opErr = sk.shardImpl.Drop(shardId)
-		if opErr == nil {
+		if opErr == nil || opErr == ErrNotExist {
 			if err := sk.unlock(shardId); err != nil {
 				return errors.Wrap(err, "")
 			}
