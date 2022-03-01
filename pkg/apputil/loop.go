@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -37,7 +38,7 @@ func TickerLoop(ctx context.Context, lg *zap.Logger, duration time.Duration, exi
 	}
 }
 
-func WatchLoop(ctx context.Context, lg *zap.Logger, client *clientv3.Client, key string, rev int64, fn func(ctx context.Context, ev *clientv3.Event) error) {
+func WatchLoop(ctx context.Context, lg *zap.Logger, client etcdutil.EtcdWrapper, key string, rev int64, fn func(ctx context.Context, ev *clientv3.Event) error) {
 	var (
 		startRev int64
 		opts     []clientv3.OpOption
