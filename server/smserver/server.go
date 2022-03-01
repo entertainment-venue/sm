@@ -179,20 +179,10 @@ func (s *Server) run() error {
 	}
 	s.smContainer = smContainer
 
-	apiSrv := smShardApi{smContainer, s.opts.lg}
-	handler := make(map[string]func(c *gin.Context))
-	handler["/sm/server/add-spec"] = apiSrv.GinAddSpec
-	handler["/sm/server/del-spec"] = apiSrv.GinDelSpec
-	handler["/sm/server/get-spec"] = apiSrv.GinGetSpec
-	handler["/sm/server/update-spec"] = apiSrv.GinUpdateSpec
-	handler["/sm/server/add-shard"] = apiSrv.GinAddShard
-	handler["/sm/server/del-shard"] = apiSrv.GinDelShard
-	handler["/sm/server/get-shard"] = apiSrv.GinGetShard
-	handler["/swagger/*any"] = ginSwagger.WrapHandler(swaggerfiles.Handler)
 	ss, err := apputil.NewShardServer(
 		apputil.ShardServerWithAddr(s.opts.addr),
 		apputil.ShardServerWithContainer(container),
-		apputil.ShardServerWithApiHandler(handler),
+		apputil.ShardServerWithApiHandler(s.getHandlers(smContainer)),
 		apputil.ShardServerWithShardImplementation(smContainer),
 		apputil.ShardServerWithLogger(s.opts.lg),
 		apputil.ShardServerWithEtcdPrefix(s.opts.etcdPrefix))
@@ -226,4 +216,18 @@ func (s *Server) close() {
 
 func (s *Server) Done() <-chan struct{} {
 	return s.donec
+}
+
+func (s *Server) getHandlers(container *smContainer) map[string]func(c *gin.Context) {
+	apiSrv := newSMShardApi(container)
+	handlers := make(map[string]func(c *gin.Context))
+	handlers["/sm/server/add-spec"] = apiSrv.GinAddSpec
+	handlers["/sm/server/del-spec"] = apiSrv.GinDelSpec
+	handlers["/sm/server/get-spec"] = apiSrv.GinGetSpec
+	handlers["/sm/server/update-spec"] = apiSrv.GinUpdateSpec
+	handlers["/sm/server/add-shard"] = apiSrv.GinAddShard
+	handlers["/sm/server/del-shard"] = apiSrv.GinDelShard
+	handlers["/sm/server/get-shard"] = apiSrv.GinGetShard
+	handlers["/swagger/*any"] = ginSwagger.WrapHandler(swaggerfiles.Handler)
+	return handlers
 }

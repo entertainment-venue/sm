@@ -30,7 +30,7 @@ import (
 
 type smAppSpec struct {
 	// Service 目前app的spec更多承担的是管理职能，shard配置的一个起点，先只配置上service，可以唯一标记一个app
-	Service string `json:"service" binding:"required"`
+	Service string `json:"service"`
 
 	CreateTime int64 `json:"createTime"`
 
@@ -50,6 +50,10 @@ type smShardApi struct {
 	container *smContainer
 
 	lg *zap.Logger
+}
+
+func newSMShardApi(container *smContainer) *smShardApi {
+	return &smShardApi{container: container, lg: container.lg}
 }
 
 // @Description add spec
@@ -135,7 +139,7 @@ func (ss *smShardApi) GinDelSpec(c *gin.Context) {
 	if service == ss.container.Service() {
 		err := errors.Errorf("param error")
 		ss.lg.Error(
-			"try to delete sm",
+			"same as shard manager's service",
 			zap.String("service", service),
 		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -208,7 +212,11 @@ func (ss *smShardApi) GinUpdateSpec(c *gin.Context) {
 	//  查询是否存在该service
 	shard, err := ss.container.GetShard(req.Service)
 	if err != nil {
-		ss.lg.Error("update service err", zap.String("service", req.Service), zap.String("err", err.Error()))
+		ss.lg.Error(
+			"update service err",
+			zap.String("service", req.Service),
+			zap.Error(err),
+		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "service not exist"})
 		return
 	}
@@ -265,11 +273,14 @@ func (ss *smShardApi) GinAddShard(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	ss.lg.Info("receive add shard request", zap.String("request", req.String()))
+	ss.lg.Info(
+		"add shard request",
+		zap.Reflect("req", req),
+	)
 
 	// sm本身的shard是和service添加绑定的，不需要走这个接口
 	if req.Service == ss.container.Service() {
-		err := errors.Errorf("shard manager's service not allow api add shard")
+		err := errors.Errorf("same as shard manager's service")
 		ss.lg.Error("service error", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -299,7 +310,7 @@ func (ss *smShardApi) GinAddShard(c *gin.Context) {
 		values = []string{spec.String()}
 	)
 	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
-		ss.lg.Error("failed to add shard",
+		ss.lg.Error("CreateAndGet error",
 			zap.Error(err),
 			zap.Strings("nodes", nodes),
 			zap.Strings("values", values),
@@ -336,7 +347,7 @@ func (ss *smShardApi) GinDelShard(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	ss.lg.Info("receive del shard request", zap.Reflect("request", req))
+	ss.lg.Info("del shard request", zap.Reflect("req", req))
 
 	// 删除shard节点
 	pfx := ss.container.nodeManager.nodeServiceShard(req.Service, req.ShardId)

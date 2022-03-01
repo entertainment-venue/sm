@@ -135,7 +135,7 @@ func (lm *mapper) initAndWatch(typ string) error {
 			apputil.WatchLoop(
 				ctx,
 				lm.lg,
-				lm.container.Client.Client,
+				lm.container.Client,
 				pfx,
 				startRev,
 				func(ctx context.Context, ev *clientv3.Event) error {

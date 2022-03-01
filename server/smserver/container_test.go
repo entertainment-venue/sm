@@ -24,11 +24,11 @@ type MockedShard struct {
 }
 
 func (m *MockedShard) SetMaxShardCount(maxShardCount int) {
-	panic("implement me")
+	m.Called(maxShardCount)
 }
 
 func (m *MockedShard) SetMaxRecoveryTime(maxRecoveryTime int) {
-	panic("implement me")
+	m.Called(maxRecoveryTime)
 }
 
 func (m *MockedShard) Close() error {
