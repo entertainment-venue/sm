@@ -40,7 +40,7 @@ type shardKeeper struct {
 	// 以下字段从ShardServer初始化
 	service   string
 	shardImpl ShardInterface
-	client    *etcdutil.EtcdClient
+	client    etcdutil.EtcdWrapper
 	session   *concurrency.Session
 
 	// Unlock保证使用的相同mutex，否则myKey设定不上
@@ -306,7 +306,7 @@ func (sk *shardKeeper) lock(shardId string) error {
 
 	lockPfx := EtcdPathAppShardHbId(sk.service, shardId)
 	mutex := concurrency.NewMutex(sk.session, lockPfx)
-	if err := mutex.Lock(sk.client.Client.Ctx()); err != nil {
+	if err := mutex.Lock(sk.client.Ctx()); err != nil {
 		// lock被占用
 		if err == concurrency.ErrLocked {
 			// opt: 确认lock被占用，清理掉本地shard

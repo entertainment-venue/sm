@@ -263,7 +263,7 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 					// lock: 失败场景打印日志，不影响其他shard的heartbeat
 					lockPfx := EtcdPathAppShardHbId(ss.opts.container.Service(), id)
 					mutex := concurrency.NewMutex(session, lockPfx)
-					if err := mutex.Lock(ss.opts.container.Client.Client.Ctx()); err != nil {
+					if err := mutex.Lock(ss.opts.container.Client.Ctx()); err != nil {
 						if err == rpctypes.ErrLeaseNotFound {
 							ops.lg.Info(
 								"lock released",

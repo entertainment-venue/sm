@@ -50,7 +50,8 @@ type EtcdWrapper interface {
 	CreateAndGet(ctx context.Context, nodes []string, values []string, leaseID clientv3.LeaseID) error
 	CompareAndSwap(_ context.Context, node string, curValue string, newValue string, leaseID clientv3.LeaseID) (string, error)
 
-	// Delete etcd clientv3内部的方法
+	Ctx() context.Context
+	Put(ctx context.Context, key, val string, opts ...clientv3.OpOption) (*clientv3.PutResponse, error)
 	Delete(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.DeleteResponse, error)
 }
 
