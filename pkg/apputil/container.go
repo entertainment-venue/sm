@@ -194,6 +194,11 @@ func (c *Container) Service() string {
 	return c.service
 }
 
+// SetService 4 unit test
+func (c *Container) SetService(s string) {
+	c.service = s
+}
+
 type Heartbeat struct {
 	// Timestamp sm中用于计算container删除事件的等待时间
 	Timestamp int64 `json:"timestamp"`
