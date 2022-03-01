@@ -204,6 +204,11 @@ type Heartbeat struct {
 	Timestamp int64 `json:"timestamp"`
 }
 
+func (s *Heartbeat) String() string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
 type ContainerHeartbeat struct {
 	Heartbeat
 
