@@ -179,7 +179,7 @@ func (s *Server) run() error {
 	}
 	s.smContainer = smContainer
 
-	apiSrv := shardServer{smContainer, s.opts.lg}
+	apiSrv := smShardApi{smContainer, s.opts.lg}
 	handler := make(map[string]func(c *gin.Context))
 	handler["/sm/server/add-spec"] = apiSrv.GinAddSpec
 	handler["/sm/server/del-spec"] = apiSrv.GinDelSpec

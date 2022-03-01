@@ -23,6 +23,14 @@ type MockedShard struct {
 	mock.Mock
 }
 
+func (m *MockedShard) SetMaxShardCount(maxShardCount int) {
+	panic("implement me")
+}
+
+func (m *MockedShard) SetMaxRecoveryTime(maxRecoveryTime int) {
+	panic("implement me")
+}
+
 func (m *MockedShard) Close() error {
 	args := m.Called()
 	return args.Error(0)
@@ -36,11 +44,6 @@ func (m *MockedShard) Spec() *apputil.ShardSpec {
 func (m *MockedShard) Load() string {
 	args := m.Called()
 	return args.String(0)
-}
-
-func (m *MockedShard) Worker() *Worker {
-	args := m.Called()
-	return args.Get(0).(*Worker)
 }
 
 func TestContainer(t *testing.T) {

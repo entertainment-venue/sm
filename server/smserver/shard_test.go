@@ -19,8 +19,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/entertainment-venue/sm/pkg/apputil"
 	"go.uber.org/zap"
 )
+
+func Test_shardTask(t *testing.T) {
+	task := &shardTask{GovernedService: ""}
+	if task.Validate() {
+		t.Error("Validate should be false")
+		t.SkipNow()
+	}
+}
 
 func Test_newMaintenanceWorker(t *testing.T) {
 	ctr, err := newSMContainer(ttLogger, nil)
@@ -29,7 +38,10 @@ func Test_newMaintenanceWorker(t *testing.T) {
 		t.SkipNow()
 	}
 
-	mw, _ := newWorker(ttLogger, ctr, "foo.bar")
+	service := "foo.bar"
+	st := shardTask{GovernedService: service}
+	spec := apputil.ShardSpec{Service: service, Task: st.String()}
+	mw, _ := newSMShard(ctr, &spec)
 
 	time.Sleep(5 * time.Second)
 	mw.Close()
@@ -67,7 +79,7 @@ func Test_changed(t *testing.T) {
 			expect: true,
 		},
 	}
-	mw := Worker{}
+	mw := smShard{}
 	for idx, tt := range tests {
 		if tt.expect != mw.changed(tt.a, tt.b) {
 			t.Errorf("idx %d expect %t", idx, tt.expect)
@@ -190,7 +202,7 @@ func Test_reallocate(t *testing.T) {
 	}
 
 	logger, _ := zap.NewDevelopment()
-	w := Worker{service: "foo.bar", lg: logger}
+	w := smShard{service: "foo.bar", lg: logger}
 
 	for idx, tt := range tests {
 		r := w.rebalance(tt.fixShardIdAndManualContainerId, tt.hbContainerIdAndAny, tt.hbShardIdAndContainerId, nil)

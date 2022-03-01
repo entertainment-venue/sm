@@ -50,8 +50,8 @@ type smContainer struct {
 	// stopper 管理campaign
 	stopper *apputil.GoroutineStopper
 
-	// worker 保证sm运行健康的goroutine，通过task节点下发任务给op
-	worker *Worker
+	// leaderShard 保证sm运行健康的goroutine，通过task节点下发任务给op
+	leaderShard *smShard
 
 	// shardWrapper 4 unit test，隔离shard和container
 	shardWrapper ShardWrapper
@@ -115,10 +115,10 @@ func (c *smContainer) Close() error {
 	}
 
 	// 需要判断是否为nil，worker是在竞选leader时初始化的
-	if c.worker != nil {
+	if c.leaderShard != nil {
 		// stopper的Close会导致leader的重新选举，新的leader开启rebalance，
 		// 尽量防止两个leader的工作在运行，所以worker的停止要在stopper之后
-		c.worker.Close()
+		c.leaderShard.Close()
 	}
 
 	// 放弃leader竞选的工作，在资源回收之前，保证自己还是leader
@@ -295,11 +295,13 @@ func (c *smContainer) campaign(ctx context.Context) {
 
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/sm/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
+		st := shardTask{GovernedService: c.Service()}
+		spec := apputil.ShardSpec{Service: c.Service(), Task: st.String()}
 		var err error
-		c.worker, err = newWorker(c.lg, c, c.Service())
+		c.leaderShard, err = newSMShard(c, &spec)
 		if err != nil {
 			c.lg.Error(
-				"newWorker error",
+				"newSMShard error",
 				zap.String("service", c.Service()),
 				zap.Error(err),
 			)
@@ -311,7 +313,7 @@ func (c *smContainer) campaign(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			c.lg.Info("leader exit", zap.String("service", c.Service()))
-			c.worker = nil
+			c.leaderShard = nil
 			return
 		}
 	}
