@@ -15,16 +15,10 @@
 package smserver
 
 import (
-	"errors"
 	"time"
 )
 
 const (
 	defaultSleepTimeout = 3 * time.Second
 	defaultLoopInterval = 3 * time.Second
-)
-
-var (
-	errParam    = errors.New("param err")
-	errNotExist = errors.New("not exist")
 )

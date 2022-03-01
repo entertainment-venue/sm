@@ -204,7 +204,7 @@ func (c *smContainer) Drop(id string) error {
 			zap.String("id", id),
 			zap.String("service", c.Service()),
 		)
-		return errNotExist
+		return apputil.ErrNotExist
 	}
 	sd.Close()
 	delete(c.shards, id)
@@ -235,7 +235,7 @@ func (c *smContainer) Load(id string) (string, error) {
 			zap.String("id", id),
 			zap.String("service", c.Service()),
 		)
-		return "", errNotExist
+		return "", apputil.ErrNotExist
 	}
 	load := sd.Load()
 	c.lg.Debug("get load success",

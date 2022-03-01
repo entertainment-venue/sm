@@ -10,6 +10,10 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestContainer(t *testing.T) {
+	suite.Run(t, new(ContainerTestSuite))
+}
+
 type MockedShardWrapper struct {
 	mock.Mock
 }
@@ -44,10 +48,6 @@ func (m *MockedShard) Spec() *apputil.ShardSpec {
 func (m *MockedShard) Load() string {
 	args := m.Called()
 	return args.String(0)
-}
-
-func TestContainer(t *testing.T) {
-	suite.Run(t, new(ContainerTestSuite))
 }
 
 type ContainerTestSuite struct {
@@ -140,7 +140,7 @@ func (suite *ContainerTestSuite) TestDrop_closing() {
 
 func (suite *ContainerTestSuite) TestDrop_notExist() {
 	err := suite.container.Drop(mock.Anything)
-	assert.Equal(suite.T(), err, errNotExist)
+	assert.Equal(suite.T(), err, apputil.ErrNotExist)
 }
 
 func (suite *ContainerTestSuite) TestDrop_common() {
@@ -161,7 +161,7 @@ func (suite *ContainerTestSuite) TestLoad_closing() {
 
 func (suite *ContainerTestSuite) TestLoad_notExist() {
 	_, err := suite.container.Load(mock.Anything)
-	assert.Equal(suite.T(), errNotExist, err)
+	assert.Equal(suite.T(), apputil.ErrNotExist, err)
 }
 
 func (suite *ContainerTestSuite) TestLoad_common() {
