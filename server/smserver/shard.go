@@ -149,7 +149,7 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 	ss.operator = newOperator(ss.lg, shardSpec.Service)
 
 	// TODO 参数传递的有些冗余，需要重新梳理
-	ss.mpr, err = newMapper(ss.lg, container, &appSpec)
+	ss.mpr, err = newMapper(container, &appSpec)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
