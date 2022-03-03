@@ -15,7 +15,7 @@
 package smserver
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
@@ -29,25 +29,6 @@ import (
 var (
 	ttLogger, _ = zap.NewProduction()
 )
-
-func newTestOperator() *operator {
-	id := "127.0.0.1:8888"
-	service := "foo.bar"
-
-	c, err := apputil.NewContainer(
-		apputil.ContainerWithId(id),
-		apputil.ContainerWithService(service),
-		apputil.ContainerWithEndpoints([]string{"127.0.0.1:2379"}),
-		apputil.ContainerWithLogger(ttLogger))
-	if err != nil {
-		panic(err)
-	}
-
-	sc := smContainer{Container: c, service: service}
-
-	o := operator{lg: ttLogger, parent: &sc, service: service}
-	return &o
-}
 
 func Test_operator_moveActionList_sort(t *testing.T) {
 	var tests = []struct {
@@ -86,52 +67,41 @@ func Test_operator_moveActionList_sort(t *testing.T) {
 }
 
 func Test_operator_move(t *testing.T) {
-	c, _ := newTestShardServer("foo.bar2", "127.0.0.1:8802", []string{"127.0.0.1:2379"}, ":8802")
-	sc := smContainer{Container: c}
-
 	o := operator{lg: ttLogger, service: "foo.bar"}
-	o.parent = &sc
 	o.httpClient = newHttpClient()
 
 	time.Sleep(3 * time.Second)
 
 	// ./etcdctl put /bd/app/foo.bar/task '[{"service":"foo.bar","shardId":"1","dropEndpoint":"","addEndpoint":"127.0.0.1:8889","allowDrop":false}]'
 	value := `[{"service":"foo.bar","shardId":"1","dropEndpoint":"","addEndpoint":"127.0.0.1:8889","allowDrop":false}]`
-	o.move(context.TODO(), []byte(value))
+	mal := moveActionList{}
+	json.Unmarshal([]byte(value), &mal)
+	o.move(moveActionList{})
 
 	stopch := make(chan struct{})
 	<-stopch
 }
 
 func Test_operator_dropOrAdd(t *testing.T) {
-	c, _ := newTestShardServer("foo.bar2", "127.0.0.1:8802", []string{"127.0.0.1:2379"}, ":8802")
-	sc := smContainer{Container: c}
-
 	o := operator{lg: ttLogger}
-	o.parent = &sc
 	o.httpClient = newHttpClient()
 
 	ma := moveAction{
 		Service:     "foo.bar",
 		ShardId:     "1",
 		AddEndpoint: "127.0.0.1:8889",
-		AllowDrop:   true,
 	}
-	o.dropOrAdd(context.TODO(), &ma)
+	o.dropOrAdd(&ma)
 
 	stopch := make(chan struct{})
 	<-stopch
 }
 
 func Test_operator_send(t *testing.T) {
-	c, _ := newTestShardServer("foo.bar2", "127.0.0.1:8802", []string{"127.0.0.1:2379"}, ":8802")
-	sc := smContainer{Container: c}
-
 	o := operator{lg: ttLogger}
-	o.parent = &sc
 	o.httpClient = newHttpClient()
 
-	if err := o.send(context.TODO(), "1", &apputil.ShardSpec{}, "127.0.0.1:8889", "add"); err != nil {
+	if err := o.send("1", &apputil.ShardSpec{}, "127.0.0.1:8889", "add"); err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
 	}

@@ -35,7 +35,7 @@ import (
 // Container 1 上报container的load信息，保证container的liveness，才能够参与shard的分配
 // 2 与sm交互，下发add和drop给到Shard
 type Container struct {
-	Client  *etcdutil.EtcdClient
+	Client  etcdutil.EtcdWrapper
 	Session *concurrency.Session
 	stopper *GoroutineStopper
 
@@ -194,9 +194,19 @@ func (c *Container) Service() string {
 	return c.service
 }
 
+// SetService 4 unit test
+func (c *Container) SetService(s string) {
+	c.service = s
+}
+
 type Heartbeat struct {
 	// Timestamp sm中用于计算container删除事件的等待时间
 	Timestamp int64 `json:"timestamp"`
+}
+
+func (s *Heartbeat) String() string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
 
 type ContainerHeartbeat struct {
@@ -251,7 +261,7 @@ func (c *Container) UploadSysLoad(ctx context.Context) error {
 	// 利用etcd内置lock，防止container冲突，这个问题在container应该比较少见，做到heartbeat即可，smserver就可以做
 	lockPfx := EtcdPathAppContainerIdHb(c.service, c.id)
 	mutex := concurrency.NewMutex(c.Session, lockPfx)
-	if err := mutex.Lock(c.Client.Client.Ctx()); err != nil {
+	if err := mutex.Lock(c.Client.Ctx()); err != nil {
 		return errors.Wrap(err, "")
 	}
 

@@ -26,12 +26,36 @@ import (
 )
 
 var (
-	defaultOpTimeout = 3 * time.Second
+	_ EtcdWrapper = new(EtcdClient)
+)
 
+var (
+	defaultOpTimeout = 3 * time.Second
+)
+
+var (
 	ErrEtcdNodeExist     = errors.New("etcd: node exist")
 	ErrEtcdValueExist    = errors.New("etcd: value exist")
 	ErrEtcdValueNotMatch = errors.New("etcd: value not match")
 )
+
+// EtcdWrapper 4 unit test
+// etcd的方法已经是通过interface开放出来，这里进行二次封装
+type EtcdWrapper interface {
+	GetKV(_ context.Context, node string, opts []clientv3.OpOption) (*clientv3.GetResponse, error)
+	GetKVs(ctx context.Context, prefix string) (map[string]string, error)
+	UpdateKV(ctx context.Context, key string, value string) error
+	DelKV(ctx context.Context, prefix string) error
+
+	CreateAndGet(ctx context.Context, nodes []string, values []string, leaseID clientv3.LeaseID) error
+	CompareAndSwap(_ context.Context, node string, curValue string, newValue string, leaseID clientv3.LeaseID) (string, error)
+
+	Ctx() context.Context
+	Get(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error)
+	Put(ctx context.Context, key, val string, opts ...clientv3.OpOption) (*clientv3.PutResponse, error)
+	Delete(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.DeleteResponse, error)
+	Watch(ctx context.Context, key string, opts ...clientv3.OpOption) clientv3.WatchChan
+}
 
 type EtcdClient struct {
 	*clientv3.Client

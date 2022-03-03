@@ -16,7 +16,6 @@ package smserver
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -34,9 +33,6 @@ type moveAction struct {
 	ShardId      string `json:"shardId"`
 	DropEndpoint string `json:"dropEndpoint"`
 	AddEndpoint  string `json:"addEndpoint"`
-
-	// AllowDrop container场景下，leader的init操作可以放弃
-	AllowDrop bool `json:"allowDrop"`
 
 	// Spec 存储分片具体信息
 	Spec *apputil.ShardSpec `json:"spec"`
@@ -63,10 +59,9 @@ func (l moveActionList) Swap(i, j int) {
 	l[i], l[j] = l[j], l[i]
 }
 
-// container和shard上报两个维度的load，leader(sm)或者shard(app)探测到异常，会发布任务出来，operator就是这个任务的执行者
+// operator 负责下发http请求
 type operator struct {
-	parent *smContainer
-	lg     *zap.Logger
+	lg *zap.Logger
 
 	// operator 属于接入业务的service
 	service string
@@ -74,34 +69,20 @@ type operator struct {
 	httpClient *http.Client
 }
 
-func newOperator(lg *zap.Logger, sc *smContainer, service string) *operator {
-	op := operator{
+func newOperator(lg *zap.Logger, service string) *operator {
+	return &operator{
 		lg:         lg,
-		parent:     sc,
 		service:    service,
 		httpClient: newHttpClient(),
 	}
-
-	lg.Info(
-		"operator started",
-		zap.String("service", service),
-	)
-
-	return &op
 }
 
-// 保证at least once
-func (o *operator) move(ctx context.Context, value []byte) error {
-	var mal moveActionList
-	if err := json.Unmarshal(value, &mal); err != nil {
-		o.lg.Error("failed to unmarshal",
-			zap.ByteString("value", value),
-			zap.Error(err),
-		)
-		// return ASAP unmarshal失败重试没意义，需要人工接入进行数据修正
-		return errors.Wrap(err, "")
-	}
-	o.lg.Info("receive move action list", zap.Reflect("mal", mal))
+// move 明确参数类型，预防编程错误
+func (o *operator) move(mal moveActionList) error {
+	o.lg.Info(
+		"start move",
+		zap.Reflect("mal", mal),
+	)
 
 	var (
 		// 增加重试机制
@@ -118,11 +99,14 @@ func (o *operator) move(ctx context.Context, value []byte) error {
 		for _, ma := range mal {
 			ma := ma
 			g.Go(func() error {
-				return o.dropOrAdd(ctx, ma)
+				return o.dropOrAdd(ma)
 			})
 		}
 		if err := g.Wait(); err != nil {
-			o.lg.Error("dropOrAdd err", zap.Error(err))
+			o.lg.Error(
+				"Wait err",
+				zap.Error(err),
+			)
 			counter++
 		} else {
 			succ = true
@@ -130,56 +114,35 @@ func (o *operator) move(ctx context.Context, value []byte) error {
 		}
 	}
 
-	valueStr := string(value)
-
 	o.lg.Info(
 		"complete move",
 		zap.Bool("succ", succ),
-		zap.String("value", valueStr),
+		zap.Reflect("mal", mal),
 	)
 	return nil
 }
 
-func (o *operator) dropOrAdd(ctx context.Context, ma *moveAction) error {
-	var (
-		onlyAdd  bool
-		onlyDrop bool
-	)
-
+func (o *operator) dropOrAdd(ma *moveAction) error {
 	if ma.DropEndpoint != "" {
-		if err := o.send(ctx, ma.ShardId, ma.Spec, ma.DropEndpoint, "drop"); err != nil {
+		if err := o.send(ma.ShardId, ma.Spec, ma.DropEndpoint, "drop"); err != nil {
 			return errors.Wrap(err, "")
 		}
-	} else {
-		onlyAdd = true
 	}
 
 	if ma.AddEndpoint != "" {
-		if err := o.send(ctx, ma.ShardId, ma.Spec, ma.AddEndpoint, "add"); err != nil {
-			if !ma.AllowDrop {
-				return errors.Wrap(err, "")
-			}
-
-			o.lg.Error("failed to add",
-				zap.Error(err),
-				zap.Reflect("value", ma),
-			)
-			return nil
+		if err := o.send(ma.ShardId, ma.Spec, ma.AddEndpoint, "add"); err != nil {
+			return errors.Wrap(err, "")
 		}
-	} else {
-		onlyDrop = true
 	}
 
 	o.lg.Info(
-		"move shard request success",
+		"dropOrAdd success",
 		zap.Reflect("ma", ma),
-		zap.Bool("onlyAdd", onlyAdd),
-		zap.Bool("onlyDrop", onlyDrop),
 	)
 	return nil
 }
 
-func (o *operator) send(_ context.Context, id string, spec *apputil.ShardSpec, endpoint string, action string) error {
+func (o *operator) send(id string, spec *apputil.ShardSpec, endpoint string, action string) error {
 	msg := apputil.ShardMessage{Id: id, Spec: spec}
 	b, err := json.Marshal(msg)
 	if err != nil {
@@ -201,18 +164,14 @@ func (o *operator) send(_ context.Context, id string, spec *apputil.ShardSpec, e
 	rb, _ := ioutil.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return errors.Errorf("[operator] FAILED to %s move shard %s, not 200", action, id)
+		return errors.Errorf("FAILED to %s move shard %s, not 200", action, id)
 	}
 
-	o.lg.Info("http request success",
+	o.lg.Info(
+		"send success",
 		zap.String("urlStr", urlStr),
-		zap.Reflect("request", msg),
+		zap.Reflect("msg", msg),
 		zap.ByteString("response", rb),
 	)
 	return nil
-}
-
-func (o *operator) Scale() {
-	// TODO
-	panic("unsupported Scale")
 }

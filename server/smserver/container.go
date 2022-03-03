@@ -32,136 +32,152 @@ var (
 	_ apputil.ShardInterface = new(smContainer)
 )
 
+// smContainer 竞争leader，管理sm整个集群
 type smContainer struct {
 	*apputil.Container
 
-	// 容器的唯一标记，是container在sm的唯一标记，每次启动得保持不变，防止在分配shard时有问题
-	id string
-
-	// 所属业务标记，在etcd中作为数据隔离的path
-	service string
-
-	// 管理自己的goroutine
-	stopper *apputil.GoroutineStopper
-
 	lg *zap.Logger
-
-	// 保证sm运行健康的goroutine，通过task节点下发任务给op
-	lw *Worker
-
-	mu         sync.Mutex
-	idAndShard map[string]*smShard
-
-	// 利用 stopper 实现的graceful stop，container进入stopped状态
-	stopped bool
-
 	// nodeManager 管理 smContainer 内部的etcd节点的pfx
 	nodeManager *nodeManager
+
+	// mu 保护closed和shards
+	mu sync.Mutex
+	// closing 利用 stopper 实现的graceful stop，container进入stopped状态
+	closing bool
+	// shards 存储分片
+	shards map[string]Shard
+
+	// stopper 管理campaign
+	stopper *apputil.GoroutineStopper
+
+	// leaderShard 保证sm运行健康的goroutine，通过task节点下发任务给op
+	leaderShard *smShard
+
+	// shardWrapper 4 unit test，隔离shard和container
+	shardWrapper ShardWrapper
 }
 
-func newSMContainer(lg *zap.Logger, id, service string, c *apputil.Container) (*smContainer, error) {
-	sc := smContainer{
+func newSMContainer(lg *zap.Logger, c *apputil.Container) (*smContainer, error) {
+	container := smContainer{
 		lg:        lg,
-		id:        id,
-		service:   service,
 		Container: c,
 
-		stopper:     &apputil.GoroutineStopper{},
-		idAndShard:  make(map[string]*smShard),
-		nodeManager: &nodeManager{smService: service},
+		stopper:      &apputil.GoroutineStopper{},
+		shards:       make(map[string]Shard),
+		nodeManager:  &nodeManager{smService: c.Service()},
+		shardWrapper: &smShardWrapper{},
 	}
 	// 判断sm的spec是否存在,如果不存在，那么进行创建,可以通过接口进行参数更改
+	spec := smAppSpec{Service: c.Service(), CreateTime: time.Now().Unix()}
 	if err := c.Client.CreateAndGet(
-		context.Background(),
-		[]string{sc.nodeManager.nodeServiceSpec(sc.Service())},
-		[]string{(&smAppSpec{Service: service, CreateTime: time.Now().Unix()}).String()},
-		clientv3.NoLease); err != nil && err != etcdutil.ErrEtcdNodeExist {
+		context.TODO(),
+		[]string{container.nodeManager.nodeServiceSpec(container.Service())},
+		[]string{spec.String()},
+		clientv3.NoLease,
+	); err != nil && err != etcdutil.ErrEtcdNodeExist {
 		return nil, errors.Wrap(err, "")
 	}
 
-	sc.stopper.Wrap(
+	container.stopper.Wrap(
 		func(ctx context.Context) {
-			sc.campaign(ctx)
+			container.campaign(ctx)
 		},
 	)
 
-	return &sc, nil
+	return &container, nil
 }
 
-func (c *smContainer) Service() string {
-	return c.service
-}
-
-func (c *smContainer) GetShard(service string) (*smShard, error) {
+func (c *smContainer) GetShard(service string) (Shard, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	ss, ok := c.idAndShard[service]
+	ss, ok := c.shards[service]
 	if !ok {
 		return nil, errors.New("not exist")
 	}
 	return ss, nil
 }
 
-func (c *smContainer) Close() {
+func (c *smContainer) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.stopped = true
-
-	if c.lw != nil {
-		c.lw.Close()
+	// 保证只被停止一次
+	if c.closing {
+		return apputil.ErrClosing
 	}
+	c.closing = true
 
-	// stop smShard
-	for _, s := range c.idAndShard {
+	// 回收sm当前container负责的分片，后面关闭可能的leader身份，
+	// 既然处于关闭状态，也不能再接收shard的移动请求，但是此时http api可能还在工作，
+	// 其他选举出来的leader可能会下发失败的请求，最大限度避免掉。
+	for _, s := range c.shards {
 		s.Close()
 	}
 
-	c.lg.Info("container closed",
-		zap.String("id", c.id),
-		zap.String("service", c.service),
+	// 需要判断是否为nil，worker是在竞选leader时初始化的
+	if c.leaderShard != nil {
+		// stopper的Close会导致leader的重新选举，新的leader开启rebalance，
+		// 尽量防止两个leader的工作在运行，所以worker的停止要在stopper之后
+		c.leaderShard.Close()
+	}
+
+	// 放弃leader竞选的工作，在资源回收之前，保证自己还是leader
+	if c.stopper != nil {
+		c.stopper.Close()
+	}
+
+	c.lg.Info(
+		"smContainer closing",
+		zap.String("id", c.Id()),
+		zap.String("service", c.Service()),
 	)
+	return nil
 }
 
 func (c *smContainer) Add(id string, spec *apputil.ShardSpec) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.stopped {
-		c.lg.Info("container closed, give up add",
+	if c.closing {
+		c.lg.Info("container closing, give up add",
 			zap.String("id", id),
-			zap.String("service", c.service),
+			zap.String("service", c.Service()),
+			zap.Reflect("spec", spec),
 		)
-		return nil
+		// 4 unit test 提升代码分支可测试性
+		// 异常情况不吞掉，反馈给server端，server端也不会一直重试，而是等待下次rebalance
+		return apputil.ErrClosing
 	}
 
-	ss, ok := c.idAndShard[id]
+	sd, ok := c.shards[id]
 	if ok {
-		if ss.Spec().Task == spec.Task {
-			c.lg.Info("shard already existed and task not changed",
+		if sd.Spec().Task == spec.Task {
+			c.lg.Info("shard existed and task not changed",
 				zap.String("id", id),
-				zap.String("service", c.service),
-				zap.String("task", spec.Task),
+				zap.String("service", c.Service()),
+				zap.Reflect("spec", spec),
 			)
-			return nil
+			// 4 unit test 提升代码分支可测试性
+			return apputil.ErrExist
 		}
 
 		// 判断是否需要更新shard的工作内容，task有变更停掉当前shard，重新启动
-		if ss.Spec().Task != spec.Task {
-			ss.Close()
+		if sd.Spec().Task != spec.Task {
+			sd.Close()
 			c.lg.Info("shard task changed, current shard closed",
 				zap.String("id", id),
-				zap.String("cur", ss.Spec().Task),
+				zap.String("cur", sd.Spec().Task),
 				zap.String("new", spec.Task),
 			)
 		}
 	}
 
-	shard, err := newShard(c.lg, c, id, spec)
+	spec.Id = id
+	shard, err := c.shardWrapper.NewShard(c, spec)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
-	c.idAndShard[id] = shard
+	c.shards[id] = shard
 	c.lg.Info("shard added",
 		zap.String("id", id),
 		zap.Reflect("spec", *spec),
@@ -173,22 +189,30 @@ func (c *smContainer) Drop(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.stopped {
-		c.lg.Info("container closed, give up drop",
+	if c.closing {
+		c.lg.Info("container closing, give up drop",
 			zap.String("id", id),
-			zap.String("service", c.service),
+			zap.String("service", c.Service()),
 		)
-		return nil
+		return apputil.ErrClosing
 	}
 
-	sd, ok := c.idAndShard[id]
+	sd, ok := c.shards[id]
 	if !ok {
-		c.lg.Info("shard not existed", zap.String("id", id))
-		return errors.Wrap(errNotExist, "")
+		c.lg.Info(
+			"shard not existed",
+			zap.String("id", id),
+			zap.String("service", c.Service()),
+		)
+		return apputil.ErrNotExist
 	}
 	sd.Close()
-	delete(c.idAndShard, id)
-	c.lg.Info("shard dropped", zap.String("id", id))
+	delete(c.shards, id)
+	c.lg.Info(
+		"shard dropped",
+		zap.String("id", id),
+		zap.String("service", c.Service()),
+	)
 	return nil
 }
 
@@ -196,22 +220,27 @@ func (c *smContainer) Load(id string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.stopped {
-		c.lg.Info("container closed, give up load",
+	if c.closing {
+		c.lg.Info("container closing, give up load",
 			zap.String("id", id),
-			zap.String("service", c.service),
+			zap.String("service", c.Service()),
 		)
-		return "", nil
+		return "", apputil.ErrClosing
 	}
 
-	sd, ok := c.idAndShard[id]
+	sd, ok := c.shards[id]
 	if !ok {
-		c.lg.Warn("shard not exist", zap.String("id", id))
-		return "", errors.Wrap(errNotExist, "")
+		c.lg.Warn(
+			"shard not exist",
+			zap.String("id", id),
+			zap.String("service", c.Service()),
+		)
+		return "", apputil.ErrNotExist
 	}
-	load := sd.GetLoad()
+	load := sd.Load()
 	c.lg.Debug("get load success",
 		zap.String("id", id),
+		zap.String("service", c.Service()),
 		zap.String("load", load),
 	)
 	return load, nil
@@ -232,17 +261,18 @@ func (c *smContainer) campaign(ctx context.Context) {
 	loop:
 		select {
 		case <-ctx.Done():
-			c.lg.Info("leader exit campaign", zap.String("service", c.service))
+			c.lg.Info("leader exit campaign", zap.String("service", c.Service()))
 			return
 		default:
 		}
 
 		leaderNodePrefix := c.nodeManager.nodeSMLeader()
-		lvalue := leaderEtcdValue{ContainerId: c.id, CreateTime: time.Now().Unix()}
+		lvalue := leaderEtcdValue{ContainerId: c.Id(), CreateTime: time.Now().Unix()}
 		election := concurrency.NewElection(c.Session, leaderNodePrefix)
 		if err := election.Campaign(ctx, lvalue.String()); err != nil {
-			c.lg.Error("failed to campaign",
-				zap.String("service", c.service),
+			c.lg.Error(
+				"Campaign error",
+				zap.String("service", c.Service()),
 				zap.Error(err),
 			)
 			time.Sleep(defaultSleepTimeout)
@@ -253,29 +283,37 @@ func (c *smContainer) campaign(ctx context.Context) {
 			zap.Int64("lease", int64(c.Session.Lease())),
 		)
 
-		// leader启动时，等待一个时间段，方便所有container做至少一次heartbeat，然后开始监测是否需要进行container和shard映射关系的变更。
-		// etcd sdk中keepalive的请求发送时间时500ms，5s>>500ms，认为这个时间段内，所有container都会发heartbeat，不存在的就认为没有任务。
-		time.Sleep(defaultMaxRecoveryTime)
+		// leader有几种情况会重新选举：
+		// 1 重启
+		// 2 和etcd之间网络问题
+		//
+		// 新的leader诞生后，面临的整体container的状态：
+		// container也在发布中，存活的数量不确定，发布的并行度（推荐是1，虽然在worker给container提供重启时间，但会引起事件排队增加worker负载，这里没做过压测）
+		//
+		// leader更换，需要重新构建mapper(存活container)，最差情况是一个container不存活，触发rebalance，
+		// 旧的container加回来，发现不能lock shard，剔除掉shard即可，所以这块不用等待
 
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/sm/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
+		st := shardTask{GovernedService: c.Service()}
+		spec := apputil.ShardSpec{Service: c.Service(), Task: st.String()}
 		var err error
-		c.lw, err = newWorker(c.lg, c, c.service)
+		c.leaderShard, err = newSMShard(c, &spec)
 		if err != nil {
 			c.lg.Error(
-				"newWorker error",
-				zap.String("service", c.service),
+				"newSMShard error",
+				zap.String("service", c.Service()),
 				zap.Error(err),
 			)
 			goto loop
 		}
 
 		// block until出现需要放弃leader职权的事件
-		c.lg.Info("leader completed op", zap.String("service", c.service))
+		c.lg.Info("leader completed op", zap.String("service", c.Service()))
 		select {
 		case <-ctx.Done():
-			c.lg.Info("leader exit", zap.String("service", c.service))
-			c.lw = nil
+			c.lg.Info("leader exit", zap.String("service", c.Service()))
+			c.leaderShard = nil
 			return
 		}
 	}

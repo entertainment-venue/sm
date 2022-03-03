@@ -40,11 +40,12 @@ const (
 // 2. 参考chubby，master在rb这块，允许分片节点上报自己负责的分片，类似于chunkserver
 // 3. 代理mw对etcd的访问，分摊部分mw的逻辑
 type mapper struct {
-	lg        *zap.Logger
 	container *smContainer
+	lg        *zap.Logger
 
 	// appSpec 配置中有container单节点恢复阈值，影响当前service事件处理的方式
-	appSpec         *smAppSpec
+	appSpec *smAppSpec
+	// maxRecoveryTime 应对集群滚动重启场景，等待出现del事件出现，等待一段时间后，尝试恢复动作，减少
 	maxRecoveryTime time.Duration
 
 	mu sync.Mutex
@@ -60,10 +61,10 @@ type mapper struct {
 	stopper *apputil.GoroutineStopper
 }
 
-func newMapper(lg *zap.Logger, container *smContainer, appSpec *smAppSpec) (*mapper, error) {
+func newMapper(container *smContainer, appSpec *smAppSpec) (*mapper, error) {
 	mpr := mapper{
-		lg:        lg,
 		container: container,
+		lg:        container.lg,
 		appSpec:   appSpec,
 		stopper:   &apputil.GoroutineStopper{},
 	}
@@ -71,7 +72,7 @@ func newMapper(lg *zap.Logger, container *smContainer, appSpec *smAppSpec) (*map
 	mpr.shardState = newMapperState(&mpr, shardTrigger)
 
 	trigger, _ := evtrigger.NewTrigger(
-		evtrigger.WithLogger(lg),
+		evtrigger.WithLogger(mpr.lg),
 		evtrigger.WithWorkerSize(triggerWorkerSize),
 	)
 	mpr.trigger = trigger
@@ -135,7 +136,7 @@ func (lm *mapper) initAndWatch(typ string) error {
 			apputil.WatchLoop(
 				ctx,
 				lm.lg,
-				lm.container.Client.Client,
+				lm.container.Client,
 				pfx,
 				startRev,
 				func(ctx context.Context, ev *clientv3.Event) error {
@@ -318,18 +319,18 @@ func (s *mapperState) Create(id string, value []byte) error {
 func (s *mapperState) create(id string, value []byte) error {
 	switch s.typ {
 	case shardTrigger:
-		var t apputil.ShardHeartbeat
-		if err := json.Unmarshal(value, &t); err != nil {
+		var hb apputil.ShardHeartbeat
+		if err := json.Unmarshal(value, &hb); err != nil {
 			return errors.Wrap(err, string(value))
 		}
-		s.alive[id] = newTemporary(t.Timestamp)
-		s.alive[id].curContainerId = t.ContainerId
+		s.alive[id] = newTemporary(hb.Timestamp)
+		s.alive[id].curContainerId = hb.ContainerId
 	default:
-		var t apputil.Heartbeat
-		if err := json.Unmarshal(value, &t); err != nil {
+		var hb apputil.Heartbeat
+		if err := json.Unmarshal(value, &hb); err != nil {
 			return errors.Wrap(err, string(value))
 		}
-		s.alive[id] = newTemporary(t.Timestamp)
+		s.alive[id] = newTemporary(hb.Timestamp)
 	}
 
 	s.mpr.lg.Info(

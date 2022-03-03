@@ -15,24 +15,33 @@
 package smserver
 
 import (
-	"context"
 	"reflect"
 	"testing"
 	"time"
 
-	"go.etcd.io/etcd/api/v3/mvccpb"
-	clientv3 "go.etcd.io/etcd/client/v3"
+	"github.com/entertainment-venue/sm/pkg/apputil"
 	"go.uber.org/zap"
 )
 
+func Test_shardTask(t *testing.T) {
+	task := &shardTask{GovernedService: ""}
+	if task.Validate() {
+		t.Error("Validate should be false")
+		t.SkipNow()
+	}
+}
+
 func Test_newMaintenanceWorker(t *testing.T) {
-	ctr, err := newSMContainer(ttLogger, "127.0.0.1:8888", "foo.bar", nil)
+	ctr, err := newSMContainer(ttLogger, nil)
 	if err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
 	}
 
-	mw, _ := newWorker(context.TODO(), ttLogger, ctr, "foo.bar")
+	service := "foo.bar"
+	st := shardTask{GovernedService: service}
+	spec := apputil.ShardSpec{Service: service, Task: st.String()}
+	mw, _ := newSMShard(ctr, &spec)
 
 	time.Sleep(5 * time.Second)
 	mw.Close()
@@ -70,7 +79,7 @@ func Test_changed(t *testing.T) {
 			expect: true,
 		},
 	}
-	mw := Worker{}
+	mw := smShard{}
 	for idx, tt := range tests {
 		if tt.expect != mw.changed(tt.a, tt.b) {
 			t.Errorf("idx %d expect %t", idx, tt.expect)
@@ -103,7 +112,7 @@ func Test_reallocate(t *testing.T) {
 				"s2": "c1",
 			},
 			expect: moveActionList{
-				&moveAction{Service: service, ShardId: "s3", AddEndpoint: "c2", AllowDrop: false},
+				&moveAction{Service: service, ShardId: "s3", AddEndpoint: "c2"},
 			},
 		},
 
@@ -122,7 +131,7 @@ func Test_reallocate(t *testing.T) {
 				"s2": "c1",
 			},
 			expect: moveActionList{
-				&moveAction{Service: service, ShardId: "s1", DropEndpoint: "c1", AddEndpoint: "c2", AllowDrop: false},
+				&moveAction{Service: service, ShardId: "s1", DropEndpoint: "c1", AddEndpoint: "c2"},
 			},
 		},
 
@@ -193,53 +202,13 @@ func Test_reallocate(t *testing.T) {
 	}
 
 	logger, _ := zap.NewDevelopment()
-	w := Worker{service: "foo.bar", lg: logger}
+	w := smShard{service: "foo.bar", lg: logger}
 
 	for idx, tt := range tests {
-		r := w.rebalance(tt.fixShardIdAndManualContainerId, tt.hbContainerIdAndAny, tt.hbShardIdAndContainerId)
+		r := w.rebalance(tt.fixShardIdAndManualContainerId, tt.hbContainerIdAndAny, tt.hbShardIdAndContainerId, nil)
 		if !reflect.DeepEqual(r, tt.expect) {
 			t.Errorf("idx: %d actual: %s, expect: %s", idx, r.String(), tt.expect.String())
 			t.SkipNow()
 		}
 	}
-}
-
-func Test_shardLoadChecker(t *testing.T) {
-	eq := newTaskProcessor(ttLogger, nil)
-
-	ev := clientv3.Event{
-		Type: mvccpb.DELETE,
-		Kv:   &mvccpb.KeyValue{},
-	}
-
-	mw := Worker{}
-
-	if err := mw.shardLoadChecker(context.TODO(), &ev); err != nil {
-		t.Errorf("err: %v", err)
-		t.SkipNow()
-	}
-
-	time.Sleep(5 * time.Second)
-
-	eq.Close()
-}
-
-func Test_containerLoadChecker(t *testing.T) {
-	eq := newTaskProcessor(ttLogger, nil)
-
-	ev := clientv3.Event{
-		Type: mvccpb.DELETE,
-		Kv:   &mvccpb.KeyValue{},
-	}
-
-	mw := Worker{}
-
-	if err := mw.containerLoadChecker(context.TODO(), &ev); err != nil {
-		t.Errorf("err: %v", err)
-		t.SkipNow()
-	}
-
-	time.Sleep(5 * time.Second)
-
-	eq.Close()
 }

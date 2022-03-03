@@ -40,7 +40,7 @@ type shardKeeper struct {
 	// 以下字段从ShardServer初始化
 	service   string
 	shardImpl ShardInterface
-	client    *etcdutil.EtcdClient
+	client    etcdutil.EtcdWrapper
 	session   *concurrency.Session
 
 	// Unlock保证使用的相同mutex，否则myKey设定不上
@@ -217,9 +217,13 @@ func (sk *shardKeeper) sync() error {
 }
 
 func (sk *shardKeeper) Close() {
-	// sk.stopper.Close()
-	// sk.trigger.Close()
-	// _ = sk.db.Close()
+	sk.stopper.Close()
+	sk.trigger.Close()
+	_ = sk.db.Close()
+	sk.lg.Info(
+		"active closed",
+		zap.String("service", sk.service),
+	)
 }
 
 func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
@@ -237,7 +241,7 @@ func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
 		// 1 lock失效，并已经下发给调用方，此处逻辑以boltdb中的shard为准，lock失效会触发shardKeeper的Close，
 		spec := tv.Spec
 		opErr = sk.shardImpl.Add(shardId, spec)
-		if opErr == nil {
+		if opErr == nil || opErr == ErrExist {
 			// 下发成功后更新boltdb
 			tv.Disp = true
 			err := sk.db.Update(func(tx *bolt.Tx) error {
@@ -256,7 +260,7 @@ func (sk *shardKeeper) Dispatch(typ string, value interface{}) error {
 		}
 	case dropTrigger:
 		opErr = sk.shardImpl.Drop(shardId)
-		if opErr == nil {
+		if opErr == nil || opErr == ErrNotExist {
 			if err := sk.unlock(shardId); err != nil {
 				return errors.Wrap(err, "")
 			}
@@ -302,7 +306,7 @@ func (sk *shardKeeper) lock(shardId string) error {
 
 	lockPfx := EtcdPathAppShardHbId(sk.service, shardId)
 	mutex := concurrency.NewMutex(sk.session, lockPfx)
-	if err := mutex.Lock(sk.client.Client.Ctx()); err != nil {
+	if err := mutex.Lock(sk.client.Ctx()); err != nil {
 		// lock被占用
 		if err == concurrency.ErrLocked {
 			// opt: 确认lock被占用，清理掉本地shard

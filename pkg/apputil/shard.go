@@ -37,11 +37,21 @@ const (
 	ShardActionDelete ShardAction = iota + 1
 )
 
+var (
+	ErrClosing  = errors.New("closing")
+	ErrExist    = errors.New("exist")
+	ErrNotExist = errors.New("not exist")
+)
+
 type ShardSpec struct {
-	// 存储下，方便开发
+	// Id 方法传递的时候可以内容可以自识别，否则，添加分片相关的方法的生命一般是下面的样子：
+	// newShard(id string, spec *apputil.ShardSpec)
+	Id string `json:"id"`
+
+	// Service 标记自己所在服务，不需要去etcd路径中解析，增加spec的描述性质
 	Service string `json:"service"`
 
-	// 任务内容
+	// Task service管理的分片任务内容
 	Task string `json:"task"`
 
 	UpdateTime int64 `json:"updateTime"`
@@ -53,7 +63,7 @@ type ShardSpec struct {
 	// 这些shard之间不相关的balance到现有container上
 	Group string `json:"group"`
 
-	// ActionType 标记当前ShardSpec所处状态，smserver删除分片
+	// Action 标记当前ShardSpec所处状态，smserver删除分片
 	Action ShardAction `json:"action"`
 }
 
@@ -253,7 +263,7 @@ func NewShardServer(opts ...ShardServerOption) (*ShardServer, error) {
 					// lock: 失败场景打印日志，不影响其他shard的heartbeat
 					lockPfx := EtcdPathAppShardHbId(ss.opts.container.Service(), id)
 					mutex := concurrency.NewMutex(session, lockPfx)
-					if err := mutex.Lock(ss.opts.container.Client.Client.Ctx()); err != nil {
+					if err := mutex.Lock(ss.opts.container.Client.Ctx()); err != nil {
 						if err == rpctypes.ErrLeaseNotFound {
 							ops.lg.Info(
 								"lock released",
@@ -374,7 +384,7 @@ func (ss *ShardServer) Close() {
 	ss.close()
 
 	ss.opts.lg.Info(
-		"shardserver: closed",
+		"active closed",
 		zap.String("service", ss.opts.container.Service()),
 	)
 }
@@ -382,12 +392,10 @@ func (ss *ShardServer) Close() {
 func (ss *ShardServer) close() {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
+
 	if ss.closed {
 		return
 	}
-
-	// TODO ctx在interface中限定，但是没有用处
-	ctx := context.TODO()
 
 	// 保证shard回收的手段，允许调用方启动for不断尝试重新加入存活container中
 	// FIXME session会触发drop动作，不允许失败，但也是潜在风险，一般的sdk使用者，不了解close的机制
@@ -405,7 +413,7 @@ func (ss *ShardServer) close() {
 	ss.keeper.Close()
 
 	if ss.srv != nil {
-		if err := ss.srv.Shutdown(ctx); err != nil {
+		if err := ss.srv.Shutdown(context.TODO()); err != nil {
 			ss.opts.lg.Error(
 				"Shutdown error",
 				zap.Error(err),
@@ -423,7 +431,10 @@ func (ss *ShardServer) close() {
 	}
 	close(ss.donec)
 
-	ss.opts.lg.Info("shard server closed", zap.String("service", ss.opts.container.Service()))
+	ss.opts.lg.Info(
+		"close completed",
+		zap.String("service", ss.opts.container.Service()),
+	)
 }
 
 func (ss *ShardServer) Done() <-chan struct{} {

@@ -28,15 +28,9 @@ import (
 	"go.uber.org/zap"
 )
 
-type shardServer struct {
-	container *smContainer
-
-	lg *zap.Logger
-}
-
 type smAppSpec struct {
 	// Service 目前app的spec更多承担的是管理职能，shard配置的一个起点，先只配置上service，可以唯一标记一个app
-	Service string `json:"service" binding:"required"`
+	Service string `json:"service"`
 
 	CreateTime int64 `json:"createTime"`
 
@@ -52,6 +46,16 @@ func (s *smAppSpec) String() string {
 	return string(b)
 }
 
+type smShardApi struct {
+	container *smContainer
+
+	lg *zap.Logger
+}
+
+func newSMShardApi(container *smContainer) *smShardApi {
+	return &smShardApi{container: container, lg: container.lg}
+}
+
 // @Description add spec
 // @Tags  spec
 // @Accept  json
@@ -59,7 +63,7 @@ func (s *smAppSpec) String() string {
 // @Param param body smAppSpec true "param"
 // @success 200
 // @Router /sm/server/add-spec [post]
-func (ss *shardServer) GinAddSpec(c *gin.Context) {
+func (ss *smShardApi) GinAddSpec(c *gin.Context) {
 	var req smAppSpec
 	if err := c.ShouldBind(&req); err != nil {
 		ss.lg.Error("ShouldBind err", zap.Error(err))
@@ -70,7 +74,7 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 	ss.lg.Info("receive add spec request", zap.Reflect("request", req))
 
 	// sm的service是保留service，在程序启动的时候初始化
-	if req.Service == ss.container.service {
+	if req.Service == ss.container.Service() {
 		err := errors.Errorf("Same as shard manager's service")
 		ss.lg.Error("service error", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -90,7 +94,7 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 	// 需要将service注册到sm的spec中
 	t := shardTask{GovernedService: req.Service}
 	v := apputil.ShardSpec{
-		Service:    ss.container.service,
+		Service:    ss.container.Service(),
 		Task:       t.String(),
 		UpdateTime: time.Now().Unix(),
 	}
@@ -116,7 +120,7 @@ func (ss *shardServer) GinAddSpec(c *gin.Context) {
 // @Param service query string true "param"
 // @success 200
 // @Router /sm/server/del-spec [get]
-func (ss *shardServer) GinDelSpec(c *gin.Context) {
+func (ss *smShardApi) GinDelSpec(c *gin.Context) {
 
 	// 策略是停掉worker、删除etcd中的分片，service自己停掉服务即可
 	// 如果关注service正在运行，设计过于复杂，service中的shard如果部分存活状态，很难做到graceful，需要人工介入
@@ -132,10 +136,10 @@ func (ss *shardServer) GinDelSpec(c *gin.Context) {
 		return
 	}
 	// 不允许删除sm
-	if service == ss.container.service {
+	if service == ss.container.Service() {
 		err := errors.Errorf("param error")
 		ss.lg.Error(
-			"try to delete sm",
+			"same as shard manager's service",
 			zap.String("service", service),
 		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -153,7 +157,7 @@ func (ss *shardServer) GinDelSpec(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	shard.worker.Close()
+	shard.Close()
 
 	// 清除etcd数据
 	pfx := ss.container.nodeManager.nodeServiceShard(ss.container.Service(), service)
@@ -174,7 +178,7 @@ func (ss *shardServer) GinDelSpec(c *gin.Context) {
 // @Produce  json
 // @success 200
 // @Router /sm/server/get-spec [get]
-func (ss *shardServer) GinGetSpec(c *gin.Context) {
+func (ss *smShardApi) GinGetSpec(c *gin.Context) {
 	pfx := ss.container.nodeManager.nodeServiceShard(ss.container.Service(), "")
 	kvs, err := ss.container.Client.GetKVs(context.Background(), pfx)
 	if err != nil {
@@ -196,7 +200,7 @@ func (ss *shardServer) GinGetSpec(c *gin.Context) {
 // @Param param body smAppSpec true "param"
 // @success 200
 // @Router /sm/server/update-spec [post]
-func (ss *shardServer) GinUpdateSpec(c *gin.Context) {
+func (ss *smShardApi) GinUpdateSpec(c *gin.Context) {
 	var req smAppSpec
 	if err := c.ShouldBind(&req); err != nil {
 		ss.lg.Error("ShouldBind err", zap.Error(err))
@@ -208,7 +212,11 @@ func (ss *shardServer) GinUpdateSpec(c *gin.Context) {
 	//  查询是否存在该service
 	shard, err := ss.container.GetShard(req.Service)
 	if err != nil {
-		ss.lg.Error("update service err", zap.String("service", req.Service), zap.String("err", err.Error()))
+		ss.lg.Error(
+			"update service err",
+			zap.String("service", req.Service),
+			zap.Error(err),
+		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "service not exist"})
 		return
 	}
@@ -224,8 +232,8 @@ func (ss *shardServer) GinUpdateSpec(c *gin.Context) {
 		return
 	}
 	//  更新sm container内存中的值
-	shard.worker.SetMaxShardCount(req.MaxShardCount)
-	shard.worker.SetMaxRecoveryTime(req.MaxRecoveryTime)
+	shard.SetMaxShardCount(req.MaxShardCount)
+	shard.SetMaxRecoveryTime(req.MaxRecoveryTime)
 
 	ss.lg.Info("update spec success", zap.String("pfx", pfx))
 	c.JSON(http.StatusOK, gin.H{})
@@ -258,25 +266,28 @@ func (r *addShardRequest) String() string {
 // @Param param body addShardRequest true "param"
 // @success 200
 // @Router /sm/server/add-shard [post]
-func (ss *shardServer) GinAddShard(c *gin.Context) {
+func (ss *smShardApi) GinAddShard(c *gin.Context) {
 	var req addShardRequest
 	if err := c.ShouldBind(&req); err != nil {
 		ss.lg.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	ss.lg.Info("receive add shard request", zap.String("request", req.String()))
+	ss.lg.Info(
+		"add shard request",
+		zap.Reflect("req", req),
+	)
 
 	// sm本身的shard是和service添加绑定的，不需要走这个接口
 	if req.Service == ss.container.Service() {
-		err := errors.Errorf("shard manager's service not allow api add shard")
+		err := errors.Errorf("same as shard manager's service")
 		ss.lg.Error("service error", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	// 检查是否存在该service
-	if _, ok := ss.container.idAndShard[req.Service]; !ok {
+	if _, ok := ss.container.shards[req.Service]; !ok {
 		err := errors.Errorf(fmt.Sprintf("service[%s] not exist", req.Service))
 		ss.lg.Error("service error", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -299,7 +310,7 @@ func (ss *shardServer) GinAddShard(c *gin.Context) {
 		values = []string{spec.String()}
 	)
 	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
-		ss.lg.Error("failed to add shard",
+		ss.lg.Error("CreateAndGet error",
 			zap.Error(err),
 			zap.Strings("nodes", nodes),
 			zap.Strings("values", values),
@@ -329,14 +340,14 @@ func (r *delShardRequest) String() string {
 // @success 200
 // @Router /sm/server/del-shard [post]
 // GinDelShard TODO ACL 需要带着key过来做分片的移动，防止跨租户之间有影响
-func (ss *shardServer) GinDelShard(c *gin.Context) {
+func (ss *smShardApi) GinDelShard(c *gin.Context) {
 	var req delShardRequest
 	if err := c.ShouldBind(&req); err != nil {
 		ss.lg.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	ss.lg.Info("receive del shard request", zap.Reflect("request", req))
+	ss.lg.Info("del shard request", zap.Reflect("req", req))
 
 	// 删除shard节点
 	pfx := ss.container.nodeManager.nodeServiceShard(req.Service, req.ShardId)
@@ -373,7 +384,7 @@ func (ss *shardServer) GinDelShard(c *gin.Context) {
 // @Param service query string true "param"
 // @success 200
 // @Router /sm/server/get-shard [get]
-func (ss *shardServer) GinGetShard(c *gin.Context) {
+func (ss *smShardApi) GinGetShard(c *gin.Context) {
 	service := c.Query("service")
 	if service == "" {
 		err := errors.Errorf("param error")
