@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/entertainment-venue/sm/pkg/logutil"
+
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -60,10 +62,14 @@ type EtcdWrapper interface {
 type EtcdClient struct {
 	*clientv3.Client
 
-	lg *zap.Logger
+	lg logutil.Logger
 }
 
 func NewEtcdClient(endpoints []string, lg *zap.Logger) (*EtcdClient, error) {
+	return NewEtcdClientWithCustomLogger(endpoints, logutil.NewZapLogger(lg))
+}
+
+func NewEtcdClientWithCustomLogger(endpoints []string, lg logutil.Logger) (*EtcdClient, error) {
 	if len(endpoints) < 1 {
 		return nil, errors.New("You must provide at least one etcd address")
 	}
