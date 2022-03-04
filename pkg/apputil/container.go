@@ -145,67 +145,76 @@ type containerOptions struct {
 	// etcdPrefix 作为sharded application的数据存储prefix，能通过acl做限制
 	// TODO 配合 etcdPrefix 需要有用户名和密码的字段
 	etcdPrefix string
+
+	// client 允许外部传入
+	client *clientv3.Client
 }
 
 type ContainerOption func(options *containerOptions)
 
-func ContainerWithId(v string) ContainerOption {
+func WithId(v string) ContainerOption {
 	return func(co *containerOptions) {
 		co.id = v
 	}
 }
 
-func ContainerWithService(v string) ContainerOption {
+func WithService(v string) ContainerOption {
 	return func(co *containerOptions) {
 		co.service = v
 	}
 }
 
-func ContainerWithEndpoints(v []string) ContainerOption {
+func WithEndpoints(v []string) ContainerOption {
 	return func(co *containerOptions) {
 		co.endpoints = v
 	}
 }
 
-func ContainerWithLogger(lg *zap.Logger) ContainerOption {
+func WithLogger(lg *zap.Logger) ContainerOption {
 	return func(co *containerOptions) {
 		co.lg = lg
 	}
 }
 
-func ContainerWithShardImplementation(v ShardInterface) ContainerOption {
+func WithShardImplementation(v ShardInterface) ContainerOption {
 	return func(co *containerOptions) {
 		co.impl = v
 	}
 }
 
-func ContainerWithRouter(v *gin.Engine) ContainerOption {
+func WithRouter(v *gin.Engine) ContainerOption {
 	return func(co *containerOptions) {
 		co.router = v
 	}
 }
 
-func ContainerWithApiHandler(v map[string]func(c *gin.Context)) ContainerOption {
+func WithApiHandler(v map[string]func(c *gin.Context)) ContainerOption {
 	return func(co *containerOptions) {
 		co.routeAndHandler = v
 	}
 }
 
-func ContainerWithShardOpReceiver(v ShardHttpApi) ContainerOption {
+func WithShardOpReceiver(v ShardHttpApi) ContainerOption {
 	return func(co *containerOptions) {
 		co.shardHttpApi = v
 	}
 }
 
-func ContainerWithAddr(v string) ContainerOption {
+func WithAddr(v string) ContainerOption {
 	return func(co *containerOptions) {
 		co.addr = v
 	}
 }
 
-func ContainerWithEtcdPrefix(v string) ContainerOption {
+func WithEtcdPrefix(v string) ContainerOption {
 	return func(co *containerOptions) {
 		co.etcdPrefix = v
+	}
+}
+
+func WithEtcdClient(v *clientv3.Client) ContainerOption {
+	return func(co *containerOptions) {
+		co.client = v
 	}
 }
 
@@ -221,8 +230,8 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	if ops.service == "" {
 		return nil, errors.New("service err")
 	}
-	if len(ops.endpoints) == 0 {
-		return nil, errors.New("endpoints err")
+	if len(ops.endpoints) == 0 && ops.client == nil {
+		return nil, errors.New("endpoints or client must be init")
 	}
 	if ops.lg == nil {
 		return nil, errors.New("lg err")
@@ -238,11 +247,18 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	// FIXME 直接刚常量有点粗糙，暂时没有更好的方案
 	InitEtcdPrefix(ops.etcdPrefix)
 
-	ec, err := etcdutil.NewEtcdClient(ops.endpoints, ops.lg)
-	if err != nil {
-		return nil, errors.Wrap(err, "")
+	// 允许传入etcd的client
+	var client *etcdutil.EtcdClient
+	if ops.client == nil {
+		var err error
+		client, err = etcdutil.NewEtcdClient(ops.endpoints, ops.lg)
+		if err != nil {
+			return nil, errors.Wrap(err, "")
+		}
+	} else {
+		client = etcdutil.NewEtcdClientWithClient(ops.client, ops.lg)
 	}
-	s, err := concurrency.NewSession(ec.Client, concurrency.WithTTL(5))
+	session, err := concurrency.NewSession(client.Client, concurrency.WithTTL(5))
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -253,8 +269,8 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	)
 
 	c := Container{
-		Client:  ec,
-		Session: s,
+		Client:  client,
+		Session: session,
 		opts:    ops,
 
 		stopper: &GoroutineStopper{},

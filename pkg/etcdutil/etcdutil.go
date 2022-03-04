@@ -80,6 +80,10 @@ func NewEtcdClientWithCustomLogger(endpoints []string, lg logutil.Logger) (*Etcd
 	return &EtcdClient{Client: client, lg: lg}, nil
 }
 
+func NewEtcdClientWithClient(client *clientv3.Client, lg *zap.Logger) *EtcdClient {
+	return &EtcdClient{Client: client, lg: logutil.NewZapLogger(lg)}
+}
+
 func (w *EtcdClient) GetKV(_ context.Context, node string, opts []clientv3.OpOption) (*clientv3.GetResponse, error) {
 	timeoutCtx, cancel := context.WithTimeout(context.TODO(), defaultOpTimeout)
 	defer cancel()
