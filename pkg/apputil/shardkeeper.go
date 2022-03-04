@@ -72,15 +72,15 @@ func (v *shardKeeperDbValue) String() string {
 	return string(b)
 }
 
-func newShardKeeper(lg *zap.Logger, ss *ShardServer) (*shardKeeper, error) {
+func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 	sk := shardKeeper{
 		lg:      lg,
 		stopper: &GoroutineStopper{},
 
-		service:   ss.Container().Service(),
-		shardImpl: ss.opts.impl,
-		client:    ss.Container().Client,
-		session:   ss.Container().Session,
+		service:   c.Service(),
+		shardImpl: c.opts.impl,
+		client:    c.Client,
+		session:   c.Session,
 
 		shardMutexes: make(map[string]*concurrency.Mutex),
 	}
@@ -171,10 +171,6 @@ func (sk *shardKeeper) Drop(id string) error {
 
 		return errors.Wrap(b.Put([]byte(id), []byte(dv.String())), "")
 	})
-}
-
-func (sk *shardKeeper) Load(id string) (string, error) {
-	return sk.shardImpl.Load(id)
 }
 
 func (sk *shardKeeper) forEach(visitor func(k, v []byte) error) error {
@@ -306,7 +302,7 @@ func (sk *shardKeeper) lock(shardId string) error {
 
 	lockPfx := EtcdPathAppShardHbId(sk.service, shardId)
 	mutex := concurrency.NewMutex(sk.session, lockPfx)
-	if err := mutex.Lock(sk.client.Ctx()); err != nil {
+	if err := mutex.TryLock(sk.client.Ctx()); err != nil {
 		// lock被占用
 		if err == concurrency.ErrLocked {
 			// opt: 确认lock被占用，清理掉本地shard

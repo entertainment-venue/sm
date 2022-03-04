@@ -78,7 +78,7 @@ func Test_WatchLoop(t *testing.T) {
 	WatchLoop(
 		context.TODO(),
 		ttLogger,
-		client.Client,
+		client,
 		"foo",
 		resp.Header.GetRevision()+1,
 		func(ctx context.Context, ev *clientv3.Event) error {
@@ -104,7 +104,7 @@ func Test_WatchLoop_close(t *testing.T) {
 	go WatchLoop(
 		ctx,
 		ttLogger,
-		client.Client,
+		client,
 		"foo",
 		0,
 		func(ctx context.Context, ev *clientv3.Event) error {
