@@ -17,6 +17,7 @@ package etcdutil
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/logutil"
@@ -51,6 +52,7 @@ type EtcdWrapper interface {
 
 	CreateAndGet(ctx context.Context, nodes []string, values []string, leaseID clientv3.LeaseID) error
 	CompareAndSwap(_ context.Context, node string, curValue string, newValue string, leaseID clientv3.LeaseID) (string, error)
+	Inc(_ context.Context, pfx string) (string, error)
 
 	Ctx() context.Context
 	Get(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error)
@@ -225,4 +227,29 @@ func (w *EtcdClient) CompareAndSwap(_ context.Context, node string, curValue str
 		zap.Error(ErrEtcdValueNotMatch),
 	)
 	return realValue, ErrEtcdValueNotMatch
+}
+
+func (w *EtcdClient) Inc(_ context.Context, pfx string) (string, error) {
+	if pfx == "" {
+		return "", nil
+	}
+	gresp, err := w.GetKV(context.TODO(), pfx, nil)
+	if err != nil {
+		return "", err
+	}
+	if gresp.Count <= 0 {
+		initValue := "1"
+		if err := w.CreateAndGet(context.TODO(), []string{pfx}, []string{initValue}, clientv3.NoLease); err != nil {
+			return "", err
+		}
+		return initValue, nil
+	}
+
+	cur, _ := strconv.ParseUint(string(gresp.Kvs[0].Value), 10, 64)
+	curStr := strconv.FormatUint(cur, 10)
+	newStr := strconv.FormatUint(cur+1, 10)
+	if _, err := w.CompareAndSwap(context.TODO(), pfx, curStr, newStr, clientv3.NoLease); err != nil {
+		return "", err
+	}
+	return newStr, nil
 }
