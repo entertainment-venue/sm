@@ -22,7 +22,10 @@ import (
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
+	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	swaggerfiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
@@ -35,6 +38,10 @@ var (
 // smContainer 竞争leader，管理sm整个集群
 type smContainer struct {
 	*apputil.Container
+
+	// Client 先初始化，提供给 apputil.Container，一旦 apputil.NewContainer 被调用，
+	// shardKeeper就开始干活下发shard，但是 smContainer 的shard实现中包含对Client的使用
+	Client etcdutil.EtcdWrapper
 
 	lg *zap.Logger
 	// nodeManager 管理 smContainer 内部的etcd节点的pfx
@@ -57,34 +64,70 @@ type smContainer struct {
 	shardWrapper ShardWrapper
 }
 
-func newSMContainer(lg *zap.Logger, c *apputil.Container) (*smContainer, error) {
-	container := smContainer{
-		lg:        lg,
-		Container: c,
-
+func newSMContainer(opts *serverOptions) (*smContainer, error) {
+	sCtr := smContainer{
+		lg:           opts.lg,
 		stopper:      &apputil.GoroutineStopper{},
 		shards:       make(map[string]Shard),
-		nodeManager:  &nodeManager{smService: c.Service()},
 		shardWrapper: &smShardWrapper{},
+		nodeManager:  &nodeManager{smService: opts.service},
 	}
+
+	etcdClient, err := etcdutil.NewEtcdClient(opts.endpoints, opts.lg)
+	if err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+	sCtr.Client = etcdClient
+
+	container, err := apputil.NewContainer(
+		apputil.WithLogger(opts.lg),
+		apputil.WithService(opts.service),
+
+		// etcd
+		apputil.WithEtcdPrefix(opts.etcdPrefix),
+		apputil.WithId(opts.id),
+		apputil.WithEtcdClient(etcdClient.Client),
+
+		// http server
+		apputil.WithAddr(opts.addr),
+		// 使用Container内置的http server
+		apputil.WithApiHandler(sCtr.getHttpHandlers()),
+		// api背后的具体实现
+		apputil.WithShardImplementation(&sCtr),
+	)
+	if err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+	sCtr.Container = container
+
 	// 判断sm的spec是否存在,如果不存在，那么进行创建,可以通过接口进行参数更改
-	spec := smAppSpec{Service: c.Service(), CreateTime: time.Now().Unix()}
-	if err := c.Client.CreateAndGet(
-		context.TODO(),
-		[]string{container.nodeManager.nodeServiceSpec(container.Service())},
-		[]string{spec.String()},
-		clientv3.NoLease,
-	); err != nil && err != etcdutil.ErrEtcdNodeExist {
+	spec := smAppSpec{Service: opts.service, CreateTime: time.Now().Unix()}
+	if err := sCtr.Client.CreateAndGet(context.TODO(), []string{sCtr.nodeManager.nodeServiceSpec(sCtr.Service())}, []string{spec.String()}, clientv3.NoLease); err != nil && err != etcdutil.ErrEtcdNodeExist {
 		return nil, errors.Wrap(err, "")
 	}
 
-	container.stopper.Wrap(
+	// 竞争leader
+	sCtr.stopper.Wrap(
 		func(ctx context.Context) {
-			container.campaign(ctx)
+			sCtr.campaign(ctx)
 		},
 	)
 
-	return &container, nil
+	return &sCtr, nil
+}
+
+func (c *smContainer) getHttpHandlers() map[string]func(c *gin.Context) {
+	apiSrv := newSMShardApi(c)
+	handlers := make(map[string]func(c *gin.Context))
+	handlers["/sm/server/add-spec"] = apiSrv.GinAddSpec
+	handlers["/sm/server/del-spec"] = apiSrv.GinDelSpec
+	handlers["/sm/server/get-spec"] = apiSrv.GinGetSpec
+	handlers["/sm/server/update-spec"] = apiSrv.GinUpdateSpec
+	handlers["/sm/server/add-shard"] = apiSrv.GinAddShard
+	handlers["/sm/server/del-shard"] = apiSrv.GinDelShard
+	handlers["/sm/server/get-shard"] = apiSrv.GinGetShard
+	handlers["/swagger/*any"] = ginSwagger.WrapHandler(swaggerfiles.Handler)
+	return handlers
 }
 
 func (c *smContainer) GetShard(service string) (Shard, error) {

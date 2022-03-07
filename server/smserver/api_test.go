@@ -46,7 +46,7 @@ func (suite *ApiTestSuite) SetupTest() {
 	}
 	suite.container.SetService("foo")
 
-	handlers := suite.testServer.getHandlers(suite.container)
+	handlers := suite.container.getHttpHandlers()
 	for path, handler := range handlers {
 		suite.testRouter.Any(path, handler)
 	}

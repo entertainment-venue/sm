@@ -17,19 +17,15 @@ package smserver
 import (
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	_ "github.com/entertainment-venue/sm/server/docs"
-	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
-	swaggerfiles "github.com/swaggo/files"
-	ginSwagger "github.com/swaggo/gin-swagger"
 	"go.uber.org/zap"
 )
 
 type Server struct {
-	shardServer *apputil.ShardServer
+	// smContainer *apputil.ShardServer
 	smContainer *smContainer
-
-	opts  *serverOptions
-	donec chan struct{}
+	opts        *serverOptions
+	donec       chan struct{}
 }
 
 type serverOptions struct {
@@ -130,7 +126,7 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 			return
 
 		// 被动关闭: 观测ShardServer或者smContainer都预Session相关退出，可能因为session的关闭导致
-		case <-srv.shardServer.Done():
+		case <-srv.smContainer.Done():
 			srv.close()
 			ops.lg.Info("server passive exit")
 
@@ -163,35 +159,15 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 }
 
 func (s *Server) run() error {
-	container, err := apputil.NewContainer(
-		apputil.ContainerWithService(s.opts.service),
-		apputil.ContainerWithId(s.opts.id),
-		apputil.ContainerWithEndpoints(s.opts.endpoints),
-		apputil.ContainerWithLogger(s.opts.lg))
+	sCtr, err := newSMContainer(s.opts)
 	if err != nil {
+		if sCtr != nil {
+			sCtr.Close()
+		}
+
 		return errors.Wrap(err, "")
 	}
-
-	smContainer, err := newSMContainer(s.opts.lg, container)
-	if err != nil {
-		container.Close()
-		return errors.Wrap(err, "")
-	}
-	s.smContainer = smContainer
-
-	ss, err := apputil.NewShardServer(
-		apputil.ShardServerWithAddr(s.opts.addr),
-		apputil.ShardServerWithContainer(container),
-		apputil.ShardServerWithApiHandler(s.getHandlers(smContainer)),
-		apputil.ShardServerWithShardImplementation(smContainer),
-		apputil.ShardServerWithLogger(s.opts.lg),
-		apputil.ShardServerWithEtcdPrefix(s.opts.etcdPrefix))
-	if err != nil {
-		container.Close()
-		smContainer.Close()
-		return errors.Wrap(err, "new shard server failed")
-	}
-	s.shardServer = ss
+	s.smContainer = sCtr
 	return nil
 }
 
@@ -199,10 +175,6 @@ func (s *Server) run() error {
 // shardServer的Close是threadsafe的，但是shardServer的Done先触发被动关闭，close方法会被调用两次，
 // 虽然smContainer的Close是threadsafe，但两个组件会被关闭两次，请发发生比较少
 func (s *Server) Close() {
-	// 主动关闭: 需要关闭shardServer
-	// shardServer的关闭会触发NewServer中的goroutine被动关闭
-	s.shardServer.Close()
-
 	// 通知调用方，因为是主动关闭
 	close(s.donec)
 
@@ -216,18 +188,4 @@ func (s *Server) close() {
 
 func (s *Server) Done() <-chan struct{} {
 	return s.donec
-}
-
-func (s *Server) getHandlers(container *smContainer) map[string]func(c *gin.Context) {
-	apiSrv := newSMShardApi(container)
-	handlers := make(map[string]func(c *gin.Context))
-	handlers["/sm/server/add-spec"] = apiSrv.GinAddSpec
-	handlers["/sm/server/del-spec"] = apiSrv.GinDelSpec
-	handlers["/sm/server/get-spec"] = apiSrv.GinGetSpec
-	handlers["/sm/server/update-spec"] = apiSrv.GinUpdateSpec
-	handlers["/sm/server/add-shard"] = apiSrv.GinAddShard
-	handlers["/sm/server/del-shard"] = apiSrv.GinDelShard
-	handlers["/sm/server/get-shard"] = apiSrv.GinGetShard
-	handlers["/swagger/*any"] = ginSwagger.WrapHandler(swaggerfiles.Handler)
-	return handlers
 }

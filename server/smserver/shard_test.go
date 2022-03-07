@@ -32,7 +32,7 @@ func Test_shardTask(t *testing.T) {
 }
 
 func Test_newMaintenanceWorker(t *testing.T) {
-	ctr, err := newSMContainer(ttLogger, nil)
+	ctr, err := newSMContainer(nil)
 	if err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
