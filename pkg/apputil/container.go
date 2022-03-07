@@ -444,6 +444,9 @@ func (ctr *Container) Service() string {
 
 // SetService 4 unit test
 func (ctr *Container) SetService(s string) {
+	if ctr.opts == nil {
+		ctr.opts = &containerOptions{}
+	}
 	ctr.opts.service = s
 }
 
