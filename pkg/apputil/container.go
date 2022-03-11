@@ -465,7 +465,7 @@ type ContainerHeartbeat struct {
 
 	// Shards 直接带上id和lease，smserver可以基于lease做有效shard的过滤
 	// TODO 支持key-range，前提是server端改造rb算法
-	Shards []*shardKeeperDbValue `json:"shards"`
+	Shards []*ShardKeeperDbValue `json:"shards"`
 }
 
 func (l *ContainerHeartbeat) String() string {
@@ -508,10 +508,10 @@ func (ctr *Container) heartbeat(ctx context.Context) error {
 	ld.NetIOCountersStat = &netIOCounters[0]
 
 	// 本地分片信息带到hb中
-	var shards []*shardKeeperDbValue
+	var shards []*ShardKeeperDbValue
 	if err := ctr.keeper.forEachRead(
 		func(k, v []byte) error {
-			var dv shardKeeperDbValue
+			var dv ShardKeeperDbValue
 			if err := json.Unmarshal(v, &dv); err != nil {
 				return errors.Wrap(err, string(v))
 			}
