@@ -76,8 +76,8 @@ type sessionClosed struct {
 	LeaseID clientv3.LeaseID
 }
 
-// shardKeeperDbValue 存储分片数据和管理信息
-type shardKeeperDbValue struct {
+// ShardKeeperDbValue 存储分片数据和管理信息
+type ShardKeeperDbValue struct {
 	// ShardId 内容能够自描述
 	ShardId string `json:"shardId"`
 
@@ -94,7 +94,7 @@ type shardKeeperDbValue struct {
 	Lease clientv3.LeaseID `json:"lease"`
 }
 
-func (v *shardKeeperDbValue) String() string {
+func (v *ShardKeeperDbValue) String() string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
@@ -183,7 +183,7 @@ func (sk *shardKeeper) tryGuardLease(lease *Lease) error {
 
 			return b.ForEach(
 				func(k, v []byte) error {
-					var value shardKeeperDbValue
+					var value ShardKeeperDbValue
 					if err := json.Unmarshal(v, &value); err != nil {
 						return err
 					}
@@ -341,12 +341,12 @@ func (sk *shardKeeper) processRbEvent(_ string, value interface{}) error {
 					b := tx.Bucket([]byte(sk.service))
 					return b.ForEach(
 						func(k, v []byte) error {
-							var value shardKeeperDbValue
+							var value ShardKeeperDbValue
 							if err := json.Unmarshal(v, &value); err != nil {
 								return err
 							}
 
-							var dv shardKeeperDbValue
+							var dv ShardKeeperDbValue
 							if err := json.Unmarshal(v, &dv); err != nil {
 								return err
 							}
@@ -413,7 +413,7 @@ func (sk *shardKeeper) processRbEvent(_ string, value interface{}) error {
 
 					return b.ForEach(
 						func(k, v []byte) error {
-							var value shardKeeperDbValue
+							var value ShardKeeperDbValue
 							if err := json.Unmarshal(v, &value); err != nil {
 								return err
 							}
@@ -538,7 +538,7 @@ func (sk *shardKeeper) dropLease(leaseID clientv3.LeaseID, ignoreEqualCase bool)
 
 			return b.ForEach(
 				func(k, v []byte) error {
-					var value shardKeeperDbValue
+					var value ShardKeeperDbValue
 					if err := json.Unmarshal(v, &value); err != nil {
 						return err
 					}
@@ -558,7 +558,7 @@ func (sk *shardKeeper) dropLease(leaseID clientv3.LeaseID, ignoreEqualCase bool)
 }
 
 func (sk *shardKeeper) Add(id string, spec *ShardSpec) error {
-	value := &shardKeeperDbValue{
+	value := &ShardKeeperDbValue{
 		Spec:  spec,
 		Disp:  false,
 		Lease: spec.LeaseID,
@@ -585,7 +585,7 @@ func (sk *shardKeeper) Drop(id string) error {
 			return nil
 		}
 
-		var dv shardKeeperDbValue
+		var dv ShardKeeperDbValue
 		if err := json.Unmarshal(raw, &dv); err != nil {
 			return errors.Wrap(err, string(raw))
 		}
@@ -608,7 +608,7 @@ func (sk *shardKeeper) forEachRead(visitor func(k, v []byte) error) error {
 func (sk *shardKeeper) sync() error {
 	err := sk.forEachRead(
 		func(k, v []byte) error {
-			var dv shardKeeperDbValue
+			var dv ShardKeeperDbValue
 			if err := json.Unmarshal(v, &dv); err != nil {
 				return err
 			}
@@ -623,7 +623,7 @@ func (sk *shardKeeper) sync() error {
 				return sk.dispatchTrigger.Put(
 					&evtrigger.TriggerEvent{
 						Key:   dropTrigger,
-						Value: &shardKeeperDbValue{ShardId: shardId},
+						Value: &ShardKeeperDbValue{ShardId: shardId},
 					},
 				)
 			}
@@ -656,7 +656,7 @@ func (sk *shardKeeper) sync() error {
 }
 
 func (sk *shardKeeper) dispatch(typ string, value interface{}) error {
-	tv := value.(*shardKeeperDbValue)
+	tv := value.(*ShardKeeperDbValue)
 	shardId := tv.ShardId
 
 	var opErr error
