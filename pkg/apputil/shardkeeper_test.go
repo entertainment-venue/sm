@@ -72,7 +72,7 @@ func Test_shardKeeper_forEach(t *testing.T) {
 		},
 	)
 
-	if err := sk.forEach(func(k, v []byte) error {
+	if err := sk.forEachRead(func(k, v []byte) error {
 		fmt.Println(string(k))
 		return nil
 	}); err != nil {

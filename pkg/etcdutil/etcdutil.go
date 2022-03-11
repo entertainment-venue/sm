@@ -45,6 +45,7 @@ var (
 // EtcdWrapper 4 unit test
 // etcd的方法已经是通过interface开放出来，这里进行二次封装
 type EtcdWrapper interface {
+	GetClient() *EtcdClient
 	GetKV(_ context.Context, node string, opts []clientv3.OpOption) (*clientv3.GetResponse, error)
 	GetKVs(ctx context.Context, prefix string) (map[string]string, error)
 	UpdateKV(ctx context.Context, key string, value string) error
@@ -65,6 +66,10 @@ type EtcdClient struct {
 	*clientv3.Client
 
 	lg logutil.Logger
+}
+
+func (w *EtcdClient) GetClient() *EtcdClient {
+	return w
 }
 
 func NewEtcdClient(endpoints []string, lg *zap.Logger) (*EtcdClient, error) {

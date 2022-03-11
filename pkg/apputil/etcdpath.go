@@ -39,3 +39,15 @@ func EtcdPathAppContainerIdHb(service, id string) string {
 func EtcdPathAppShardHbId(service, id string) string {
 	return fmt.Sprintf("%s/shardhb/%s", EtcdPathAppPrefix(service), id)
 }
+
+func EtcdPathAppBridge(service string) string {
+	return fmt.Sprintf("%s/lease/bridge", EtcdPathAppPrefix(service))
+}
+
+func EtcdPathAppGuard(service string) string {
+	return fmt.Sprintf("%s/lease/guard", EtcdPathAppPrefix(service))
+}
+
+func EtcdPathAppLease(service string) string {
+	return fmt.Sprintf("%s/lease", EtcdPathAppPrefix(service))
+}

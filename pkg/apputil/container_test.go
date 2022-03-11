@@ -15,42 +15,42 @@ func TestContainer_NewContainer_ParamErr(t *testing.T) {
 	}{
 		{
 			opts: []ContainerOption{
-				ContainerWithService("service"),
-				ContainerWithEndpoints([]string{"127.0.0.1:8888"}),
-				ContainerWithLogger(ttLogger),
+				WithService("service"),
+				WithEndpoints([]string{"127.0.0.1:8888"}),
+				WithLogger(ttLogger),
 			},
 			hasErr: true,
 		},
 		{
 			opts: []ContainerOption{
-				ContainerWithId("id"),
-				ContainerWithEndpoints([]string{"127.0.0.1:8888"}),
-				ContainerWithLogger(ttLogger),
+				WithId("id"),
+				WithEndpoints([]string{"127.0.0.1:8888"}),
+				WithLogger(ttLogger),
 			},
 			hasErr: true,
 		},
 		{
 			opts: []ContainerOption{
-				ContainerWithId("id"),
-				ContainerWithService("service"),
-				ContainerWithLogger(ttLogger),
+				WithId("id"),
+				WithService("service"),
+				WithLogger(ttLogger),
 			},
 			hasErr: true,
 		},
 		{
 			opts: []ContainerOption{
-				ContainerWithId("id"),
-				ContainerWithService("service"),
-				ContainerWithEndpoints([]string{"127.0.0.1:8888"}),
+				WithId("id"),
+				WithService("service"),
+				WithEndpoints([]string{"127.0.0.1:8888"}),
 			},
 			hasErr: true,
 		},
 		{
 			opts: []ContainerOption{
-				ContainerWithId("id"),
-				ContainerWithService("service"),
-				ContainerWithEndpoints([]string{"127.0.0.1:8888"}),
-				ContainerWithLogger(ttLogger),
+				WithId("id"),
+				WithService("service"),
+				WithEndpoints([]string{"127.0.0.1:8888"}),
+				WithLogger(ttLogger),
 			},
 			hasErr: true,
 		},
@@ -79,6 +79,8 @@ func TestContainer_NewContainer_CancelCtx(t *testing.T) {
 		t.Errorf("unexpected err %s", err.Error())
 		t.SkipNow()
 	}
+
+	time.Sleep(100 * time.Second)
 
 	select {
 	case <-time.After(5 * time.Second):
@@ -111,9 +113,9 @@ func TestContainer_Close(t *testing.T) {
 
 func newTestContainerOptions(ctx context.Context) []ContainerOption {
 	return []ContainerOption{
-		ContainerWithId("127.0.0.1:8888"),
-		ContainerWithService("foo.bar"),
-		ContainerWithEndpoints([]string{"127.0.0.1:2379"}),
-		ContainerWithLogger(ttLogger),
+		WithId("127.0.0.1:8888"),
+		WithService("foo.bar"),
+		WithEndpoints([]string{"127.0.0.1:8888"}),
+		WithLogger(ttLogger),
 	}
 }
