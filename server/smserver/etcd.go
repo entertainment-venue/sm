@@ -54,3 +54,13 @@ func (n *nodeManager) nodeServiceShardHb(appService string) string {
 func (n *nodeManager) nodeServiceContainerHb(appService string) string {
 	return fmt.Sprintf("%s/containerhb/", apputil.EtcdPathAppPrefix(appService))
 }
+
+// nodeServiceGuard /sm/app/proxy.dev/guard
+func (n *nodeManager) nodeServiceGuard(appService string) string {
+	return fmt.Sprintf("%s/lease/guard", apputil.EtcdPathAppPrefix(appService))
+}
+
+// nodeServiceBridge /sm/app/proxy.dev/bridge
+func (n *nodeManager) nodeServiceBridge(appService string) string {
+	return fmt.Sprintf("%s/lease/bridge", apputil.EtcdPathAppPrefix(appService))
+}

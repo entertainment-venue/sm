@@ -67,6 +67,7 @@ func (suite *ContainerTestSuite) SetupTest() {
 	suite.container.shards["s1"] = &smShard{
 		shardSpec: &apputil.ShardSpec{Id: "s1"},
 	}
+	suite.container.SetService(mock.Anything)
 }
 
 func (suite *ContainerTestSuite) TestGetShard() {
@@ -151,28 +152,6 @@ func (suite *ContainerTestSuite) TestDrop_common() {
 	err := suite.container.Drop("s2")
 	mockedShard.AssertExpectations(suite.T())
 	assert.Nil(suite.T(), err)
-}
-
-func (suite *ContainerTestSuite) TestLoad_closing() {
-	suite.container.closing = true
-	_, err := suite.container.Load("s1")
-	assert.Equal(suite.T(), err, apputil.ErrClosing)
-}
-
-func (suite *ContainerTestSuite) TestLoad_notExist() {
-	_, err := suite.container.Load(mock.Anything)
-	assert.Equal(suite.T(), apputil.ErrNotExist, err)
-}
-
-func (suite *ContainerTestSuite) TestLoad_common() {
-	mockedShard := new(MockedShard)
-	mockedShard.On("Load").Return(mock.Anything, nil)
-	suite.container.shards["s2"] = mockedShard
-
-	str, err := suite.container.Load("s2")
-	mockedShard.AssertExpectations(suite.T())
-	assert.Nil(suite.T(), err)
-	assert.Equal(suite.T(), str, mock.Anything)
 }
 
 func (suite *ContainerTestSuite) TestClose_closing() {

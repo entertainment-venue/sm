@@ -10,7 +10,6 @@ import (
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
 	"github.com/zd3tl/evtrigger"
-	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -112,13 +111,6 @@ func (mpr *mapper) initAndWatch() error {
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
-
-	for _, kv := range resp.Kvs {
-		containerId := mpr.extractId(string(kv.Key))
-		if err := mpr.Create(containerId, kv.Value); err != nil {
-			return errors.Wrap(err, "")
-		}
-	}
 	startRev := resp.Header.Revision + 1
 
 	mpr.stopper.Wrap(
@@ -130,8 +122,8 @@ func (mpr *mapper) initAndWatch() error {
 				pfx,
 				startRev,
 				func(ctx context.Context, ev *clientv3.Event) error {
-					// pkg中会先lock，然后再写入心跳内容
-					if ev.Type != mvccpb.DELETE && ev.Kv.Value == nil {
+					// 理论上不会有这种event，containerhb节点是用于记录revision的，让watch有个开始的地方
+					if string(ev.Kv.Key) == pfx {
 						return nil
 					}
 
@@ -191,7 +183,7 @@ func (mpr *mapper) UpdateState(_ string, value interface{}) error {
 	containerId := mpr.extractId(string(event.Kv.Key))
 	if event.IsCreate() || event.IsModify() {
 		// 需要更新container或者shard的存活事件
-		return mpr.Refresh(containerId, event.Kv.Value)
+		return mpr.Refresh(containerId, event)
 	}
 
 	// container故障(短暂的网络、硬件问题等等)，或者重启
@@ -241,17 +233,17 @@ func (mpr *mapper) create(containerId string, value []byte) error {
 	}
 
 	mpr.containerState.alive[containerId] = newTemporary(ctrHb.Timestamp)
-	for _, shardId := range ctrHb.ShardIds {
-		mpr.shardState.alive[shardId] = newTemporary(ctrHb.Timestamp)
-		mpr.shardState.alive[shardId].curContainerId = containerId
+	for _, shard := range ctrHb.Shards {
+		mpr.shardState.alive[shard.ShardId] = newTemporary(ctrHb.Timestamp)
+		mpr.shardState.alive[shard.ShardId].curContainerId = containerId
 	}
 
 	mpr.lg.Info(
 		"state created",
 		zap.String("service", mpr.appSpec.Service),
 		zap.String("containerId", containerId),
-		zap.Strings("shardIds", ctrHb.ShardIds),
 		zap.String("timestamp", time.Unix(ctrHb.Timestamp, 0).String()),
+		zap.Reflect("shards", ctrHb.Shards),
 	)
 	return nil
 }
@@ -280,43 +272,41 @@ func (mpr *mapper) Delete(containerId string) error {
 	return nil
 }
 
-func (mpr *mapper) Refresh(containerId string, value []byte) error {
+func (mpr *mapper) Refresh(containerId string, event *clientv3.Event) error {
 	mpr.mu.Lock()
 	defer mpr.mu.Unlock()
 
+	if event.Kv.Value == nil {
+		mpr.lg.Warn(
+			"empty value",
+			zap.ByteString("key", event.Kv.Key),
+			zap.Reflect("type", event.Type),
+			zap.String("containerId", containerId),
+		)
+		return nil
+	}
+
 	var ctrHb apputil.ContainerHeartbeat
-	if err := json.Unmarshal(value, &ctrHb); err != nil {
-		return errors.Wrap(err, string(value))
+	if err := json.Unmarshal(event.Kv.Value, &ctrHb); err != nil {
+		return errors.Wrap(err, string(event.Kv.Value))
 	}
 
 	// container
-	ctrT, ok := mpr.containerState.alive[containerId]
-	if !ok {
-		// pkg中先lock心跳节点，然后再进行更新操作
-		return errors.Wrap(mpr.create(containerId, value), "")
-	}
-	if ctrHb.Timestamp == 0 {
-		ctrT.lastHeartbeatTime = time.Now()
-	} else {
-		ctrT.lastHeartbeatTime = time.Unix(ctrHb.Timestamp, 0)
-	}
+	mpr.containerState.alive[containerId] = newTemporary(ctrHb.Timestamp)
 
 	// shard
-	for _, shardId := range ctrHb.ShardIds {
-		st := mpr.shardState.alive[shardId]
-		if ctrHb.Timestamp == 0 {
-			st.lastHeartbeatTime = time.Now()
-		} else {
-			st.lastHeartbeatTime = time.Unix(ctrHb.Timestamp, 0)
-		}
-		st.curContainerId = containerId
+	for _, shard := range ctrHb.Shards {
+		t := newTemporary(ctrHb.Timestamp)
+		t.curContainerId = containerId
+		t.leaseID = shard.Lease
+		mpr.shardState.alive[shard.ShardId] = t
 	}
 
 	mpr.lg.Debug(
 		"state refreshed",
 		zap.String("service", mpr.appSpec.Service),
 		zap.String("containerId", containerId),
-		zap.Strings("shardIds", ctrHb.ShardIds),
+		zap.Reflect("shards", ctrHb.Shards),
 		zap.String("timestamp", time.Unix(ctrHb.Timestamp, 0).String()),
 	)
 	return nil
@@ -364,6 +354,9 @@ type temporary struct {
 
 	// curContainerId 针对shard场景，需要存储当前所属containerId，用于做rb
 	curContainerId string
+
+	// leaseID 表示当前shard的合法性
+	leaseID clientv3.LeaseID
 }
 
 func newTemporary(t int64) *temporary {

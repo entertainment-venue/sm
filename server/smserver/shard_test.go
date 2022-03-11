@@ -205,7 +205,7 @@ func Test_reallocate(t *testing.T) {
 	w := smShard{service: "foo.bar", lg: logger}
 
 	for idx, tt := range tests {
-		r := w.rebalance(tt.fixShardIdAndManualContainerId, tt.hbContainerIdAndAny, tt.hbShardIdAndContainerId, nil)
+		r := w.extractShardMoves(tt.fixShardIdAndManualContainerId, tt.hbContainerIdAndAny, tt.hbShardIdAndContainerId, nil)
 		if !reflect.DeepEqual(r, tt.expect) {
 			t.Errorf("idx: %d actual: %s, expect: %s", idx, r.String(), tt.expect.String())
 			t.SkipNow()

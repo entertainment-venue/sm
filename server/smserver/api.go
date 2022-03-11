@@ -91,6 +91,15 @@ func (ss *smShardApi) GinAddSpec(c *gin.Context) {
 	nodes = append(nodes, ss.container.nodeManager.nodeServiceSpec(req.Service))
 	values = append(values, req.String())
 
+	// 创建guard lease节点
+	nodes = append(nodes, ss.container.nodeManager.nodeServiceGuard(req.Service))
+	lease := apputil.Lease{}
+	values = append(values, lease.String())
+
+	// 创建containerhb节点
+	nodes = append(nodes, ss.container.nodeManager.nodeServiceContainerHb(req.Service))
+	values = append(values, "")
+
 	// 需要将service注册到sm的spec中
 	t := shardTask{GovernedService: req.Service}
 	v := apputil.ShardSpec{

@@ -21,11 +21,13 @@ import (
 	"math"
 	"reflect"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
 	"github.com/zd3tl/evtrigger"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -34,23 +36,21 @@ var (
 	_ ShardWrapper = new(smShardWrapper)
 )
 
-type workerEventType int
-
 const (
-	workerEventShardChanged workerEventType = iota + 1
-	workerEventContainerChanged
-
 	workerTrigger = "workerTrigger"
 
 	defaultMaxShardCount = math.MaxInt
+
+	// defaultBridgeLeaseTimeout 单位s
+	defaultBridgeLeaseTimeout = 10
+
+	// defaultGuardLeaseTimeout 单位s
+	defaultGuardLeaseTimeout = 10
 )
 
 type workerTriggerEvent struct {
 	// Service 预留
 	Service string `json:"service"`
-
-	// Type 预留，用于在process中区分事件类型进行处理
-	Type workerEventType `json:"type"`
 
 	// EnqueueTime 预留，防止需要做延时
 	EnqueueTime int64 `json:"enqueueTime"`
@@ -102,6 +102,10 @@ type smShard struct {
 	trigger *evtrigger.Trigger
 	// operator 对接接入方，通过http请求下发shard move指令
 	operator *operator
+
+	mu sync.Mutex
+	// balancing 正在rb的情况下，不能开启下一次rb
+	balancing bool
 }
 
 func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard, error) {
@@ -184,14 +188,6 @@ func (ss *smShard) SetMaxRecoveryTime(maxRecoveryTime int) {
 	}
 }
 
-func (ss *smShard) Load() string {
-	// TODO
-	// 记录当前shard负责的工作单位时间内所需要的指令数量（程序的qps），多个shard的峰值qps叠加后可能导致cpu（这块我们只关注cpu）超出阈值，这种组合很多
-	// 简单处理：不允许>=2的计算任务峰值qps导致的cpu负载超过我们设定的阈值，计算任务和cpu负载的关系要提前针对算法探测出来，这里的算法是指shard分配算法
-	// 接入app本身也要参考这个提供load信息给sm，也可以根据自身情况抽象，例如：分布式计数器可以用每个shard的访问次数作为load，把cpu的问题抽象一下
-	return "todo"
-}
-
 func (ss *smShard) Spec() *apputil.ShardSpec {
 	return ss.shardSpec
 }
@@ -216,23 +212,48 @@ func (ss *smShard) Close() error {
 // 1 smContainer 的增加/减少是优先级最高，目前可能涉及大量shard move
 // 2 smShard 被漏掉作为container检测的补充，最后校验，这种情况只涉及到漏掉的shard任务下发下去
 func (ss *smShard) balanceChecker(ctx context.Context) error {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+
+	// rb中，没必要再次rb
+	// 当前进行的rb要根据container存活现状（方法调用时刻的一个切面）计算策略
+	if ss.balancing {
+		ss.lg.Info("balancing", zap.String("service", ss.service))
+		return nil
+	}
+	ss.balancing = true
+	defer func() {
+		ss.balancing = false
+	}()
+
+	// 获取guard lease
+	if err := ss.validateGuardLease(); err != nil {
+		ss.lg.Error(
+			"validateGuardLease error",
+			zap.String("service", ss.service),
+			zap.Error(err),
+		)
+		return err
+	}
+
 	// 现有存活containers
 	etcdHbContainerIdAndAny := ss.mpr.AliveContainers()
 	// 没有存活的container，不需要做shard移动
 	if len(etcdHbContainerIdAndAny) == 0 {
-		ss.lg.Warn(
-			"no survive container",
+		ss.lg.Info(
+			"no alive container",
 			zap.String("service", ss.service),
 		)
 		return nil
 	}
 
-	groups := make(map[string]*balancerGroup)
-
 	// 获取当前所有shard配置
 	var (
 		etcdShardIdAndAny ArmorMap
 		err               error
+
+		// 针对特定service，区分group做rb，允许同一service可以划分多个小的业务场景
+		groups = make(map[string]*balancerGroup)
 	)
 	shardKey := ss.container.nodeManager.nodeServiceShard(ss.service, "")
 	etcdShardIdAndAny, err = ss.container.Client.GetKVs(ctx, shardKey)
@@ -277,13 +298,16 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 		groups[group].hbShardIdAndContainerId[shardId] = value.curContainerId
 	}
 
+	// allShardMoves 收集所有的moveAction，用于在checker最后做guard lease的机制
+	var allShardMoves moveActionList
+
 	// shard被清除的场景，从rebalance方法中提前到这里，应对完全不配置shard，且sdk本地存活的场景
 	// 提取需要被移除的shard
-	var mals moveActionList
+	var deleting moveActionList
 	for hbShardId, value := range etcdHbShardIdAndValue {
 		if _, ok := etcdShardIdAndAny[hbShardId]; !ok {
-			mals = append(
-				mals,
+			deleting = append(
+				deleting,
 				&moveAction{
 					Service:      ss.service,
 					ShardId:      hbShardId,
@@ -293,26 +317,22 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 			delete(etcdHbShardIdAndValue, hbShardId)
 		}
 	}
-	if len(mals) > 0 {
-		ev := workerTriggerEvent{
-			Service:     ss.service,
-			Type:        workerEventShardChanged,
-			EnqueueTime: time.Now().Unix(),
-			Value:       []byte(mals.String()),
-		}
-		_ = ss.trigger.Put(&evtrigger.TriggerEvent{Key: workerTrigger, Value: &ev})
-		ss.lg.Info("delete shard event enqueue",
-			zap.String("service", ss.service),
-			zap.Reflect("event", ev),
-		)
-	}
-	if len(etcdShardIdAndAny) == 0 {
+	if len(deleting) > 0 {
+		allShardMoves = append(allShardMoves, deleting...)
 		ss.lg.Info(
-			"shards cleared",
+			"shard deleting",
 			zap.String("service", ss.service),
-			zap.Reflect("mals", mals),
+			zap.Reflect("deleting", deleting),
 		)
-		return nil
+	} else {
+		// shard被清理，但是发现心跳带上来的还有未清理掉的shard，通过rb drop掉
+		if len(etcdShardIdAndAny) == 0 {
+			ss.lg.Info(
+				"no shard configured",
+				zap.String("service", ss.service),
+			)
+			return nil
+		}
 	}
 
 	// 增加阈值限制，防止单进程过载导致雪崩
@@ -369,36 +389,25 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 			zap.String("service", ss.service),
 			zap.Bool("containerChanged", containerChanged),
 			zap.Bool("shardChanged", shardChanged),
+			zap.Reflect("hbContainerIds", hbContainerIds),
+			zap.Reflect("bg.hbShardIdAndContainerId.ValueList())", bg.hbShardIdAndContainerId.ValueList()),
+			zap.Reflect("fixShardIds", fixShardIds),
+			zap.Reflect("hbShardIds", hbShardIds),
 		)
 
 		// 需要保证在变更的情况下是有container可以接受分配的
 		if len(etcdHbContainerIdAndAny) == 0 {
 			continue
 		}
-		var typ workerEventType
-		if containerChanged {
-			typ = workerEventContainerChanged
-		} else {
-			typ = workerEventShardChanged
-		}
 
-		r := ss.rebalance(bg.fixShardIdAndManualContainerId, etcdHbContainerIdAndAny, bg.hbShardIdAndContainerId, shardIdAndShardSpec)
-		if len(r) > 0 {
-			ev := workerTriggerEvent{
-				Service:     ss.service,
-				Type:        typ,
-				EnqueueTime: time.Now().Unix(),
-				Value:       []byte(r.String()),
-			}
-			_ = ss.trigger.Put(&evtrigger.TriggerEvent{Key: workerTrigger, Value: &ev})
-			ss.lg.Info("event enqueue",
-				zap.String("service", ss.service),
-				zap.Reflect("event", ev),
-			)
+		shardMoves := ss.extractShardMoves(bg.fixShardIdAndManualContainerId, etcdHbContainerIdAndAny, bg.hbShardIdAndContainerId, shardIdAndShardSpec)
+		if len(shardMoves) > 0 {
+			allShardMoves = append(allShardMoves, shardMoves...)
 			continue
 		}
 		// 当survive的container为nil的时候，不能形成有效的分配，直接返回即可
-		ss.lg.Warn("can not rebalance",
+		ss.lg.Warn(
+			"can not extractShardMoves",
 			zap.String("service", ss.service),
 			zap.Bool("container-changed", containerChanged),
 			zap.Bool("shard-changed", shardChanged),
@@ -406,6 +415,175 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 			zap.Reflect("shardIdAndManualContainerId", bg.fixShardIdAndManualContainerId),
 			zap.Strings("etcdHbContainerIds", etcdHbContainerIdAndAny.KeyList()),
 			zap.Reflect("hbShardIdAndContainerId", bg.hbShardIdAndContainerId),
+		)
+	}
+
+	// guard lease 实现
+	if len(allShardMoves) > 0 {
+		ss.lg.Info(
+			"service start rb",
+			zap.String("service", ss.service),
+		)
+		if err := ss.rb(allShardMoves); err != nil {
+			return errors.Wrap(err, "")
+		}
+	} else {
+		ss.lg.Info(
+			"service safe, no shard moves",
+			zap.String("service", ss.service),
+		)
+	}
+	return nil
+}
+
+func (ss *smShard) rb(shardMoves moveActionList) error {
+	// 1 先梳理出来drop的shard
+	assignment := apputil.Assignment{}
+	for _, action := range shardMoves {
+		if action.DropEndpoint != "" {
+			assignment.Drops = append(assignment.Drops, action.ShardId)
+		}
+	}
+	// 2 获取新的bridge lease
+	bridgeGrantLeaseResp, err := ss.container.Client.GetClient().Grant(context.TODO(), defaultBridgeLeaseTimeout)
+	if err != nil {
+		return errors.Wrap(err, "Grant error")
+	}
+	// 3 写入bridge lease节点
+	bridgeLease := apputil.Lease{
+		ID:         bridgeGrantLeaseResp.ID,
+		Assignment: &assignment,
+	}
+	bridgePfx := ss.container.nodeManager.nodeServiceBridge(ss.service)
+	if err := ss.container.Client.CreateAndGet(context.TODO(), []string{bridgePfx}, []string{bridgeLease.String()}, bridgeGrantLeaseResp.ID); err != nil {
+		return errors.Wrap(err, "CreateAndGet error")
+	}
+	// 4 等待bridge timeout
+	bridgeLeaseTimeToLiveResponse, err := ss.container.Client.GetClient().TimeToLive(context.TODO(), bridgeLease.ID)
+	if err != nil {
+		return errors.Wrap(err, "TimeToLive error")
+	}
+	if bridgeLeaseTimeToLiveResponse.TTL == -1 {
+		ss.lg.Info(
+			"bridge lease already expired",
+			zap.String("bridgePfx", bridgePfx),
+			zap.Int64("ttl", bridgeLeaseTimeToLiveResponse.TTL),
+			zap.Reflect("lease", bridgeLease),
+		)
+	} else {
+		ss.lg.Info(
+			"start waiting bridge lease expired",
+			zap.String("bridgePfx", bridgePfx),
+			zap.Int64("ttl", bridgeLeaseTimeToLiveResponse.TTL),
+			zap.Reflect("lease", bridgeLease),
+		)
+		time.Sleep(time.Duration(bridgeLeaseTimeToLiveResponse.TTL+1) * time.Second)
+		ss.lg.Info(
+			"bridge lease expired",
+			zap.String("bridgePfx", bridgePfx),
+			zap.Reflect("lease", bridgeLease),
+		)
+	}
+	if _, err := ss.container.Client.GetClient().Revoke(context.TODO(), bridgeLease.ID); err != nil {
+		return errors.Wrap(err, "Revoke error")
+	}
+
+	// 5 grant guard lease
+	guardLeaseResp, err := ss.container.Client.GetClient().Grant(context.TODO(), defaultGuardLeaseTimeout)
+	if err != nil {
+		return errors.Wrap(err, "Grant error")
+	}
+	// 6 设置guard lease
+	guardPfx := ss.container.nodeManager.nodeServiceGuard(ss.service)
+	guardLease := apputil.Lease{ID: guardLeaseResp.ID}
+	if _, err := ss.container.Client.Put(context.TODO(), guardPfx, guardLease.String()); err != nil {
+		return errors.Wrap(err, "Put error")
+	}
+	// 7 等待guard timeout
+	guardLeaseTimeToLiveResponse, err := ss.container.Client.GetClient().TimeToLive(context.TODO(), guardLeaseResp.ID)
+	if err != nil {
+		return errors.Wrap(err, "TimeToLive error")
+	}
+	ss.lg.Info(
+		"waiting guard lease expired",
+		zap.String("guardPfx", guardPfx),
+		zap.Int64("ttl", guardLeaseTimeToLiveResponse.TTL),
+		zap.Reflect("lease", guardLease),
+	)
+	time.Sleep(time.Duration(guardLeaseTimeToLiveResponse.TTL+1) * time.Second)
+	ss.lg.Info(
+		"guard lease expired",
+		zap.String("bridgePfx", bridgePfx),
+		zap.Reflect("lease", guardLease),
+	)
+	// 8 下发add请求
+	var addMA moveActionList
+	shards := ss.mpr.AliveShards()
+	for _, action := range shardMoves {
+		if action.AddEndpoint == "" {
+			continue
+		}
+
+		t, ok := shards[action.ShardId]
+		if !ok {
+			// 不是存活shard，可以移动
+			action.DropEndpoint = ""
+			action.Spec.LeaseID = guardLease.ID
+			addMA = append(addMA, action)
+			continue
+		}
+
+		// shard存活，打印日志报告异常
+		if t.leaseID != guardLease.ID {
+			ss.lg.Error(
+				"alive shard invalid lease",
+				zap.String("shardId", action.ShardId),
+				zap.Reflect("t", t),
+				zap.Int64("leaseID", int64(t.leaseID)),
+				zap.Int64("guardLease", int64(guardLease.ID)),
+			)
+		}
+	}
+	if len(addMA) > 0 {
+		ev := workerTriggerEvent{
+			Service:     ss.service,
+			EnqueueTime: time.Now().Unix(),
+			Value:       []byte(addMA.String()),
+		}
+		_ = ss.trigger.Put(&evtrigger.TriggerEvent{Key: workerTrigger, Value: &ev})
+	}
+
+	// 9 要等shardkeeper内部的分片下发，且方式立即开启一次rb
+	time.Sleep(5 * time.Second)
+
+	return nil
+}
+
+func (ss *smShard) validateGuardLease() error {
+	// 获取guard lease
+	guardPfx := ss.container.nodeManager.nodeServiceGuard(ss.service)
+	resp, err := ss.container.Client.GetKV(context.TODO(), guardPfx, []clientv3.OpOption{clientv3.WithPrefix()})
+	if err != nil {
+		return errors.Wrap(err, "")
+	}
+	if resp.Count == 0 {
+		err := errors.Errorf("guard not found %s", guardPfx)
+		return errors.Wrap(err, "")
+	}
+	var lease apputil.Lease
+	if err := json.Unmarshal(resp.Kvs[0].Value, &lease); err != nil {
+		return errors.Wrap(err, "")
+	}
+	if lease.ID == clientv3.NoLease {
+		ss.lg.Info(
+			"guard NoLease",
+			zap.String("guardPfx", guardPfx),
+		)
+	} else {
+		ss.lg.Info(
+			"current guard lease",
+			zap.String("guardPfx", guardPfx),
+			zap.Int64("leaseID", int64(lease.ID)),
 		)
 	}
 	return nil
@@ -418,7 +596,11 @@ func (ss *smShard) changed(a []string, b []string) bool {
 }
 
 // 只负责shard移动的场景，删除在balanceChecker中处理
-func (ss *smShard) rebalance(fixShardIdAndManualContainerId ArmorMap, hbContainerIdAndAny ArmorMap, hbShardIdAndContainerId ArmorMap, shardIdAndShardSpec map[string]*apputil.ShardSpec) moveActionList {
+func (ss *smShard) extractShardMoves(
+	fixShardIdAndManualContainerId ArmorMap,
+	hbContainerIdAndAny ArmorMap,
+	hbShardIdAndContainerId ArmorMap,
+	shardIdAndShardSpec map[string]*apputil.ShardSpec) moveActionList {
 	// 保证shard在hb中上报的container和存活container一致
 	containerIdAndHbShardIds := hbShardIdAndContainerId.SwapKV()
 	for containerId := range containerIdAndHbShardIds {
@@ -581,7 +763,7 @@ func (ss *smShard) rebalance(fixShardIdAndManualContainerId ArmorMap, hbContaine
 	}
 
 	ss.lg.Info(
-		"rebalance",
+		"rb result",
 		zap.String("service", ss.service),
 		zap.Reflect("resultMAL", mals),
 		zap.Any("fixShardIdAndManualContainerId", fixShardIdAndManualContainerId),
@@ -609,11 +791,6 @@ func (ss *smShard) maxHold(containerCnt, shardCnt int) int {
 
 func (ss *smShard) processEvent(key string, value interface{}) error {
 	event := value.(*workerTriggerEvent)
-	ss.lg.Info(
-		"event received",
-		zap.String("key", key),
-		zap.Reflect("ev", event),
-	)
 
 	var mal moveActionList
 	if err := json.Unmarshal(event.Value, &mal); err != nil {
@@ -625,10 +802,15 @@ func (ss *smShard) processEvent(key string, value interface{}) error {
 		// return ASAP unmarshal失败重试没意义，需要人工接入进行数据修正
 		return errors.Wrap(err, "")
 	}
+	ss.lg.Info(
+		"event received",
+		zap.String("key", key),
+		zap.Reflect("mal", mal),
+	)
 	if len(mal) == 0 {
 		ss.lg.Warn(
 			"empty move actions",
-			zap.ByteString("value", event.Value),
+			zap.String("key", key),
 		)
 		return nil
 	}

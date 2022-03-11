@@ -101,8 +101,24 @@ func newSMContainer(opts *serverOptions) (*smContainer, error) {
 	sCtr.Container = container
 
 	// 判断sm的spec是否存在,如果不存在，那么进行创建,可以通过接口进行参数更改
-	spec := smAppSpec{Service: opts.service, CreateTime: time.Now().Unix()}
-	if err := sCtr.Client.CreateAndGet(context.TODO(), []string{sCtr.nodeManager.nodeServiceSpec(sCtr.Service())}, []string{spec.String()}, clientv3.NoLease); err != nil && err != etcdutil.ErrEtcdNodeExist {
+	spec := smAppSpec{
+		Service:    opts.service,
+		CreateTime: time.Now().Unix(),
+	}
+	lease := apputil.Lease{}
+	if err := sCtr.Client.CreateAndGet(
+		context.TODO(),
+		[]string{
+			sCtr.nodeManager.nodeServiceSpec(sCtr.Service()),
+			sCtr.nodeManager.nodeServiceGuard(sCtr.Service()),
+			sCtr.nodeManager.nodeServiceContainerHb(sCtr.Service()),
+		},
+		[]string{
+			spec.String(),
+			lease.String(),
+			"",
+		},
+		clientv3.NoLease); err != nil && err != etcdutil.ErrEtcdNodeExist {
 		return nil, errors.Wrap(err, "")
 	}
 
@@ -257,36 +273,6 @@ func (c *smContainer) Drop(id string) error {
 		zap.String("service", c.Service()),
 	)
 	return nil
-}
-
-func (c *smContainer) Load(id string) (string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closing {
-		c.lg.Info("container closing, give up load",
-			zap.String("id", id),
-			zap.String("service", c.Service()),
-		)
-		return "", apputil.ErrClosing
-	}
-
-	sd, ok := c.shards[id]
-	if !ok {
-		c.lg.Warn(
-			"shard not exist",
-			zap.String("id", id),
-			zap.String("service", c.Service()),
-		)
-		return "", apputil.ErrNotExist
-	}
-	load := sd.Load()
-	c.lg.Debug("get load success",
-		zap.String("id", id),
-		zap.String("service", c.Service()),
-		zap.String("load", load),
-	)
-	return load, nil
 }
 
 type leaderEtcdValue struct {

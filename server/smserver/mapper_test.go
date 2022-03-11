@@ -46,7 +46,10 @@ func (suite *MapperStateTestSuite) TestForEach() {
 
 var (
 	fakeContainerId = mock.Anything
-	fakeShardIds    = []string{"foo", "bar"}
+	fakeShards      = []*apputil.ShardKeeperDbValue{
+		{ShardId: "foo"},
+		{ShardId: "bar"},
+	}
 )
 
 func TestMapper(t *testing.T) {
@@ -85,7 +88,7 @@ func (suite *MapperTestSuite) createFakeContainer() {
 		Heartbeat: apputil.Heartbeat{
 			Timestamp: time.Now().Unix(),
 		},
-		ShardIds: fakeShardIds,
+		Shards: fakeShards,
 	}
 	suite.mpr.create(fakeContainerId, []byte(fakeHbA.String()))
 }
@@ -138,10 +141,9 @@ func (suite *MapperTestSuite) TestAliveShards() {
 }
 
 func (suite *MapperTestSuite) TestCreate_shard() {
-	fakeShardIds := []string{"foo", "bar"}
 	hb := apputil.ContainerHeartbeat{
 		Heartbeat: apputil.Heartbeat{Timestamp: time.Now().Unix()},
-		ShardIds:  fakeShardIds,
+		Shards:    fakeShards,
 	}
 
 	containerId := mock.Anything
@@ -172,14 +174,19 @@ func (suite *MapperTestSuite) TestDelete_success() {
 }
 
 func (suite *MapperTestSuite) TestRefresh_containerNotExist() {
-	fakeShardIds := []string{"foo", "bar"}
 	hb := apputil.ContainerHeartbeat{
 		Heartbeat: apputil.Heartbeat{Timestamp: time.Now().Unix()},
-		ShardIds:  fakeShardIds,
+		Shards:    fakeShards,
+	}
+	event := clientv3.Event{
+		Kv: &mvccpb.KeyValue{
+			Key:   []byte(""),
+			Value: []byte(hb.String()),
+		},
 	}
 
 	fakeContainerId := mock.Anything
-	err := suite.mpr.Refresh(fakeContainerId, []byte(hb.String()))
+	err := suite.mpr.Refresh(fakeContainerId, &event)
 	assert.Nil(suite.T(), err)
 	ctrT := suite.mpr.containerState.alive[fakeContainerId]
 	assert.Equal(suite.T(), ctrT.lastHeartbeatTime.Unix(), hb.Timestamp)
@@ -192,9 +199,15 @@ func (suite *MapperTestSuite) TestRefresh_containerUpdateTime() {
 		Heartbeat: apputil.Heartbeat{
 			Timestamp: time.Now().Unix() + 1,
 		},
-		ShardIds: fakeShardIds,
+		Shards: fakeShards,
 	}
-	err := suite.mpr.Refresh(fakeContainerId, []byte(fakeHbB.String()))
+	event := clientv3.Event{
+		Kv: &mvccpb.KeyValue{
+			Key:   []byte(""),
+			Value: []byte(fakeHbB.String()),
+		},
+	}
+	err := suite.mpr.Refresh(fakeContainerId, &event)
 	assert.Nil(suite.T(), err)
 
 	ctrT := suite.mpr.containerState.alive[fakeContainerId]
@@ -214,12 +227,11 @@ func (suite *MapperTestSuite) TestWait_containerNotFound() {
 func (suite *MapperTestSuite) TestWait_triggerWait() {
 	// 构造测试数据
 	fakeContainerId := mock.Anything
-	fakeShardIds := []string{"foo", "bar"}
 	fakeHbA := apputil.ContainerHeartbeat{
 		Heartbeat: apputil.Heartbeat{
 			Timestamp: time.Now().Unix(),
 		},
-		ShardIds: fakeShardIds,
+		Shards: fakeShards,
 	}
 	err := suite.mpr.create(fakeContainerId, []byte(fakeHbA.String()))
 	assert.Nil(suite.T(), err)
@@ -236,7 +248,7 @@ func (suite *MapperTestSuite) TestUpdateState_createEvent() {
 		Heartbeat: apputil.Heartbeat{
 			Timestamp: time.Now().Unix() + 1,
 		},
-		ShardIds: fakeShardIds,
+		Shards: fakeShards,
 	}
 
 	// create event
