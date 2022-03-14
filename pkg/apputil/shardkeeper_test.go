@@ -2,7 +2,6 @@ package apputil
 
 import (
 	"fmt"
-	"go.uber.org/zap"
 	"testing"
 
 	bolt "go.etcd.io/bbolt"
@@ -73,7 +72,7 @@ func Test_shardKeeper_forEach(t *testing.T) {
 		},
 	)
 
-	if err := sk.forEach(func(k, v []byte) error {
+	if err := sk.forEachRead(func(k, v []byte) error {
 		fmt.Println(string(k))
 		return nil
 	}); err != nil {
@@ -102,17 +101,6 @@ func Test_shardKeeper_sync(t *testing.T) {
 	)
 
 	if err := sk.sync(); err != nil {
-		t.Error(err)
-		t.SkipNow()
-	}
-}
-
-func Test_shardKeeper_Dispatch(t *testing.T) {
-	lg, _ := zap.NewDevelopment()
-	sk := shardKeeper{lg: lg, service: "test", shardImpl: &testShardImpl{}}
-	sk.db, _ = testNewDb(sk.service)
-	value := shardKeeperTriggerValue{shardId: "foo", shardKeeperDbValue: shardKeeperDbValue{}}
-	if err := sk.Dispatch(dropTrigger, &value); err != nil {
 		t.Error(err)
 		t.SkipNow()
 	}

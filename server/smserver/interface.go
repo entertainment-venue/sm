@@ -16,7 +16,6 @@ type Shard interface {
 	io.Closer
 
 	Spec() *apputil.ShardSpec
-	Load() string
 
 	// 下面是SM的Shard特定的
 	SetMaxShardCount(maxShardCount int)

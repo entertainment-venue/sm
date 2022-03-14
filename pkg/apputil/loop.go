@@ -57,6 +57,10 @@ loop:
 	// 允许不关注rev的watch
 	if startRev >= 0 {
 		opts = append(opts, clientv3.WithRev(startRev))
+
+		// delete事件需要上一个kv
+		// https://github.com/etcd-io/etcd/issues/6120
+		opts = append(opts, clientv3.WithPrevKV())
 	}
 	wch = client.Watch(ctx, key, opts...)
 	for {

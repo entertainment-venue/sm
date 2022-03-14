@@ -17,7 +17,10 @@ package etcdutil
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 	"time"
+
+	"github.com/entertainment-venue/sm/pkg/logutil"
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -42,6 +45,7 @@ var (
 // EtcdWrapper 4 unit test
 // etcd的方法已经是通过interface开放出来，这里进行二次封装
 type EtcdWrapper interface {
+	GetClient() *EtcdClient
 	GetKV(_ context.Context, node string, opts []clientv3.OpOption) (*clientv3.GetResponse, error)
 	GetKVs(ctx context.Context, prefix string) (map[string]string, error)
 	UpdateKV(ctx context.Context, key string, value string) error
@@ -49,6 +53,7 @@ type EtcdWrapper interface {
 
 	CreateAndGet(ctx context.Context, nodes []string, values []string, leaseID clientv3.LeaseID) error
 	CompareAndSwap(_ context.Context, node string, curValue string, newValue string, leaseID clientv3.LeaseID) (string, error)
+	Inc(_ context.Context, pfx string) (string, error)
 
 	Ctx() context.Context
 	Get(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error)
@@ -60,10 +65,18 @@ type EtcdWrapper interface {
 type EtcdClient struct {
 	*clientv3.Client
 
-	lg *zap.Logger
+	lg logutil.Logger
+}
+
+func (w *EtcdClient) GetClient() *EtcdClient {
+	return w
 }
 
 func NewEtcdClient(endpoints []string, lg *zap.Logger) (*EtcdClient, error) {
+	return NewEtcdClientWithCustomLogger(endpoints, logutil.NewZapLogger(lg))
+}
+
+func NewEtcdClientWithCustomLogger(endpoints []string, lg logutil.Logger) (*EtcdClient, error) {
 	if len(endpoints) < 1 {
 		return nil, errors.New("You must provide at least one etcd address")
 	}
@@ -72,6 +85,10 @@ func NewEtcdClient(endpoints []string, lg *zap.Logger) (*EtcdClient, error) {
 		return nil, errors.Wrap(err, "")
 	}
 	return &EtcdClient{Client: client, lg: lg}, nil
+}
+
+func NewEtcdClientWithClient(client *clientv3.Client, lg *zap.Logger) *EtcdClient {
+	return &EtcdClient{Client: client, lg: logutil.NewZapLogger(lg)}
 }
 
 func (w *EtcdClient) GetKV(_ context.Context, node string, opts []clientv3.OpOption) (*clientv3.GetResponse, error) {
@@ -215,4 +232,29 @@ func (w *EtcdClient) CompareAndSwap(_ context.Context, node string, curValue str
 		zap.Error(ErrEtcdValueNotMatch),
 	)
 	return realValue, ErrEtcdValueNotMatch
+}
+
+func (w *EtcdClient) Inc(_ context.Context, pfx string) (string, error) {
+	if pfx == "" {
+		return "", nil
+	}
+	gresp, err := w.GetKV(context.TODO(), pfx, nil)
+	if err != nil {
+		return "", err
+	}
+	if gresp.Count <= 0 {
+		initValue := "1"
+		if err := w.CreateAndGet(context.TODO(), []string{pfx}, []string{initValue}, clientv3.NoLease); err != nil {
+			return "", err
+		}
+		return initValue, nil
+	}
+
+	cur, _ := strconv.ParseUint(string(gresp.Kvs[0].Value), 10, 64)
+	curStr := strconv.FormatUint(cur, 10)
+	newStr := strconv.FormatUint(cur+1, 10)
+	if _, err := w.CompareAndSwap(context.TODO(), pfx, curStr, newStr, clientv3.NoLease); err != nil {
+		return "", err
+	}
+	return newStr, nil
 }

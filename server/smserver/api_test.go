@@ -46,7 +46,7 @@ func (suite *ApiTestSuite) SetupTest() {
 	}
 	suite.container.SetService("foo")
 
-	handlers := suite.testServer.getHandlers(suite.container)
+	handlers := suite.container.getHttpHandlers()
 	for path, handler := range handlers {
 		suite.testRouter.Any(path, handler)
 	}
@@ -82,6 +82,14 @@ var (
 
 type MockedEtcdWrapper struct {
 	mock.Mock
+}
+
+func (m *MockedEtcdWrapper) GetClient() *etcdutil.EtcdClient {
+	panic("implement me")
+}
+
+func (m *MockedEtcdWrapper) Inc(_ context.Context, pfx string) (string, error) {
+	panic("implement me")
 }
 
 func (m *MockedEtcdWrapper) Get(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error) {
@@ -138,6 +146,8 @@ func (suite *ApiTestSuite) TestGinAddSpec_success() {
 	var nodes []string
 	nodes = append(nodes, "/sm/app/foo/service/serviceA/spec")
 	// TODO apputil.Container 中的service没有exported，所这块不能赋值
+	nodes = append(nodes, "/sm/app/serviceA/lease/guard")
+	nodes = append(nodes, "/sm/app/serviceA/containerhb/")
 	nodes = append(nodes, "/sm/app/foo/service/foo/shard/serviceA")
 
 	mockedEtcdWrapper := new(MockedEtcdWrapper)
