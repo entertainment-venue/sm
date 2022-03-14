@@ -407,7 +407,11 @@ func (ctr *Container) close() {
 	// FIXME session会触发drop动作，不允许失败，但也是潜在风险，一般的sdk使用者，不了解close的机制
 	dropFn := func(k, v []byte) error {
 		shardId := string(k)
-		return ctr.opts.impl.Drop(shardId)
+		err := ctr.opts.impl.Drop(shardId)
+		if err == ErrNotExist {
+			return nil
+		}
+		return err
 	}
 	if err := ctr.keeper.forEachRead(dropFn); err != nil {
 		ctr.opts.lg.Error(
@@ -586,6 +590,7 @@ func (ctr *Container) AddShard(c *gin.Context) {
 		return
 	}
 
+	req.Spec.Id = req.Id
 	if err := ctr.keeper.Add(req.Id, req.Spec); err != nil {
 		ctr.opts.lg.Error(
 			"Add err",
@@ -615,7 +620,7 @@ func (ctr *Container) DropShard(c *gin.Context) {
 		return
 	}
 
-	if err := ctr.keeper.Drop(req.Id); err != nil {
+	if err := ctr.keeper.Drop(req.Id); err != nil && err != ErrNotExist {
 		ctr.opts.lg.Error(
 			"Drop err",
 			zap.Error(err),
