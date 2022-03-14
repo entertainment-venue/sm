@@ -99,7 +99,7 @@ type smShard struct {
 	mpr *mapper
 
 	// trigger 负责分片移动任务的任务提交和处理
-	trigger *evtrigger.Trigger
+	trigger evtrigger.Trigger
 	// operator 对接接入方，通过http请求下发shard move指令
 	operator *operator
 

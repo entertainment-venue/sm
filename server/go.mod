@@ -10,7 +10,7 @@ require (
 	github.com/swaggo/files v0.0.0-20210815190702-a29dd2bc99b2
 	github.com/swaggo/gin-swagger v1.4.1
 	github.com/swaggo/swag v1.7.9
-	github.com/zd3tl/evtrigger v0.0.0-20220210031052-b4ea6139b28c
+	github.com/zd3tl/evtrigger v0.0.0-20220314063751-37579f964560
 	go.etcd.io/etcd/api/v3 v3.5.1
 	go.etcd.io/etcd/client/v3 v3.5.1
 	go.uber.org/zap v1.20.0
