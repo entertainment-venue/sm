@@ -180,7 +180,13 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 		)
 		return nil, errors.Wrap(ErrNotExist, "")
 	}
-	sk.startRev = gresp.Header.Revision
+	var maxModRevision int64
+	for _, v := range gresp.Kvs {
+		if v.ModRevision > maxModRevision {
+			maxModRevision = v.ModRevision
+		}
+	}
+	sk.startRev = maxModRevision
 
 	return &sk, nil
 }
@@ -417,6 +423,7 @@ func (sk *shardKeeper) acquireBridgeLease(ev *clientv3.Event, lease *Lease) erro
 							"drop shard when acquire bridge",
 							zap.String("shardID", shardID),
 							zap.Reflect("v", dv),
+							zap.Int64("bridgeLease", int64(lease.ID)),
 						)
 						// 软删除
 						dv.Disp = false
@@ -472,6 +479,9 @@ func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *Lease) error
 
 	key := string(ev.Kv.Key)
 
+	// 预先设定guardLease，boltdb的shard逐个过度到guardLease下
+	sk.guardLease = lease.ID
+
 	if sk.bridgeLease == clientv3.NoLease {
 		sk.lg.Warn(
 			"guard: found bridge lease zero, do not not participating rb",
@@ -484,9 +494,6 @@ func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *Lease) error
 		// 清理bridge，不管逻辑是否出错
 		sk.bridgeLease = clientv3.NoLease
 	}()
-
-	// 预先设定guardLease，boltdb的shard逐个过度到guardLease下
-	sk.guardLease = lease.ID
 
 	// 每个shard的lease存在下面3种状态：
 	// 1 shard的lease和guard lease相等，shard分配有效，什么都不用做
@@ -676,7 +683,7 @@ func (sk *shardKeeper) sync() error {
 			if dv.Lease != sk.guardLease {
 				sk.lg.Warn(
 					"unexpected lease, wait for rb",
-					zap.String("dv", dv.String()),
+					zap.Reflect("dv", dv),
 					zap.Int64("guardLease", int64(sk.guardLease)),
 				)
 				return nil
