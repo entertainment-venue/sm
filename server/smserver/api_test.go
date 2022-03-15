@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -82,6 +83,10 @@ var (
 
 type MockedEtcdWrapper struct {
 	mock.Mock
+}
+
+func (m *MockedEtcdWrapper) NewSession(ctx context.Context, client *clientv3.Client, opts ...concurrency.SessionOption) (*concurrency.Session, error) {
+	panic("implement me")
 }
 
 func (m *MockedEtcdWrapper) GetClient() *etcdutil.EtcdClient {

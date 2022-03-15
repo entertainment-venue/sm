@@ -106,6 +106,8 @@ type smShard struct {
 	mu sync.Mutex
 	// balancing 正在rb的情况下，不能开启下一次rb
 	balancing bool
+
+	guardLeaseID clientv3.LeaseID
 }
 
 func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard, error) {
@@ -152,8 +154,28 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 	ss.trigger = trigger
 	ss.operator = newOperator(ss.lg, shardSpec.Service)
 
+	// 提供当前的guard lease
+	leasePfx := ss.container.nodeManager.nodeServiceGuard(ss.service)
+	gresp, err := ss.container.Client.Get(context.TODO(), leasePfx, clientv3.WithPrefix())
+	if err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+	if gresp.Count != 1 {
+		err := errors.New("lease node error")
+		ss.lg.Error(
+			"unexpected lease count in etcd",
+			zap.String("service", ss.service),
+			zap.Int64("count", gresp.Count),
+			zap.Error(err),
+		)
+		return nil, errors.Wrap(err, "")
+	}
+	var dv apputil.Lease
+	json.Unmarshal(gresp.Kvs[0].Value, &dv)
+	ss.guardLeaseID = dv.ID
+
 	// TODO 参数传递的有些冗余，需要重新梳理
-	ss.mpr, err = newMapper(container, &appSpec)
+	ss.mpr, err = newMapper(container, &appSpec, ss)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -450,8 +472,9 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	}
 	// 3 写入bridge lease节点
 	bridgeLease := apputil.Lease{
-		ID:         bridgeGrantLeaseResp.ID,
-		Assignment: &assignment,
+		ID:           bridgeGrantLeaseResp.ID,
+		GuardLeaseID: ss.guardLeaseID,
+		Assignment:   &assignment,
 	}
 	bridgePfx := ss.container.nodeManager.nodeServiceBridge(ss.service)
 	if err := ss.container.Client.CreateAndGet(context.TODO(), []string{bridgePfx}, []string{bridgeLease.String()}, bridgeGrantLeaseResp.ID); err != nil {
@@ -492,6 +515,9 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	if err != nil {
 		return errors.Wrap(err, "Grant error")
 	}
+	// 刷新内存的guard lease
+	ss.guardLeaseID = guardLeaseResp.ID
+
 	// 6 设置guard lease
 	guardPfx := ss.container.nodeManager.nodeServiceGuard(ss.service)
 	guardLease := apputil.Lease{ID: guardLeaseResp.ID}

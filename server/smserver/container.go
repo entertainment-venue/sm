@@ -79,6 +79,28 @@ func newSMContainer(opts *serverOptions) (*smContainer, error) {
 	}
 	sCtr.Client = etcdClient
 
+	// 判断sm的spec是否存在,如果不存在，那么进行创建,可以通过接口进行参数更改
+	spec := smAppSpec{
+		Service:    opts.service,
+		CreateTime: time.Now().Unix(),
+	}
+	lease := apputil.Lease{}
+	if err := sCtr.Client.CreateAndGet(
+		context.TODO(),
+		[]string{
+			sCtr.nodeManager.nodeServiceSpec(opts.service),
+			sCtr.nodeManager.nodeServiceGuard(opts.service),
+			sCtr.nodeManager.nodeServiceContainerHb(opts.service),
+		},
+		[]string{
+			spec.String(),
+			lease.String(),
+			"",
+		},
+		clientv3.NoLease); err != nil && err != etcdutil.ErrEtcdNodeExist {
+		return nil, errors.Wrap(err, "")
+	}
+
 	container, err := apputil.NewContainer(
 		apputil.WithLogger(opts.lg),
 		apputil.WithService(opts.service),
@@ -99,28 +121,6 @@ func newSMContainer(opts *serverOptions) (*smContainer, error) {
 		return nil, errors.Wrap(err, "")
 	}
 	sCtr.Container = container
-
-	// 判断sm的spec是否存在,如果不存在，那么进行创建,可以通过接口进行参数更改
-	spec := smAppSpec{
-		Service:    opts.service,
-		CreateTime: time.Now().Unix(),
-	}
-	lease := apputil.Lease{}
-	if err := sCtr.Client.CreateAndGet(
-		context.TODO(),
-		[]string{
-			sCtr.nodeManager.nodeServiceSpec(sCtr.Service()),
-			sCtr.nodeManager.nodeServiceGuard(sCtr.Service()),
-			sCtr.nodeManager.nodeServiceContainerHb(sCtr.Service()),
-		},
-		[]string{
-			spec.String(),
-			lease.String(),
-			"",
-		},
-		clientv3.NoLease); err != nil && err != etcdutil.ErrEtcdNodeExist {
-		return nil, errors.Wrap(err, "")
-	}
 
 	// 竞争leader
 	sCtr.stopper.Wrap(
