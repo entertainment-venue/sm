@@ -296,7 +296,16 @@ func (ss *smShardApi) GinAddShard(c *gin.Context) {
 	}
 
 	// 检查是否存在该service
-	if _, ok := ss.container.shards[req.Service]; !ok {
+	resp, err := ss.container.Client.GetKV(context.Background(), ss.container.nodeManager.nodeServiceSpec(req.Service), nil)
+	if err != nil {
+		ss.lg.Error("GetKV error",
+			zap.Error(err),
+			zap.String("service node", ss.container.nodeManager.nodeServiceSpec(req.Service)),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if resp.Count == 0 {
 		err := errors.Errorf(fmt.Sprintf("service[%s] not exist", req.Service))
 		ss.lg.Error("service error", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

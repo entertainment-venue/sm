@@ -28,7 +28,6 @@ type Client struct {
 	stopper     *apputil.GoroutineStopper
 	lg          *zap.Logger
 	container   *apputil.Container
-	shardServer *apputil.ShardServer
 	opts        *clientOptions
 }
 
@@ -130,7 +129,7 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 				case <-ctx.Done():
 					c.lg.Info("client exit")
 					return
-				case <-c.shardServer.Done():
+				case <-c.container.Done():
 					lg.Info("session done, try again")
 					if err := c.newServer(); err != nil {
 						lg.Error("new server failed",
@@ -147,26 +146,20 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 
 func (c *Client) newServer() error {
 	container, err := apputil.NewContainer(
-		apputil.ContainerWithService(c.opts.service),
-		apputil.ContainerWithId(c.opts.containerId),
-		apputil.ContainerWithEndpoints(c.opts.etcdAddr),
-		apputil.ContainerWithLogger(c.lg))
+		apputil.WithService(c.opts.service),
+		apputil.WithId(c.opts.containerId),
+		apputil.WithEndpoints(c.opts.etcdAddr),
+		apputil.WithEtcdPrefix(c.opts.etcdPrefix),
+		apputil.WithRouter(c.opts.g),
+		apputil.WithLogger(c.lg),
+		apputil.WithShardImplementation(c.opts.v))
 	if err != nil {
+		if container != nil {
+			container.Close()
+		}
 		return errors.Wrap(err, "new container failed")
 	}
-
-	shardServer, err := apputil.NewShardServer(
-		apputil.ShardServerWithEtcdPrefix(c.opts.etcdPrefix),
-		apputil.ShardServerWithRouter(c.opts.g),
-		apputil.ShardServerWithContainer(container),
-		apputil.ShardServerWithShardImplementation(c.opts.v),
-		apputil.ShardServerWithLogger(c.lg))
-	if err != nil {
-		container.Close()
-		return errors.Wrap(err, "new shard server failed")
-	}
 	c.container = container
-	c.shardServer = shardServer
 	return nil
 }
 
@@ -175,5 +168,4 @@ func (c *Client) Close() {
 		c.stopper.Close()
 	}
 	c.container.Close()
-	c.shardServer.Close()
 }
