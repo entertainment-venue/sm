@@ -15,11 +15,12 @@
 package smserver
 
 import (
+	"time"
+
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	_ "github.com/entertainment-venue/sm/server/docs"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
-	"time"
 )
 
 type Server struct {
