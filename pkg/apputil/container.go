@@ -278,6 +278,24 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	}
 	c.keeper = keeper
 
+	// 上报container初始shard状态，初始化同步做一次，
+	// shard带有lease属性，lease的状态分几种：
+	// 1 lease和server一致，server不会因为本container触发rb
+	// 2 lease和server不一致，server会因为本container触发rb
+	// 在container的shard的状态上报ok的情况，shardkeeper的逻辑更容易推算
+	if err := c.heartbeat(context.TODO()); err != nil {
+		// 报错，但不停止
+		c.opts.lg.Error(
+			"heartbeat error",
+			zap.String("service", c.opts.service),
+			zap.Error(err),
+		)
+		return nil, errors.Wrap(err, "")
+	}
+
+	// 在server知晓本地shard属性的前提下，开启处理本地shard的goroutine
+	c.keeper.watchLease()
+
 	// 通过heartbeat上报数据
 	c.stopper.Wrap(
 		func(ctx context.Context) {

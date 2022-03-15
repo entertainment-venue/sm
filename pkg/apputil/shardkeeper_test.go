@@ -18,6 +18,10 @@ var (
 	_ ShardInterface    = new(MockedShardInterface)
 )
 
+func TestShardKeeper(t *testing.T) {
+	suite.Run(t, new(ShardKeeperTestSuite))
+}
+
 type MockedTrigger struct {
 	mock.Mock
 }
@@ -51,10 +55,6 @@ func (m *MockedShardInterface) Add(id string, spec *ShardSpec) error {
 func (m *MockedShardInterface) Drop(id string) error {
 	args := m.Called(id)
 	return args.Error(0)
-}
-
-func TestShardKeeper(t *testing.T) {
-	suite.Run(t, new(ShardKeeperTestSuite))
 }
 
 type ShardKeeperTestSuite struct {
@@ -97,60 +97,6 @@ func (suite *ShardKeeperTestSuite) SetupTest() {
 			return nil
 		},
 	)
-}
-
-func (suite *ShardKeeperTestSuite) TestTryGuardLease_NotEqual() {
-	gl := Lease{ID: 2}
-	err := suite.shardKeeper.tryGuardLease(&gl)
-	assert.Nil(suite.T(), err)
-	suite.shardKeeper.db.View(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			v := b.Get([]byte(suite.curShard.Spec.Id))
-			var dbValue ShardKeeperDbValue
-			json.Unmarshal(v, &dbValue)
-			// 对现有的shard，没有影响
-			assert.Equal(suite.T(), suite.curShard, &dbValue)
-			return nil
-		},
-	)
-	suite.shardKeeper.db.Close()
-}
-
-func (suite *ShardKeeperTestSuite) TestTryGuardLease_NoLease() {
-	gl := Lease{ID: clientv3.NoLease}
-	err := suite.shardKeeper.tryGuardLease(&gl)
-	assert.Nil(suite.T(), err)
-	suite.shardKeeper.db.View(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			v := b.Get([]byte(suite.curShard.Spec.Id))
-			var dbValue ShardKeeperDbValue
-			json.Unmarshal(v, &dbValue)
-			// 对现有的shard，没有影响
-			assert.Equal(suite.T(), suite.curShard, &dbValue)
-			return nil
-		},
-	)
-	suite.shardKeeper.db.Close()
-}
-
-func (suite *ShardKeeperTestSuite) TestTryGuardLease_ShardValid() {
-	gl := Lease{ID: suite.curShard.Lease}
-	err := suite.shardKeeper.tryGuardLease(&gl)
-	assert.Nil(suite.T(), err)
-	suite.shardKeeper.db.View(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			v := b.Get([]byte(suite.curShard.Spec.Id))
-			var dbValue ShardKeeperDbValue
-			json.Unmarshal(v, &dbValue)
-			assert.False(suite.T(), dbValue.Disp)
-			assert.False(suite.T(), dbValue.Drop)
-			return nil
-		},
-	)
-	suite.shardKeeper.db.Close()
 }
 
 func (suite *ShardKeeperTestSuite) TestDropByLease_UnmarshalError() {
@@ -305,19 +251,6 @@ func (suite *ShardKeeperTestSuite) TestSync_NotInitializedAndDrop() {
 	suite.curShard.Drop = true
 	suite.shardKeeper.Add(fakeShardId, suite.curShard.Spec)
 
-	mockedTrigger := new(MockedTrigger)
-	mockedTrigger.On("Put", mock.Anything).Return(nil)
-	suite.shardKeeper.dispatchTrigger = mockedTrigger
-
-	err := suite.shardKeeper.sync()
-
-	mockedTrigger.AssertExpectations(suite.T())
-	assert.Nil(suite.T(), err)
-	assert.True(suite.T(), suite.shardKeeper.initialized)
-	suite.shardKeeper.db.Close()
-}
-
-func (suite *ShardKeeperTestSuite) TestSync_NotInitializedAndNotDrop() {
 	mockedTrigger := new(MockedTrigger)
 	mockedTrigger.On("Put", mock.Anything).Return(nil)
 	suite.shardKeeper.dispatchTrigger = mockedTrigger
