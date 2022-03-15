@@ -142,6 +142,30 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 	sk.dispatchTrigger.Register(addTrigger, sk.dispatch)
 	sk.dispatchTrigger.Register(dropTrigger, sk.dispatch)
 
+	// 标记本地shard的Disp为false，等待参与rb，或者通过guard lease对比直接参与
+	if err := sk.db.Update(
+		func(tx *bolt.Tx) error {
+			b := tx.Bucket([]byte(sk.service))
+			return b.ForEach(
+				func(k, v []byte) error {
+					var dv ShardKeeperDbValue
+					if err := json.Unmarshal(v, &dv); err != nil {
+						return err
+					}
+					dv.Disp = false
+					return b.Put(k, []byte(dv.String()))
+				},
+			)
+		},
+	); err != nil {
+		sk.lg.Error(
+			"Update error",
+			zap.String("service", sk.service),
+			zap.Error(err),
+		)
+		return nil, errors.Wrap(err, "")
+	}
+
 	leasePfx := EtcdPathAppLease(sk.service)
 	gresp, err := sk.client.Get(context.TODO(), leasePfx, clientv3.WithPrefix())
 	if err != nil {
