@@ -180,13 +180,7 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 		)
 		return nil, errors.Wrap(ErrNotExist, "")
 	}
-	var maxModRevision int64
-	for _, v := range gresp.Kvs {
-		if v.ModRevision > maxModRevision {
-			maxModRevision = v.ModRevision
-		}
-	}
-	sk.startRev = maxModRevision
+	sk.startRev = gresp.Header.Revision
 
 	return &sk, nil
 }
@@ -243,6 +237,7 @@ func (sk *shardKeeper) processRbEvent(_ string, value interface{}) error {
 			"receive rb event",
 			zap.String("key", key),
 			zap.Reflect("lease", lease),
+			zap.Int32("type", int32(ev.Type)),
 		)
 
 		var session *concurrency.Session
@@ -370,8 +365,6 @@ func (sk *shardKeeper) acquireBridgeLease(ev *clientv3.Event, lease *Lease) erro
 		return errors.Wrap(err, "")
 	}
 
-	sk.bridgeLease = clientv3.NoLease
-
 	if ev.Type == mvccpb.DELETE {
 		// delete事件，已经错过加入时机，需要回收掉和lease相关的所有shard，此处在rb中，
 		// 是明确要drop掉所有shard的，理论上，所有bridge lease的shard都应该已经迁移到guard lease
@@ -385,6 +378,8 @@ func (sk *shardKeeper) acquireBridgeLease(ev *clientv3.Event, lease *Lease) erro
 		)
 		return nil
 	}
+
+	sk.bridgeLease = clientv3.NoLease
 
 	// 软删除
 	// sync goroutine 提取db中待清理的shard，通过单独的trigger同步到app
