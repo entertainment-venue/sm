@@ -170,7 +170,9 @@ func (c *smContainer) Close() error {
 	// 既然处于关闭状态，也不能再接收shard的移动请求，但是此时http api可能还在工作，
 	// 其他选举出来的leader可能会下发失败的请求，最大限度避免掉。
 	for _, s := range c.shards {
-		s.Close()
+		if s != nil {
+			s.Close()
+		}
 	}
 
 	// 需要判断是否为nil，worker是在竞选leader时初始化的

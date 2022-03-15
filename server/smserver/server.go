@@ -19,6 +19,7 @@ import (
 	_ "github.com/entertainment-venue/sm/server/docs"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"time"
 )
 
 type Server struct {
@@ -115,42 +116,46 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 	}
 
 	go func() {
-		select {
-		// 主动关闭: Close方法调用
-		case <-srv.donec:
-			ops.lg.Info(
-				"server active exit",
-				zap.String("service", srv.opts.service),
-			)
-			// 主动关闭可以直接退出goroutine
-			return
-
-		// 被动关闭: 观测ShardServer或者smContainer都预Session相关退出，可能因为session的关闭导致
-		case <-srv.smContainer.Done():
-			srv.close()
-			ops.lg.Info("server passive exit")
-
-			// 尝试重启
-			for {
-				select {
-				case <-srv.donec:
-					ops.lg.Info(
-						"server active exit when retry run server",
-						zap.String("service", ops.service),
-					)
-					return
-				default:
-				}
-				// 监控异常关闭，不退出服务，container需要刷新
-				err := srv.run()
-				if err == nil {
-					break
-				}
-				ops.lg.Error(
-					"run error",
-					zap.String("service", ops.service),
-					zap.Error(err),
+		for {
+			select {
+			// 主动关闭: Close方法调用
+			case <-srv.donec:
+				ops.lg.Info(
+					"server active exit",
+					zap.String("service", srv.opts.service),
 				)
+				// 主动关闭可以直接退出goroutine
+				return
+
+			// 被动关闭: 观测ShardServer或者smContainer都预Session相关退出，可能因为session的关闭导致
+			case <-srv.smContainer.Done():
+				srv.close()
+				ops.lg.Info("server passive exit")
+
+				// 尝试重启
+				for {
+					select {
+					case <-srv.donec:
+						ops.lg.Info(
+							"server active exit when retry run server",
+							zap.String("service", ops.service),
+						)
+						return
+					default:
+					}
+					// 监控异常关闭，不退出服务，container需要刷新
+					err := srv.run()
+					if err == nil {
+						break
+					}
+					ops.lg.Error(
+						"run error",
+						zap.String("service", ops.service),
+						zap.Error(err),
+					)
+					// 出现异常停顿1S再重试
+					time.Sleep(1 * time.Second)
+				}
 			}
 		}
 	}()

@@ -55,7 +55,7 @@ func (n *nodeManager) nodeServiceContainerHb(appService string) string {
 	return fmt.Sprintf("%s/containerhb/", apputil.EtcdPathAppPrefix(appService))
 }
 
-// nodeServiceGuard /sm/app/proxy.dev/guard
+// nodeServiceGuard /sm/app/proxy.dev/lease/guard
 func (n *nodeManager) nodeServiceGuard(appService string) string {
 	return fmt.Sprintf("%s/lease/guard", apputil.EtcdPathAppPrefix(appService))
 }
