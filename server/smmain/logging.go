@@ -35,6 +35,7 @@ func NewSMLogger() (*zap.Logger, error) {
 		return nil, errors.Wrap(err, "")
 	}
 
+	zap.AddCallerSkip(1)
 	zapCfg := zap.NewProductionConfig()
 	zapCfg.OutputPaths = []string{"rotate://./logs/sm.log", "stdout"}
 	logger, err := zapCfg.Build()

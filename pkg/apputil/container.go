@@ -278,6 +278,24 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	}
 	c.keeper = keeper
 
+	// 上报container初始shard状态，初始化同步做一次，
+	// shard带有lease属性，lease的状态分几种：
+	// 1 lease和server一致，server不会因为本container触发rb
+	// 2 lease和server不一致，server会因为本container触发rb
+	// 在container的shard的状态上报ok的情况，shardkeeper的逻辑更容易推算
+	if err := c.heartbeat(context.TODO()); err != nil {
+		// 报错，但不停止
+		c.opts.lg.Error(
+			"heartbeat error",
+			zap.String("service", c.opts.service),
+			zap.Error(err),
+		)
+		return nil, errors.Wrap(err, "")
+	}
+
+	// 在server知晓本地shard属性的前提下，开启处理本地shard的goroutine
+	c.keeper.watchLease()
+
 	// 通过heartbeat上报数据
 	c.stopper.Wrap(
 		func(ctx context.Context) {
@@ -407,7 +425,11 @@ func (ctr *Container) close() {
 	// FIXME session会触发drop动作，不允许失败，但也是潜在风险，一般的sdk使用者，不了解close的机制
 	dropFn := func(k, v []byte) error {
 		shardId := string(k)
-		return ctr.opts.impl.Drop(shardId)
+		err := ctr.opts.impl.Drop(shardId)
+		if err == ErrNotExist {
+			return nil
+		}
+		return err
 	}
 	if err := ctr.keeper.forEachRead(dropFn); err != nil {
 		ctr.opts.lg.Error(
@@ -586,6 +608,7 @@ func (ctr *Container) AddShard(c *gin.Context) {
 		return
 	}
 
+	req.Spec.Id = req.Id
 	if err := ctr.keeper.Add(req.Id, req.Spec); err != nil {
 		ctr.opts.lg.Error(
 			"Add err",
@@ -615,7 +638,7 @@ func (ctr *Container) DropShard(c *gin.Context) {
 		return
 	}
 
-	if err := ctr.keeper.Drop(req.Id); err != nil {
+	if err := ctr.keeper.Drop(req.Id); err != nil && err != ErrNotExist {
 		ctr.opts.lg.Error(
 			"Drop err",
 			zap.Error(err),
