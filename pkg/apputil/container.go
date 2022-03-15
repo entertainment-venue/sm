@@ -74,9 +74,6 @@ func (ss *ShardSpec) Validate() error {
 	if ss.Service == "" {
 		return errors.New("Empty service")
 	}
-	if ss.Task == "" {
-		return errors.New("Empty task")
-	}
 	if ss.UpdateTime <= 0 {
 		return errors.New("Err updateTime")
 	}
