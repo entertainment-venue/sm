@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/logutil"
-
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -54,6 +54,7 @@ type EtcdWrapper interface {
 	CreateAndGet(ctx context.Context, nodes []string, values []string, leaseID clientv3.LeaseID) error
 	CompareAndSwap(_ context.Context, node string, curValue string, newValue string, leaseID clientv3.LeaseID) (string, error)
 	Inc(_ context.Context, pfx string) (string, error)
+	NewSession(ctx context.Context, client *clientv3.Client, opts ...concurrency.SessionOption) (*concurrency.Session, error)
 
 	Ctx() context.Context
 	Get(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error)
@@ -66,6 +67,14 @@ type EtcdClient struct {
 	*clientv3.Client
 
 	lg logutil.Logger
+}
+
+func (w *EtcdClient) NewSession(_ context.Context, client *clientv3.Client, opts ...concurrency.SessionOption) (*concurrency.Session, error) {
+	session, err := concurrency.NewSession(client, opts...)
+	if err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+	return session, nil
 }
 
 func (w *EtcdClient) GetClient() *EtcdClient {

@@ -48,7 +48,7 @@ type mapper struct {
 	shardState *mapperState
 
 	// trigger 事件存储在内存中的队列里，逐一执行，尽量不卡在etcd，因为事件丢失是可恢复的
-	trigger *evtrigger.Trigger
+	trigger evtrigger.Trigger
 
 	// stopper 管理watch goroutine
 	stopper *apputil.GoroutineStopper
@@ -234,8 +234,8 @@ func (mpr *mapper) create(containerId string, value []byte) error {
 
 	mpr.containerState.alive[containerId] = newTemporary(ctrHb.Timestamp)
 	for _, shard := range ctrHb.Shards {
-		mpr.shardState.alive[shard.ShardId] = newTemporary(ctrHb.Timestamp)
-		mpr.shardState.alive[shard.ShardId].curContainerId = containerId
+		mpr.shardState.alive[shard.Spec.Id] = newTemporary(ctrHb.Timestamp)
+		mpr.shardState.alive[shard.Spec.Id].curContainerId = containerId
 	}
 
 	mpr.lg.Info(
@@ -299,7 +299,7 @@ func (mpr *mapper) Refresh(containerId string, event *clientv3.Event) error {
 		t := newTemporary(ctrHb.Timestamp)
 		t.curContainerId = containerId
 		t.leaseID = shard.Lease
-		mpr.shardState.alive[shard.ShardId] = t
+		mpr.shardState.alive[shard.Spec.Id] = t
 	}
 
 	mpr.lg.Debug(
