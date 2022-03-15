@@ -440,9 +440,8 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	// 1 先梳理出来drop的shard
 	assignment := apputil.Assignment{}
 	for _, action := range shardMoves {
-		if action.DropEndpoint != "" {
-			assignment.Drops = append(assignment.Drops, action.ShardId)
-		}
+		// 涉及到移动的分片，都需要公布出来，防止以下情况，
+		assignment.Drops = append(assignment.Drops, action.ShardId)
 	}
 	// 2 获取新的bridge lease
 	bridgeGrantLeaseResp, err := ss.container.Client.GetClient().Grant(context.TODO(), defaultBridgeLeaseTimeout)
