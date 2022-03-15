@@ -15,22 +15,6 @@ func TestNewClient(t *testing.T) {
 	ginSrv := gin.Default()
 	_, err := NewClient(
 		ClientWithRouter(ginSrv),
-		ClientWithContainerId(fmt.Sprintf("%s:%d", "10.59.193.134", port)),
-		ClientWithEtcdAddr([]string{"10.189.73.122:8989"}),
-		ClientWithService("test-service"),
-		ClientWithImplementation(&testShard{ids: make(map[string]string)}),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-	_ = ginSrv.Run(fmt.Sprintf(":%d", port))
-}
-
-func TestNewClient2(t *testing.T) {
-	port := 8889
-	ginSrv := gin.Default()
-	_, err := NewClient(
-		ClientWithRouter(ginSrv),
 		ClientWithContainerId(fmt.Sprintf("%s:%d", "127.0.0.1", port)),
 		ClientWithEtcdAddr([]string{"127.0.0.1:2379"}),
 		ClientWithService("test-service"),
@@ -64,6 +48,6 @@ func (s *testShard) Drop(id string) error {
 }
 
 func (s *testShard) Load(id string) (string, error) {
-	//fmt.Printf("load op %s\n", id)
+	fmt.Printf("load op %s\n", id)
 	return "", nil
 }
