@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
@@ -67,8 +66,6 @@ type shardKeeper struct {
 	// rbTrigger 的机制保证boltdb中存储的shard在不同节点上没有交集
 	dispatchTrigger evtrigger.Trigger
 
-	// once sync方法goroutine只需要启动一次，在第一次完成参与到rb之后，否则db中存在历史数据，不能提交给app
-	once sync.Once
 	// initialized 第一次sync，需要无差别下发shard
 	initialized bool
 
@@ -180,7 +177,28 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 		)
 		return nil, errors.Wrap(ErrNotExist, "")
 	}
-	sk.startRev = gresp.Header.Revision
+	if gresp.Count == 1 {
+		// 存在历史revision被compact的场景，所以可能watch不到最后一个event，这里通过get，防止miss event
+		var lease Lease
+		if err := json.Unmarshal(gresp.Kvs[0].Value, &lease); err != nil {
+			return nil, errors.Wrap(err, "")
+		}
+		sk.guardLease = lease.ID
+	}
+	sk.startRev = gresp.Header.Revision + 1
+
+	// 启动同步goroutine，对shard做move动作
+	sk.stopper.Wrap(func(ctx context.Context) {
+		TickerLoop(
+			ctx,
+			sk.lg,
+			defaultSyncInterval,
+			fmt.Sprintf("sync exit %s", sk.service),
+			func(ctx context.Context) error {
+				return sk.sync()
+			},
+		)
+	})
 
 	return &sk, nil
 }
@@ -320,24 +338,6 @@ func (sk *shardKeeper) processRbEvent(_ string, value interface{}) error {
 				},
 			)
 		}
-
-		// 成功刷新一次shard的lease之后，启动同步goroutine
-		sk.once.Do(
-			func() {
-				// 启动同步goroutine，对shard做move动作
-				sk.stopper.Wrap(func(ctx context.Context) {
-					TickerLoop(
-						ctx,
-						sk.lg,
-						defaultSyncInterval,
-						fmt.Sprintf("sync exit %s", sk.service),
-						func(ctx context.Context) error {
-							return sk.sync()
-						},
-					)
-				})
-			},
-		)
 	}
 	return nil
 }
