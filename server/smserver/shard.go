@@ -460,7 +460,9 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 }
 
 func (ss *smShard) rb(shardMoves moveActionList) error {
-	ss.container.Client.Delete(context.TODO(), ss.container.nodeManager.nodeServiceBridge(ss.service))
+	if _, err := ss.container.Client.Delete(context.TODO(), ss.container.nodeManager.nodeServiceBridge(ss.service)); err != nil {
+		return errors.Wrap(err, "")
+	}
 
 	// 1 先梳理出来drop的shard
 	assignment := apputil.Assignment{}
@@ -545,7 +547,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	time.Sleep(time.Duration(guardLeaseTimeToLiveResponse.TTL+1) * time.Second)
 	ss.lg.Info(
 		"guard lease expired",
-		zap.String("bridgePfx", bridgePfx),
+		zap.String("guardPfx", guardPfx),
 		zap.Reflect("lease", guardLease),
 	)
 	// 8 下发add请求
@@ -570,9 +572,17 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 			ss.lg.Error(
 				"alive shard invalid lease",
 				zap.String("shardId", action.ShardId),
-				zap.Reflect("t", t),
-				zap.Int64("leaseID", int64(t.leaseID)),
+				zap.Int64("curLeaseID", int64(t.leaseID)),
 				zap.Int64("guardLease", int64(guardLease.ID)),
+				zap.Reflect("t", t),
+			)
+		} else {
+			ss.lg.Warn(
+				"alive shard valid lease, but rb include this shard's add action",
+				zap.String("shardId", action.ShardId),
+				zap.Int64("curLeaseID", int64(t.leaseID)),
+				zap.Int64("guardLease", int64(guardLease.ID)),
+				zap.Reflect("t", t),
 			)
 		}
 	}
