@@ -165,7 +165,11 @@ func (mpr *mapper) AliveShards() map[string]*temporary {
 
 	r := make(map[string]*temporary)
 	collectId := func(id string, tmp *temporary) error {
-		r[id] = tmp
+		if tmp.leaseID == mpr.shard.guardLeaseID {
+			r[id] = tmp
+		} else {
+			delete(mpr.shardState.alive, id)
+		}
 		return nil
 	}
 	_ = mpr.shardState.ForEach(collectId)
@@ -296,7 +300,8 @@ func (mpr *mapper) Refresh(containerId string, event *clientv3.Event) error {
 	// container
 	mpr.containerState.alive[containerId] = newTemporary(ctrHb.Timestamp)
 
-	// shard
+	// shard 带有不合法lease的shard，不能认为存活，要触发rb，重新走drop和add
+	// shardkeeper 的作用是尽可能传递合法shard
 	for _, shard := range ctrHb.Shards {
 		if shard.Lease == mpr.shard.guardLeaseID || shard.Lease == mpr.shard.bridgeLeaseID {
 			t := newTemporary(ctrHb.Timestamp)
@@ -304,16 +309,18 @@ func (mpr *mapper) Refresh(containerId string, event *clientv3.Event) error {
 			t.leaseID = shard.Lease
 			mpr.shardState.alive[shard.Spec.Id] = t
 
-			mpr.lg.Debug(
+			mpr.lg.Info(
 				"state shard refreshed",
 				zap.String("service", mpr.appSpec.Service),
+				zap.String("containerID", containerId),
 				zap.String("shardID", shard.Spec.Id),
 				zap.Int64("shardLeaseID", int64(shard.Lease)),
 			)
 		} else {
 			mpr.lg.Info(
-				"found shard with invalid lease",
+				"found shard with invalid lease from container",
 				zap.String("service", mpr.appSpec.Service),
+				zap.String("containerID", containerId),
 				zap.Int64("shardLeaseID", int64(shard.Lease)),
 				zap.Int64("guardLeaseID", int64(mpr.shard.guardLeaseID)),
 			)
