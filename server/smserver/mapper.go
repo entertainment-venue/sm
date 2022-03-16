@@ -298,16 +298,23 @@ func (mpr *mapper) Refresh(containerId string, event *clientv3.Event) error {
 
 	// shard
 	for _, shard := range ctrHb.Shards {
-		if shard.Lease == mpr.shard.guardLeaseID {
+		if shard.Lease == mpr.shard.guardLeaseID || shard.Lease == mpr.shard.bridgeLeaseID {
 			t := newTemporary(ctrHb.Timestamp)
 			t.curContainerId = containerId
 			t.leaseID = shard.Lease
 			mpr.shardState.alive[shard.Spec.Id] = t
+
+			mpr.lg.Debug(
+				"state shard refreshed",
+				zap.String("service", mpr.appSpec.Service),
+				zap.String("shardID", shard.Spec.Id),
+				zap.Int64("shardLeaseID", int64(shard.Lease)),
+			)
 		} else {
 			mpr.lg.Info(
-				"found shard with old lease, should not refresh",
+				"found shard with invalid lease",
 				zap.String("service", mpr.appSpec.Service),
-				zap.Int64("oldLease", int64(shard.Lease)),
+				zap.Int64("shardLeaseID", int64(shard.Lease)),
 				zap.Int64("guardLeaseID", int64(mpr.shard.guardLeaseID)),
 			)
 		}

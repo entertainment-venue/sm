@@ -202,7 +202,6 @@ func (c *smContainer) Add(id string, spec *apputil.ShardSpec) error {
 	if c.closing {
 		c.lg.Info("container closing, give up add",
 			zap.String("id", id),
-			zap.String("service", c.Service()),
 			zap.Reflect("spec", spec),
 		)
 		// 4 unit test 提升代码分支可测试性
@@ -215,7 +214,6 @@ func (c *smContainer) Add(id string, spec *apputil.ShardSpec) error {
 		if sd.Spec().Task == spec.Task {
 			c.lg.Info("shard existed and task not changed",
 				zap.String("id", id),
-				zap.String("service", c.Service()),
 				zap.Reflect("spec", spec),
 			)
 			// 4 unit test 提升代码分支可测试性

@@ -107,7 +107,8 @@ type smShard struct {
 	// balancing 正在rb的情况下，不能开启下一次rb
 	balancing bool
 
-	guardLeaseID clientv3.LeaseID
+	bridgeLeaseID clientv3.LeaseID
+	guardLeaseID  clientv3.LeaseID
 }
 
 func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard, error) {
@@ -447,18 +448,20 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 			zap.String("service", ss.service),
 		)
 		if err := ss.rb(allShardMoves); err != nil {
-			return errors.Wrap(err, "")
+			return err
 		}
 	} else {
-		ss.lg.Info(
-			"service safe, no shard moves",
-			zap.String("service", ss.service),
-		)
+		// ss.lg.Info(
+		// 	"service safe, no shard moves",
+		// 	zap.String("service", ss.service),
+		// )
 	}
 	return nil
 }
 
 func (ss *smShard) rb(shardMoves moveActionList) error {
+	ss.container.Client.Delete(context.TODO(), ss.container.nodeManager.nodeServiceBridge(ss.service))
+
 	// 1 先梳理出来drop的shard
 	assignment := apputil.Assignment{}
 	for _, action := range shardMoves {
@@ -470,6 +473,10 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	if err != nil {
 		return errors.Wrap(err, "Grant error")
 	}
+	ss.bridgeLeaseID = bridgeGrantLeaseResp.ID
+	defer func() {
+		ss.bridgeLeaseID = clientv3.NoLease
+	}()
 	// 3 写入bridge lease节点
 	bridgeLease := apputil.Lease{
 		ID:           bridgeGrantLeaseResp.ID,
@@ -494,7 +501,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 		)
 	} else {
 		ss.lg.Info(
-			"start waiting bridge lease expired",
+			"waiting bridge lease expired",
 			zap.String("bridgePfx", bridgePfx),
 			zap.Int64("ttl", bridgeLeaseTimeToLiveResponse.TTL),
 			zap.Reflect("lease", bridgeLease),
@@ -599,18 +606,18 @@ func (ss *smShard) validateGuardLease() error {
 	if err := json.Unmarshal(resp.Kvs[0].Value, &lease); err != nil {
 		return errors.Wrap(err, "")
 	}
-	if lease.ID == clientv3.NoLease {
-		ss.lg.Info(
-			"guard NoLease",
-			zap.String("guardPfx", guardPfx),
-		)
-	} else {
-		ss.lg.Info(
-			"current guard lease",
-			zap.String("guardPfx", guardPfx),
-			zap.Int64("leaseID", int64(lease.ID)),
-		)
-	}
+	// if lease.ID == clientv3.NoLease {
+	// 	ss.lg.Info(
+	// 		"zero guard lease",
+	// 		zap.String("guardPfx", guardPfx),
+	// 	)
+	// } else {
+	// 	ss.lg.Info(
+	// 		"current guard lease",
+	// 		zap.String("guardPfx", guardPfx),
+	// 		zap.Int64("leaseID", int64(lease.ID)),
+	// 	)
+	// }
 	return nil
 }
 

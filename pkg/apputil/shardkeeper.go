@@ -730,7 +730,7 @@ func (sk *shardKeeper) dispatch(typ string, value interface{}) error {
 				return errors.Wrapf(err, "shardId: %s", shardId)
 			}
 			sk.lg.Info(
-				"dispatch add ok",
+				"app shard added",
 				zap.String("typ", typ),
 				zap.Reflect("tv", tv),
 			)
@@ -750,7 +750,7 @@ func (sk *shardKeeper) dispatch(typ string, value interface{}) error {
 				return err
 			}
 			sk.lg.Info(
-				"dispatch drop ok",
+				"app shard dropped",
 				zap.String("typ", typ),
 				zap.Reflect("tv", tv),
 			)
