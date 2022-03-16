@@ -35,6 +35,7 @@ const (
 type mapper struct {
 	container *smContainer
 	lg        *zap.Logger
+	shard     *smShard
 
 	// appSpec 配置中有container单节点恢复阈值，影响当前service事件处理的方式
 	appSpec *smAppSpec
@@ -54,12 +55,13 @@ type mapper struct {
 	stopper *apputil.GoroutineStopper
 }
 
-func newMapper(container *smContainer, appSpec *smAppSpec) (*mapper, error) {
+func newMapper(container *smContainer, appSpec *smAppSpec, shard *smShard) (*mapper, error) {
 	mpr := mapper{
 		container: container,
 		lg:        container.lg,
 		appSpec:   appSpec,
 		stopper:   &apputil.GoroutineStopper{},
+		shard:     shard,
 
 		containerState: newMapperState(),
 		shardState:     newMapperState(),
@@ -218,12 +220,12 @@ func (mpr *mapper) UpdateState(_ string, value interface{}) error {
 	return mpr.Delete(containerId)
 }
 
-// Create 初始化时使用，增加lock
-func (mpr *mapper) Create(containerId string, value []byte) error {
-	mpr.mu.Lock()
-	defer mpr.mu.Unlock()
-	return mpr.create(containerId, value)
-}
+// // Create 初始化时使用，增加lock
+// func (mpr *mapper) Create(containerId string, value []byte) error {
+// 	mpr.mu.Lock()
+// 	defer mpr.mu.Unlock()
+// 	return mpr.create(containerId, value)
+// }
 
 // create Refresh和Create都会使用，无lock
 func (mpr *mapper) create(containerId string, value []byte) error {
@@ -296,10 +298,26 @@ func (mpr *mapper) Refresh(containerId string, event *clientv3.Event) error {
 
 	// shard
 	for _, shard := range ctrHb.Shards {
-		t := newTemporary(ctrHb.Timestamp)
-		t.curContainerId = containerId
-		t.leaseID = shard.Lease
-		mpr.shardState.alive[shard.Spec.Id] = t
+		if shard.Lease == mpr.shard.guardLeaseID || shard.Lease == mpr.shard.bridgeLeaseID {
+			t := newTemporary(ctrHb.Timestamp)
+			t.curContainerId = containerId
+			t.leaseID = shard.Lease
+			mpr.shardState.alive[shard.Spec.Id] = t
+
+			mpr.lg.Debug(
+				"state shard refreshed",
+				zap.String("service", mpr.appSpec.Service),
+				zap.String("shardID", shard.Spec.Id),
+				zap.Int64("shardLeaseID", int64(shard.Lease)),
+			)
+		} else {
+			mpr.lg.Info(
+				"found shard with invalid lease",
+				zap.String("service", mpr.appSpec.Service),
+				zap.Int64("shardLeaseID", int64(shard.Lease)),
+				zap.Int64("guardLeaseID", int64(mpr.shard.guardLeaseID)),
+			)
+		}
 	}
 
 	mpr.lg.Debug(

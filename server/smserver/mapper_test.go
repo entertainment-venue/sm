@@ -19,6 +19,10 @@ func TestMapperState(t *testing.T) {
 	suite.Run(t, new(MapperStateTestSuite))
 }
 
+func TestMapper(t *testing.T) {
+	suite.Run(t, new(MapperTestSuite))
+}
+
 type MapperStateTestSuite struct {
 	suite.Suite
 
@@ -47,14 +51,10 @@ func (suite *MapperStateTestSuite) TestForEach() {
 var (
 	fakeContainerId = mock.Anything
 	fakeShards      = []*apputil.ShardKeeperDbValue{
-		{Spec: &apputil.ShardSpec{Id: "foo"}},
-		{Spec: &apputil.ShardSpec{Id: "bar"}},
+		{Spec: &apputil.ShardSpec{Id: "foo"}, Lease: 1},
+		{Spec: &apputil.ShardSpec{Id: "bar"}, Lease: 1},
 	}
 )
-
-func TestMapper(t *testing.T) {
-	suite.Run(t, new(MapperTestSuite))
-}
 
 type MapperTestSuite struct {
 	suite.Suite
@@ -71,6 +71,10 @@ func (suite *MapperTestSuite) SetupTest() {
 
 		containerState: newMapperState(),
 		shardState:     newMapperState(),
+
+		shard: &smShard{
+			guardLeaseID: 1,
+		},
 	}
 	trigger, _ := evtrigger.NewTrigger(
 		evtrigger.WithLogger(mpr.lg),

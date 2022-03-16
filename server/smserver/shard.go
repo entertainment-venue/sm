@@ -106,6 +106,9 @@ type smShard struct {
 	mu sync.Mutex
 	// balancing 正在rb的情况下，不能开启下一次rb
 	balancing bool
+
+	bridgeLeaseID clientv3.LeaseID
+	guardLeaseID  clientv3.LeaseID
 }
 
 func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard, error) {
@@ -152,8 +155,28 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 	ss.trigger = trigger
 	ss.operator = newOperator(ss.lg, shardSpec.Service)
 
+	// 提供当前的guard lease
+	leasePfx := ss.container.nodeManager.nodeServiceGuard(ss.service)
+	gresp, err := ss.container.Client.Get(context.TODO(), leasePfx, clientv3.WithPrefix())
+	if err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+	if gresp.Count != 1 {
+		err := errors.New("lease node error")
+		ss.lg.Error(
+			"unexpected lease count in etcd",
+			zap.String("service", ss.service),
+			zap.Int64("count", gresp.Count),
+			zap.Error(err),
+		)
+		return nil, errors.Wrap(err, "")
+	}
+	var dv apputil.Lease
+	json.Unmarshal(gresp.Kvs[0].Value, &dv)
+	ss.guardLeaseID = dv.ID
+
 	// TODO 参数传递的有些冗余，需要重新梳理
-	ss.mpr, err = newMapper(container, &appSpec)
+	ss.mpr, err = newMapper(container, &appSpec, ss)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -425,18 +448,20 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 			zap.String("service", ss.service),
 		)
 		if err := ss.rb(allShardMoves); err != nil {
-			return errors.Wrap(err, "")
+			return err
 		}
 	} else {
-		ss.lg.Info(
-			"service safe, no shard moves",
-			zap.String("service", ss.service),
-		)
+		// ss.lg.Info(
+		// 	"service safe, no shard moves",
+		// 	zap.String("service", ss.service),
+		// )
 	}
 	return nil
 }
 
 func (ss *smShard) rb(shardMoves moveActionList) error {
+	ss.container.Client.Delete(context.TODO(), ss.container.nodeManager.nodeServiceBridge(ss.service))
+
 	// 1 先梳理出来drop的shard
 	assignment := apputil.Assignment{}
 	for _, action := range shardMoves {
@@ -448,10 +473,15 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	if err != nil {
 		return errors.Wrap(err, "Grant error")
 	}
+	ss.bridgeLeaseID = bridgeGrantLeaseResp.ID
+	defer func() {
+		ss.bridgeLeaseID = clientv3.NoLease
+	}()
 	// 3 写入bridge lease节点
 	bridgeLease := apputil.Lease{
-		ID:         bridgeGrantLeaseResp.ID,
-		Assignment: &assignment,
+		ID:           bridgeGrantLeaseResp.ID,
+		GuardLeaseID: ss.guardLeaseID,
+		Assignment:   &assignment,
 	}
 	bridgePfx := ss.container.nodeManager.nodeServiceBridge(ss.service)
 	if err := ss.container.Client.CreateAndGet(context.TODO(), []string{bridgePfx}, []string{bridgeLease.String()}, bridgeGrantLeaseResp.ID); err != nil {
@@ -471,7 +501,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 		)
 	} else {
 		ss.lg.Info(
-			"start waiting bridge lease expired",
+			"waiting bridge lease expired",
 			zap.String("bridgePfx", bridgePfx),
 			zap.Int64("ttl", bridgeLeaseTimeToLiveResponse.TTL),
 			zap.Reflect("lease", bridgeLease),
@@ -492,6 +522,9 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	if err != nil {
 		return errors.Wrap(err, "Grant error")
 	}
+	// 刷新内存的guard lease
+	ss.guardLeaseID = guardLeaseResp.ID
+
 	// 6 设置guard lease
 	guardPfx := ss.container.nodeManager.nodeServiceGuard(ss.service)
 	guardLease := apputil.Lease{ID: guardLeaseResp.ID}
@@ -573,18 +606,18 @@ func (ss *smShard) validateGuardLease() error {
 	if err := json.Unmarshal(resp.Kvs[0].Value, &lease); err != nil {
 		return errors.Wrap(err, "")
 	}
-	if lease.ID == clientv3.NoLease {
-		ss.lg.Info(
-			"guard NoLease",
-			zap.String("guardPfx", guardPfx),
-		)
-	} else {
-		ss.lg.Info(
-			"current guard lease",
-			zap.String("guardPfx", guardPfx),
-			zap.Int64("leaseID", int64(lease.ID)),
-		)
-	}
+	// if lease.ID == clientv3.NoLease {
+	// 	ss.lg.Info(
+	// 		"zero guard lease",
+	// 		zap.String("guardPfx", guardPfx),
+	// 	)
+	// } else {
+	// 	ss.lg.Info(
+	// 		"current guard lease",
+	// 		zap.String("guardPfx", guardPfx),
+	// 		zap.Int64("leaseID", int64(lease.ID)),
+	// 	)
+	// }
 	return nil
 }
 
