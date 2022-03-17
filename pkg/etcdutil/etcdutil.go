@@ -94,7 +94,8 @@ func (w *EtcdClient) Get(ctx context.Context, key string, opts ...clientv3.OpOpt
 		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
 		defer cancelFunc()
 	}
-	return w.Client.Get(ctx, key, opts...)
+	resp, err := w.Client.Get(ctx, key, opts...)
+	return resp, errors.Wrap(err, "")
 }
 
 func (w *EtcdClient) Put(ctx context.Context, key, val string, opts ...clientv3.OpOption) (*clientv3.PutResponse, error) {
@@ -103,7 +104,8 @@ func (w *EtcdClient) Put(ctx context.Context, key, val string, opts ...clientv3.
 		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
 		defer cancelFunc()
 	}
-	return w.Client.Put(ctx, key, val, opts...)
+	resp, err := w.Client.Put(ctx, key, val, opts...)
+	return resp, errors.Wrap(err, "")
 }
 
 func (w *EtcdClient) Delete(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.DeleteResponse, error) {
@@ -112,7 +114,8 @@ func (w *EtcdClient) Delete(ctx context.Context, key string, opts ...clientv3.Op
 		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
 		defer cancelFunc()
 	}
-	return w.Client.Delete(ctx, key, opts...)
+	resp, err := w.Client.Delete(ctx, key, opts...)
+	return resp, errors.Wrap(err, "")
 }
 func (w *EtcdClient) Watch(ctx context.Context, key string, opts ...clientv3.OpOption) clientv3.WatchChan {
 	var cancelFunc context.CancelFunc
