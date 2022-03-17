@@ -83,10 +83,10 @@ func (suite *ShardKeeperTestSuite) SetupTest() {
 
 	suite.shardKeeper.db = db
 	suite.curShard = &ShardKeeperDbValue{
-		Spec:  &ShardSpec{Id: "bar"},
-		Lease: clientv3.LeaseID(100),
-		Disp:  true,
-		Drop:  false,
+		Spec:    &ShardSpec{Id: "bar"},
+		LeaseID: clientv3.LeaseID(100),
+		Disp:    true,
+		Drop:    false,
 	}
 
 	// 写入初始数据
