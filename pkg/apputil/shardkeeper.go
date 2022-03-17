@@ -166,7 +166,7 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 	}
 
 	leasePfx := EtcdPathAppLease(sk.service)
-	gresp, err := sk.client.Get(context.TODO(), leasePfx, clientv3.WithPrefix())
+	gresp, err := sk.client.Get(context.Background(), leasePfx, clientv3.WithPrefix())
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
