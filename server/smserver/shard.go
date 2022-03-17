@@ -562,29 +562,19 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 		if !ok {
 			// 不是存活shard，可以移动
 			action.DropEndpoint = ""
-			action.Spec.LeaseID = guardLease.ID
+			action.Spec.GuardLeaseID = guardLease.ID
 			addMA = append(addMA, action)
 			continue
 		}
 
-		// shard存活，打印日志报告异常
-		if t.leaseID != guardLease.ID {
-			ss.lg.Error(
-				"alive shard invalid lease",
-				zap.String("shardId", action.ShardId),
-				zap.Int64("curLeaseID", int64(t.leaseID)),
-				zap.Int64("guardLease", int64(guardLease.ID)),
-				zap.Reflect("t", t),
-			)
-		} else {
-			ss.lg.Warn(
-				"alive shard valid lease, but rb include this shard's add action",
-				zap.String("shardId", action.ShardId),
-				zap.Int64("curLeaseID", int64(t.leaseID)),
-				zap.Int64("guardLease", int64(guardLease.ID)),
-				zap.Reflect("t", t),
-			)
-		}
+		// shard存活，又需要移动，不太可能
+		ss.lg.Warn(
+			"alive shard valid lease, but rb include this shard's add action",
+			zap.String("shardId", action.ShardId),
+			zap.Int64("curLeaseID", int64(t.leaseID)),
+			zap.Int64("guardLease", int64(guardLease.ID)),
+			zap.Reflect("t", t),
+		)
 	}
 	if len(addMA) > 0 {
 		ev := workerTriggerEvent{

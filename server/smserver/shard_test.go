@@ -15,11 +15,11 @@
 package smserver
 
 import (
-	"reflect"
 	"testing"
-	"time"
 
-	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
 	"go.uber.org/zap"
 )
 
@@ -31,23 +31,28 @@ func Test_shardTask(t *testing.T) {
 	}
 }
 
-func Test_newMaintenanceWorker(t *testing.T) {
-	ctr, err := newSMContainer(nil)
-	if err != nil {
-		t.Errorf("err: %+v", err)
-		t.SkipNow()
-	}
-
-	service := "foo.bar"
-	st := shardTask{GovernedService: service}
-	spec := apputil.ShardSpec{Service: service, Task: st.String()}
-	mw, _ := newSMShard(ctr, &spec)
-
-	time.Sleep(5 * time.Second)
-	mw.Close()
+func TestShard(t *testing.T) {
+	suite.Run(t, new(ShardTestSuite))
 }
 
-func Test_changed(t *testing.T) {
+type ShardTestSuite struct {
+	suite.Suite
+
+	shard *smShard
+}
+
+func (suite *ShardTestSuite) SetupTest() {
+	lg, _ := zap.NewDevelopment()
+
+	shard := &smShard{
+		lg: lg,
+
+		service: mock.Anything,
+	}
+	suite.shard = shard
+}
+
+func (suite *ShardTestSuite) TestChanged() {
 	var tests = []struct {
 		a      []string
 		b      []string
@@ -79,17 +84,13 @@ func Test_changed(t *testing.T) {
 			expect: true,
 		},
 	}
-	mw := smShard{}
-	for idx, tt := range tests {
-		if tt.expect != mw.changed(tt.a, tt.b) {
-			t.Errorf("idx %d expect %t", idx, tt.expect)
-			t.SkipNow()
-		}
+	for _, tt := range tests {
+		r := suite.shard.changed(tt.a, tt.b)
+		assert.Equal(suite.T(), r, tt.expect)
 	}
 }
 
-func Test_reallocate(t *testing.T) {
-	service := "foo.bar"
+func (suite *ShardTestSuite) TestRB() {
 	var tests = []struct {
 		fixShardIdAndManualContainerId ArmorMap
 		hbContainerIdAndAny            ArmorMap
@@ -112,7 +113,7 @@ func Test_reallocate(t *testing.T) {
 				"s2": "c1",
 			},
 			expect: moveActionList{
-				&moveAction{Service: service, ShardId: "s3", AddEndpoint: "c2"},
+				&moveAction{Service: suite.shard.service, ShardId: "s3", AddEndpoint: "c2"},
 			},
 		},
 
@@ -131,7 +132,7 @@ func Test_reallocate(t *testing.T) {
 				"s2": "c1",
 			},
 			expect: moveActionList{
-				&moveAction{Service: service, ShardId: "s1", DropEndpoint: "c1", AddEndpoint: "c2"},
+				&moveAction{Service: suite.shard.service, ShardId: "s1", DropEndpoint: "c1", AddEndpoint: "c2"},
 			},
 		},
 
@@ -201,14 +202,8 @@ func Test_reallocate(t *testing.T) {
 		},
 	}
 
-	logger, _ := zap.NewDevelopment()
-	w := smShard{service: "foo.bar", lg: logger}
-
-	for idx, tt := range tests {
-		r := w.extractShardMoves(tt.fixShardIdAndManualContainerId, tt.hbContainerIdAndAny, tt.hbShardIdAndContainerId, nil)
-		if !reflect.DeepEqual(r, tt.expect) {
-			t.Errorf("idx: %d actual: %s, expect: %s", idx, r.String(), tt.expect.String())
-			t.SkipNow()
-		}
+	for _, tt := range tests {
+		r := suite.shard.extractShardMoves(tt.fixShardIdAndManualContainerId, tt.hbContainerIdAndAny, tt.hbShardIdAndContainerId, nil)
+		assert.Equal(suite.T(), r, tt.expect)
 	}
 }
