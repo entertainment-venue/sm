@@ -224,14 +224,7 @@ func (mpr *mapper) UpdateState(_ string, value interface{}) error {
 	return mpr.Delete(containerId)
 }
 
-// // Create 初始化时使用，增加lock
-// func (mpr *mapper) Create(containerId string, value []byte) error {
-// 	mpr.mu.Lock()
-// 	defer mpr.mu.Unlock()
-// 	return mpr.create(containerId, value)
-// }
-
-// create Refresh和Create都会使用，无lock
+// create 4 unit test
 func (mpr *mapper) create(containerId string, value []byte) error {
 	var ctrHb apputil.ContainerHeartbeat
 	if err := json.Unmarshal(value, &ctrHb); err != nil {
@@ -303,10 +296,10 @@ func (mpr *mapper) Refresh(containerId string, event *clientv3.Event) error {
 	// shard 带有不合法lease的shard，不能认为存活，要触发rb，重新走drop和add
 	// shardkeeper 的作用是尽可能传递合法shard
 	for _, shard := range ctrHb.Shards {
-		if shard.Lease == mpr.shard.guardLeaseID || shard.Lease == mpr.shard.bridgeLeaseID {
+		if shard.LeaseID == mpr.shard.guardLeaseID || shard.LeaseID == mpr.shard.bridgeLeaseID {
 			t := newTemporary(ctrHb.Timestamp)
 			t.curContainerId = containerId
-			t.leaseID = shard.Lease
+			t.leaseID = shard.LeaseID
 			mpr.shardState.alive[shard.Spec.Id] = t
 
 			mpr.lg.Info(
@@ -314,14 +307,14 @@ func (mpr *mapper) Refresh(containerId string, event *clientv3.Event) error {
 				zap.String("service", mpr.appSpec.Service),
 				zap.String("containerID", containerId),
 				zap.String("shardID", shard.Spec.Id),
-				zap.Int64("shardLeaseID", int64(shard.Lease)),
+				zap.Int64("shardLeaseID", int64(shard.LeaseID)),
 			)
 		} else {
 			mpr.lg.Info(
 				"found shard with invalid lease from container",
 				zap.String("service", mpr.appSpec.Service),
 				zap.String("containerID", containerId),
-				zap.Int64("shardLeaseID", int64(shard.Lease)),
+				zap.Int64("shardLeaseID", int64(shard.LeaseID)),
 				zap.Int64("guardLeaseID", int64(mpr.shard.guardLeaseID)),
 			)
 		}

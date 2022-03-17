@@ -33,7 +33,7 @@ var (
 )
 
 var (
-	defaultOpTimeout = 3 * time.Second
+	defaultTimeout = 1 * time.Second
 )
 
 var (
@@ -69,18 +69,6 @@ type EtcdClient struct {
 	lg logutil.Logger
 }
 
-func (w *EtcdClient) NewSession(_ context.Context, client *clientv3.Client, opts ...concurrency.SessionOption) (*concurrency.Session, error) {
-	session, err := concurrency.NewSession(client, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "")
-	}
-	return session, nil
-}
-
-func (w *EtcdClient) GetClient() *EtcdClient {
-	return w
-}
-
 func NewEtcdClient(endpoints []string, lg *zap.Logger) (*EtcdClient, error) {
 	return NewEtcdClientWithCustomLogger(endpoints, logutil.NewZapLogger(lg))
 }
@@ -100,11 +88,64 @@ func NewEtcdClientWithClient(client *clientv3.Client, lg *zap.Logger) *EtcdClien
 	return &EtcdClient{Client: client, lg: logutil.NewZapLogger(lg)}
 }
 
-func (w *EtcdClient) GetKV(_ context.Context, node string, opts []clientv3.OpOption) (*clientv3.GetResponse, error) {
-	timeoutCtx, cancel := context.WithTimeout(context.TODO(), defaultOpTimeout)
-	defer cancel()
+func (w *EtcdClient) Get(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error) {
+	var cancelFunc context.CancelFunc
+	if ctx == context.TODO() || ctx == context.Background() {
+		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		defer cancelFunc()
+	}
+	resp, err := w.Client.Get(ctx, key, opts...)
+	return resp, errors.Wrap(err, "")
+}
 
-	resp, err := w.Get(timeoutCtx, node, opts...)
+func (w *EtcdClient) Put(ctx context.Context, key, val string, opts ...clientv3.OpOption) (*clientv3.PutResponse, error) {
+	var cancelFunc context.CancelFunc
+	if ctx == context.TODO() || ctx == context.Background() {
+		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		defer cancelFunc()
+	}
+	resp, err := w.Client.Put(ctx, key, val, opts...)
+	return resp, errors.Wrap(err, "")
+}
+
+func (w *EtcdClient) Delete(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.DeleteResponse, error) {
+	var cancelFunc context.CancelFunc
+	if ctx == context.TODO() || ctx == context.Background() {
+		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		defer cancelFunc()
+	}
+	resp, err := w.Client.Delete(ctx, key, opts...)
+	return resp, errors.Wrap(err, "")
+}
+func (w *EtcdClient) Watch(ctx context.Context, key string, opts ...clientv3.OpOption) clientv3.WatchChan {
+	var cancelFunc context.CancelFunc
+	if ctx == context.TODO() || ctx == context.Background() {
+		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		defer cancelFunc()
+	}
+	return w.Client.Watch(ctx, key, opts...)
+}
+
+func (w *EtcdClient) NewSession(_ context.Context, client *clientv3.Client, opts ...concurrency.SessionOption) (*concurrency.Session, error) {
+	session, err := concurrency.NewSession(client, opts...)
+	if err != nil {
+		return nil, errors.Wrap(err, "")
+	}
+	return session, nil
+}
+
+func (w *EtcdClient) GetClient() *EtcdClient {
+	return w
+}
+
+func (w *EtcdClient) GetKV(ctx context.Context, node string, opts []clientv3.OpOption) (*clientv3.GetResponse, error) {
+	var cancelFunc context.CancelFunc
+	if ctx == context.TODO() || ctx == context.Background() {
+		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		defer cancelFunc()
+	}
+
+	resp, err := w.Get(ctx, node, opts...)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -112,6 +153,12 @@ func (w *EtcdClient) GetKV(_ context.Context, node string, opts []clientv3.OpOpt
 }
 
 func (w *EtcdClient) GetKVs(ctx context.Context, prefix string) (map[string]string, error) {
+	var cancelFunc context.CancelFunc
+	if ctx == context.TODO() || ctx == context.Background() {
+		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		defer cancelFunc()
+	}
+
 	// https://github.com/etcd-io/etcd/blob/master/tests/integration/clientv3/kv_test.go
 	opts := []clientv3.OpOption{clientv3.WithPrefix()}
 	resp, err := w.GetKV(ctx, prefix, opts)
@@ -130,11 +177,14 @@ func (w *EtcdClient) GetKVs(ctx context.Context, prefix string) (map[string]stri
 	return r, nil
 }
 
-func (w *EtcdClient) DelKV(_ context.Context, prefix string) error {
-	timeoutCtx, cancel := context.WithTimeout(context.TODO(), defaultOpTimeout)
-	defer cancel()
+func (w *EtcdClient) DelKV(ctx context.Context, prefix string) error {
+	var cancelFunc context.CancelFunc
+	if ctx == context.TODO() || ctx == context.Background() {
+		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		defer cancelFunc()
+	}
 
-	resp, err := w.Delete(timeoutCtx, prefix, clientv3.WithPrefix())
+	resp, err := w.Delete(ctx, prefix, clientv3.WithPrefix())
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -144,18 +194,21 @@ func (w *EtcdClient) DelKV(_ context.Context, prefix string) error {
 	return nil
 }
 
-func (w *EtcdClient) UpdateKV(_ context.Context, key string, value string) error {
-	timeoutCtx, cancel := context.WithTimeout(context.TODO(), defaultOpTimeout)
-	defer cancel()
+func (w *EtcdClient) UpdateKV(ctx context.Context, key string, value string) error {
+	var cancelFunc context.CancelFunc
+	if ctx == context.TODO() || ctx == context.Background() {
+		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		defer cancelFunc()
+	}
 
-	_, err := w.Put(timeoutCtx, key, value)
+	_, err := w.Put(ctx, key, value)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
 	return nil
 }
 
-func (w *EtcdClient) CreateAndGet(_ context.Context, nodes []string, values []string, leaseID clientv3.LeaseID) error {
+func (w *EtcdClient) CreateAndGet(ctx context.Context, nodes []string, values []string, leaseID clientv3.LeaseID) error {
 	if len(nodes) == 0 {
 		return errors.New("FAILED empty nodes")
 	}
@@ -173,10 +226,13 @@ func (w *EtcdClient) CreateAndGet(_ context.Context, nodes []string, values []st
 		}
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(context.TODO(), defaultOpTimeout)
-	defer cancel()
+	var cancelFunc context.CancelFunc
+	if ctx == context.TODO() || ctx == context.Background() {
+		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		defer cancelFunc()
+	}
 
-	resp, err := w.Txn(timeoutCtx).If(cmp).Then(create...).Commit()
+	resp, err := w.Txn(ctx).If(cmp).Then(create...).Commit()
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -190,13 +246,16 @@ func (w *EtcdClient) CreateAndGet(_ context.Context, nodes []string, values []st
 	return ErrEtcdNodeExist
 }
 
-func (w *EtcdClient) CompareAndSwap(_ context.Context, node string, curValue string, newValue string, leaseID clientv3.LeaseID) (string, error) {
+func (w *EtcdClient) CompareAndSwap(ctx context.Context, node string, curValue string, newValue string, leaseID clientv3.LeaseID) (string, error) {
 	if curValue == "" && newValue == "" {
 		return "", errors.Errorf("FAILED node %s's curValue and newValue should not be empty both", node)
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(context.TODO(), defaultOpTimeout)
-	defer cancel()
+	var cancelFunc context.CancelFunc
+	if ctx == context.TODO() || ctx == context.Background() {
+		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		defer cancelFunc()
+	}
 
 	var put clientv3.Op
 	if leaseID == clientv3.NoLease {
@@ -208,7 +267,7 @@ func (w *EtcdClient) CompareAndSwap(_ context.Context, node string, curValue str
 	// leader会尝试保持自己的状态
 	cmp := clientv3.Compare(clientv3.Value(node), "=", curValue)
 	get := clientv3.OpGet(node)
-	resp, err := w.Txn(timeoutCtx).If(cmp).Then(put).Else(get).Commit()
+	resp, err := w.Txn(ctx).If(cmp).Then(put).Else(get).Commit()
 	if err != nil {
 		return "", errors.Wrapf(err, "FAILED to swap node %s from %s to %s", node, curValue, newValue)
 	}
@@ -243,17 +302,24 @@ func (w *EtcdClient) CompareAndSwap(_ context.Context, node string, curValue str
 	return realValue, ErrEtcdValueNotMatch
 }
 
-func (w *EtcdClient) Inc(_ context.Context, pfx string) (string, error) {
+func (w *EtcdClient) Inc(ctx context.Context, pfx string) (string, error) {
 	if pfx == "" {
 		return "", nil
 	}
-	gresp, err := w.GetKV(context.TODO(), pfx, nil)
+
+	var cancelFunc context.CancelFunc
+	if ctx == context.TODO() || ctx == context.Background() {
+		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		defer cancelFunc()
+	}
+
+	gresp, err := w.GetKV(ctx, pfx, nil)
 	if err != nil {
 		return "", err
 	}
 	if gresp.Count <= 0 {
 		initValue := "1"
-		if err := w.CreateAndGet(context.TODO(), []string{pfx}, []string{initValue}, clientv3.NoLease); err != nil {
+		if err := w.CreateAndGet(ctx, []string{pfx}, []string{initValue}, clientv3.NoLease); err != nil {
 			return "", err
 		}
 		return initValue, nil
@@ -262,7 +328,7 @@ func (w *EtcdClient) Inc(_ context.Context, pfx string) (string, error) {
 	cur, _ := strconv.ParseUint(string(gresp.Kvs[0].Value), 10, 64)
 	curStr := strconv.FormatUint(cur, 10)
 	newStr := strconv.FormatUint(cur+1, 10)
-	if _, err := w.CompareAndSwap(context.TODO(), pfx, curStr, newStr, clientv3.NoLease); err != nil {
+	if _, err := w.CompareAndSwap(ctx, pfx, curStr, newStr, clientv3.NoLease); err != nil {
 		return "", err
 	}
 	return newStr, nil

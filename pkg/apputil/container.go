@@ -61,8 +61,8 @@ type ShardSpec struct {
 	// 这些shard之间不相关的balance到现有container上
 	Group string `json:"group"`
 
-	// LeaseID guard lease
-	LeaseID clientv3.LeaseID
+	// GuardLeaseID 分配时当前guard lease
+	GuardLeaseID clientv3.LeaseID
 }
 
 func (ss *ShardSpec) String() string {
@@ -534,7 +534,7 @@ func (ctr *Container) heartbeat(ctx context.Context) error {
 			if err := json.Unmarshal(v, &dv); err != nil {
 				return errors.Wrap(err, string(v))
 			}
-			if dv.Lease == clientv3.NoLease {
+			if dv.LeaseID == clientv3.NoLease {
 				return nil
 			}
 

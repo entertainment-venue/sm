@@ -51,8 +51,8 @@ func (suite *MapperStateTestSuite) TestForEach() {
 var (
 	fakeContainerId = mock.Anything
 	fakeShards      = []*apputil.ShardKeeperDbValue{
-		{Spec: &apputil.ShardSpec{Id: "foo"}, Lease: 1},
-		{Spec: &apputil.ShardSpec{Id: "bar"}, Lease: 1},
+		{Spec: &apputil.ShardSpec{Id: "foo"}, LeaseID: 1},
+		{Spec: &apputil.ShardSpec{Id: "bar"}, LeaseID: 1},
 	}
 )
 
@@ -128,9 +128,11 @@ func (suite *MapperTestSuite) TestAliveContainers() {
 	)
 }
 
-func (suite *MapperTestSuite) TestAliveShards() {
+func (suite *MapperTestSuite) TestAliveShards_normal() {
 	tA := new(temporary)
+	tA.leaseID = suite.mpr.shard.guardLeaseID
 	tB := new(temporary)
+	tB.leaseID = suite.mpr.shard.guardLeaseID
 	suite.mpr.shardState.alive["foo"] = tA
 	suite.mpr.shardState.alive["bar"] = tB
 	actual := suite.mpr.AliveShards()
@@ -142,6 +144,26 @@ func (suite *MapperTestSuite) TestAliveShards() {
 			"bar": tB,
 		},
 	)
+}
+
+func (suite *MapperTestSuite) TestAliveShards_LeaseError() {
+	tA := new(temporary)
+	tA.leaseID = suite.mpr.shard.guardLeaseID
+	tB := new(temporary)
+	tB.leaseID = clientv3.NoLease
+	suite.mpr.shardState.alive["foo"] = tA
+	suite.mpr.shardState.alive["bar"] = tB
+	actual := suite.mpr.AliveShards()
+	assert.Equal(
+		suite.T(),
+		actual,
+		map[string]*temporary{
+			"foo": tA,
+		},
+	)
+
+	t := suite.mpr.shardState.alive["bar"]
+	assert.Nil(suite.T(), t)
 }
 
 func (suite *MapperTestSuite) TestCreate_shard() {
