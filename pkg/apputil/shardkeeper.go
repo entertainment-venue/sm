@@ -12,7 +12,6 @@ import (
 	bolt "go.etcd.io/bbolt"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -77,10 +76,6 @@ type shardKeeper struct {
 	bridgeLease clientv3.LeaseID
 	// guardLease acquireGuardLease 成功时才能赋值，直到下次rb
 	guardLease clientv3.LeaseID
-}
-
-type sessionClosed struct {
-	LeaseID clientv3.LeaseID
 }
 
 // ShardKeeperDbValue 存储分片数据和管理信息
@@ -231,16 +226,6 @@ func (sk *shardKeeper) watchLease() {
 
 func (sk *shardKeeper) processRbEvent(_ string, value interface{}) error {
 	switch value.(type) {
-	case *sessionClosed:
-		sk.lg.Info(
-			"receive sessionClosed",
-			zap.Reflect("value", value),
-		)
-		// session关闭，相关lease的shard要drop，但equal情况不drop，session的close，可能也可能是健康状态下的重启
-		v := value.(*sessionClosed)
-		if err := sk.dropByLease(v.LeaseID, true); err != nil {
-			return err
-		}
 	case *clientv3.Event:
 		ev := value.(*clientv3.Event)
 		key := string(ev.Kv.Key)
@@ -259,27 +244,6 @@ func (sk *shardKeeper) processRbEvent(_ string, value interface{}) error {
 			zap.Reflect("lease", lease),
 			zap.Int32("type", int32(ev.Type)),
 		)
-
-		var session *concurrency.Session
-		if ev.Type != mvccpb.DELETE {
-			// 构建session，确认lease合法
-			var err error
-			session, err = sk.client.NewSession(context.TODO(), sk.client.GetClient().Client, concurrency.WithLease(lease.ID))
-			if err != nil {
-				sk.lg.Error(
-					"NewSession error",
-					zap.String("key", key),
-					zap.Reflect("lease", lease),
-					zap.Error(err),
-				)
-				return err
-			}
-			sk.lg.Info(
-				"session created",
-				zap.String("key", key),
-				zap.Reflect("lease", lease),
-			)
-		}
 
 		switch key {
 		case EtcdPathAppBridge(sk.service):
@@ -304,41 +268,6 @@ func (sk *shardKeeper) processRbEvent(_ string, value interface{}) error {
 			}
 		default:
 			return errors.Errorf("unexpected key %s", key)
-		}
-
-		// 关注session的存活状态
-		// 异常情况下回收掉没有acquire guard lease的shard
-		// TODO 事件处理成功后，开启低session的关注，如果session在事件处理期间失败，不确定session.Done是否能监测到
-		if ev.Type != mvccpb.DELETE {
-			sk.stopper.Wrap(
-				func(ctx context.Context) {
-					select {
-					case <-ctx.Done():
-						// 主动关闭 退出goroutine即可
-						sk.lg.Info(
-							"session active exit",
-							zap.String("pfx", key),
-							zap.Reflect("lease", lease),
-						)
-					case <-session.Done():
-						sk.lg.Info(
-							"session passive closed",
-							zap.String("pfx", key),
-							zap.Reflect("lease", lease),
-						)
-
-						// 要回收掉当前lease相关的所有shard，出现的情况可能有：
-						// 1 新的guard把shard已经接管走
-						// 2 session异常退出，相关shard需要停下来
-						sk.rbTrigger.Put(
-							&evtrigger.TriggerEvent{
-								Key:   rebalanceTrigger,
-								Value: &sessionClosed{LeaseID: lease.ID},
-							},
-						)
-					}
-				},
-			)
 		}
 	}
 	return nil
