@@ -130,7 +130,7 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 	serviceSpec := container.nodeManager.nodeServiceSpec(ss.service)
 	resp, err := container.Client.GetKV(context.TODO(), serviceSpec, nil)
 	if err != nil {
-		return nil, errors.Wrap(err, "")
+		return nil, err
 	}
 	if resp.Count == 0 {
 		err := errors.Errorf("service not config %s", serviceSpec)
@@ -159,7 +159,7 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 	leasePfx := ss.container.nodeManager.nodeServiceGuard(ss.service)
 	gresp, err := ss.container.Client.Get(context.TODO(), leasePfx, clientv3.WithPrefix())
 	if err != nil {
-		return nil, errors.Wrap(err, "")
+		return nil, err
 	}
 	if gresp.Count != 1 {
 		err := errors.New("lease node error")
@@ -281,7 +281,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 	shardKey := ss.container.nodeManager.nodeServiceShard(ss.service, "")
 	etcdShardIdAndAny, err = ss.container.Client.GetKVs(ctx, shardKey)
 	if err != nil {
-		return errors.Wrap(err, "")
+		return err
 	}
 	// 支持手动指定container
 	shardIdAndGroup := make(ArmorMap)
@@ -461,7 +461,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 
 func (ss *smShard) rb(shardMoves moveActionList) error {
 	if _, err := ss.container.Client.Delete(context.TODO(), ss.container.nodeManager.nodeServiceBridge(ss.service)); err != nil {
-		return errors.Wrap(err, "")
+		return err
 	}
 
 	// 1 先梳理出来drop的shard
@@ -487,7 +487,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	}
 	bridgePfx := ss.container.nodeManager.nodeServiceBridge(ss.service)
 	if err := ss.container.Client.CreateAndGet(context.TODO(), []string{bridgePfx}, []string{bridgeLease.String()}, bridgeGrantLeaseResp.ID); err != nil {
-		return errors.Wrap(err, "CreateAndGet error")
+		return err
 	}
 	// 4 等待bridge timeout
 	bridgeLeaseTimeToLiveResponse, err := ss.container.Client.GetClient().TimeToLive(context.TODO(), bridgeLease.ID)
@@ -531,7 +531,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	guardPfx := ss.container.nodeManager.nodeServiceGuard(ss.service)
 	guardLease := apputil.Lease{ID: guardLeaseResp.ID}
 	if _, err := ss.container.Client.Put(context.TODO(), guardPfx, guardLease.String()); err != nil {
-		return errors.Wrap(err, "Put error")
+		return err
 	}
 	// 7 等待guard timeout
 	guardLeaseTimeToLiveResponse, err := ss.container.Client.GetClient().TimeToLive(context.TODO(), guardLeaseResp.ID)
@@ -596,7 +596,7 @@ func (ss *smShard) validateGuardLease() error {
 	guardPfx := ss.container.nodeManager.nodeServiceGuard(ss.service)
 	resp, err := ss.container.Client.GetKV(context.TODO(), guardPfx, []clientv3.OpOption{clientv3.WithPrefix()})
 	if err != nil {
-		return errors.Wrap(err, "")
+		return err
 	}
 	if resp.Count == 0 {
 		err := errors.Errorf("guard not found %s", guardPfx)

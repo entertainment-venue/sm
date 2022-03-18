@@ -98,7 +98,7 @@ func newSMContainer(opts *serverOptions) (*smContainer, error) {
 			"",
 		},
 		clientv3.NoLease); err != nil && err != etcdutil.ErrEtcdNodeExist {
-		return nil, errors.Wrap(err, "")
+		return nil, err
 	}
 
 	container, err := apputil.NewContainer(
