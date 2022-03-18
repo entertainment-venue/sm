@@ -111,7 +111,7 @@ func (mpr *mapper) initAndWatch() error {
 	getOpts := []clientv3.OpOption{clientv3.WithPrefix()}
 	resp, err := mpr.container.Client.Get(context.TODO(), pfx, getOpts...)
 	if err != nil {
-		return errors.Wrap(err, "")
+		return err
 	}
 	startRev := resp.Header.Revision + 1
 
