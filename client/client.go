@@ -16,6 +16,8 @@ package client
 
 import (
 	"context"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
@@ -25,10 +27,10 @@ import (
 )
 
 type Client struct {
-	stopper     *apputil.GoroutineStopper
-	lg          *zap.Logger
-	container   *apputil.Container
-	opts        *clientOptions
+	stopper   *apputil.GoroutineStopper
+	lg        *zap.Logger
+	container *apputil.Container
+	opts      *clientOptions
 }
 
 type clientOptions struct {
@@ -114,12 +116,30 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 		lg:      lg,
 		opts:    ops,
 	}
+
 	if err := c.newServer(); err != nil {
 		lg.Error("new server failed",
 			zap.String("service", ops.service),
 			zap.String("err", err.Error()),
 		)
 		return nil, err
+	}
+
+	// 是否需要跳过给router挂接口
+	var skip bool
+	for _, route := range ops.g.Routes() {
+		if strings.HasPrefix(route.Path, "/sm/admin") {
+			skip = true
+			break
+		}
+	}
+
+	if !skip {
+		ssg := ops.g.Group("/sm/admin")
+		{
+			ssg.POST("/add-shard", c.AddShard)
+			ssg.POST("/drop-shard", c.DropShard)
+		}
 	}
 
 	c.stopper.Wrap(
@@ -150,7 +170,6 @@ func (c *Client) newServer() error {
 		apputil.WithId(c.opts.containerId),
 		apputil.WithEndpoints(c.opts.etcdAddr),
 		apputil.WithEtcdPrefix(c.opts.etcdPrefix),
-		apputil.WithRouter(c.opts.g),
 		apputil.WithLogger(c.lg),
 		apputil.WithShardImplementation(c.opts.v))
 	if err != nil {
@@ -163,6 +182,25 @@ func (c *Client) newServer() error {
 	return nil
 }
 
+func (c *Client) AddShard(g *gin.Context) {
+	if c.container != nil {
+		c.container.AddShard(g)
+	} else {
+		c.lg.Error("Container is nil or not initialized")
+		g.JSON(http.StatusInternalServerError, gin.H{"error": errors.New("Container is nil or not initialized")})
+	}
+}
+
+func (c *Client) DropShard(g *gin.Context) {
+	if c.container != nil {
+		c.container.DropShard(g)
+	} else {
+		c.lg.Error("Container is nil or not initialized")
+		g.JSON(http.StatusInternalServerError, gin.H{"error": errors.New("Container is nil or not initialized")})
+	}
+}
+
+// Close Client关闭以后，gin.Router不能重用。
 func (c *Client) Close() {
 	if c.stopper != nil {
 		c.stopper.Close()
