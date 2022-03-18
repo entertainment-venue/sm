@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -85,12 +84,6 @@ type ShardInterface interface {
 	Drop(id string) error
 }
 
-// ShardHttpApi for gin
-type ShardHttpApi interface {
-	AddShard(c *gin.Context)
-	DropShard(c *gin.Context)
-}
-
 // Container 1 上报container的load信息，保证container的liveness，才能够参与shard的分配
 // 2 与sm交互，下发add和drop给到Shard
 type Container struct {
@@ -125,11 +118,7 @@ type containerOptions struct {
 	service string
 	lg      *zap.Logger
 
-	// 传入 router 允许shard被集成，降低shard接入对app造成的影响。
-	// 例如：现有的web项目使用gin，sm把server启动拿过来也不合适。
-	router          *gin.Engine
 	routeAndHandler map[string]func(c *gin.Context)
-	shardHttpApi    ShardHttpApi
 	addr            string
 	impl            ShardInterface
 
@@ -173,21 +162,9 @@ func WithShardImplementation(v ShardInterface) ContainerOption {
 	}
 }
 
-func WithRouter(v *gin.Engine) ContainerOption {
-	return func(co *containerOptions) {
-		co.router = v
-	}
-}
-
 func WithApiHandler(v map[string]func(c *gin.Context)) ContainerOption {
 	return func(co *containerOptions) {
 		co.routeAndHandler = v
-	}
-}
-
-func WithShardOpReceiver(v ShardHttpApi) ContainerOption {
-	return func(co *containerOptions) {
-		co.shardHttpApi = v
 	}
 }
 
@@ -226,10 +203,6 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	}
 	if ops.lg == nil {
 		return nil, errors.New("lg err")
-	}
-	// addr 和 router 二选一，否则啥也不用干了
-	if ops.addr == "" && ops.router == nil {
-		return nil, errors.New("addr err")
 	}
 	if ops.impl == nil {
 		return nil, errors.New("impl err")
@@ -321,43 +294,15 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 		}
 	}()
 
-	router := ops.router
-	if ops.router == nil {
-		router = gin.Default()
+	// 有addr,启动webserver，相当于app自己选择被集成，例如sm自己
+	if ops.addr != "" {
+		router := gin.Default()
 		if ops.routeAndHandler != nil {
 			for route, handler := range ops.routeAndHandler {
 				router.Any(route, handler)
 			}
 		}
-	}
 
-	var receiver ShardHttpApi
-	if ops.shardHttpApi != nil {
-		receiver = ops.shardHttpApi
-	} else {
-		receiver = &c
-	}
-	// 是否需要跳过给router挂接口
-	var skip bool
-	routes := router.Routes()
-	if routes != nil {
-		for _, route := range routes {
-			if strings.HasPrefix(route.Path, "/sm/admin") {
-				skip = true
-				break
-			}
-		}
-	}
-	if !skip {
-		ssg := router.Group("/sm/admin")
-		{
-			ssg.POST("/add-shard", receiver.AddShard)
-			ssg.POST("/drop-shard", receiver.DropShard)
-		}
-	}
-
-	// router 为空，就帮助启动webserver，相当于app自己选择被集成，例如sm自己
-	if ops.router == nil {
 		// https://learnku.com/docs/gin-gonic/2019/examples-graceful-restart-or-stop/6173
 		srv := &http.Server{
 			Addr:    ops.addr,
