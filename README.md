@@ -63,7 +63,6 @@ the [source code](https://github.com/entertainment-venue/sm/blob/main/pkg/apputi
 type ShardInterface interface {
 	Add(id string, spec *ShardSpec) error
 	Drop(id string) error
-	Load(id string) (string, error)
 }
 ```
 
@@ -80,7 +79,7 @@ Please be careful not to use the same path as above in `ShardServerWithApiHandle
 
 You can see the test code as tip to understand how to construct you own sharded application:
 
-https://github.com/entertainment-venue/sm/blob/main/server/smserver/testutil_test.go#L5
+https://github.com/entertainment-venue/sm/blob/main/client/client_test.go#L13
 
 If you want to no better how the sm server running, see the code below as an entry point:
 
