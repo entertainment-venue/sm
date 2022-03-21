@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"net/http"
 	"time"
 
@@ -109,7 +110,7 @@ func (ss *smShardApi) GinAddSpec(c *gin.Context) {
 	}
 	nodes = append(nodes, ss.container.nodeManager.nodeServiceShard(ss.container.Service(), req.Service))
 	values = append(values, v.String())
-	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
+	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil && err != etcdutil.ErrEtcdNodeExist {
 		ss.lg.Error("CreateAndGet err",
 			zap.Strings("nodes", nodes),
 			zap.Strings("values", values),
