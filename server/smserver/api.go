@@ -110,14 +110,21 @@ func (ss *smShardApi) GinAddSpec(c *gin.Context) {
 	}
 	nodes = append(nodes, ss.container.nodeManager.nodeServiceShard(ss.container.Service(), req.Service))
 	values = append(values, v.String())
-	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil && err != etcdutil.ErrEtcdNodeExist {
-		ss.lg.Error("CreateAndGet err",
+	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
+		if err != etcdutil.ErrEtcdNodeExist {
+			ss.lg.Error("CreateAndGet err",
+				zap.Strings("nodes", nodes),
+				zap.Strings("values", values),
+				zap.Error(err),
+			)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		ss.lg.Warn("CreateAndGet node exist",
 			zap.Strings("nodes", nodes),
 			zap.Strings("values", values),
 			zap.Error(err),
 		)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
 	}
 	ss.lg.Info("add spec success", zap.String("service", req.Service))
 	c.JSON(http.StatusOK, gin.H{})
