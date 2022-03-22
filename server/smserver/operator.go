@@ -152,19 +152,35 @@ func (o *operator) send(id string, spec *apputil.ShardSpec, endpoint string, act
 	urlStr := fmt.Sprintf("http://%s/sm/admin/%s-shard", endpoint, action)
 	req, err := http.NewRequest(http.MethodPost, urlStr, bytes.NewBuffer(b))
 	if err != nil {
+		o.lg.Error(
+			"NewRequest error",
+			zap.String("urlStr", urlStr),
+			zap.Error(err),
+		)
 		return errors.Wrap(err, "")
 	}
 	req.Header.Add("Content-Type", "application/json")
 
 	resp, err := o.httpClient.Do(req)
 	if err != nil {
+		o.lg.Error(
+			"Do error",
+			zap.String("urlStr", urlStr),
+			zap.Error(err),
+		)
 		return errors.Wrap(err, "")
 	}
 	defer resp.Body.Close()
 	rb, _ := ioutil.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return errors.Errorf("FAILED to %s move shard %s, not 200", action, id)
+		o.lg.Error(
+			"status not 200",
+			zap.String("urlStr", urlStr),
+			zap.Int("status", resp.StatusCode),
+			zap.ByteString("resp", rb),
+		)
+		return errors.New("FAILED to send")
 	}
 
 	o.lg.Info(
