@@ -303,6 +303,12 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 			}
 		}
 
+		ssg := router.Group("/sm/admin")
+		{
+			ssg.POST("/add-shard", c.AddShard)
+			ssg.POST("/drop-shard", c.DropShard)
+		}
+
 		// https://learnku.com/docs/gin-gonic/2019/examples-graceful-restart-or-stop/6173
 		srv := &http.Server{
 			Addr:    ops.addr,
