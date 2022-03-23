@@ -20,7 +20,6 @@ on [etcd](https://github.com/etcd-io/etcd), to make sure that:
     - [Installing](#installing)
 - [Concept explanation](#concept-explanation)
     - [Container](#container)
-    - [ShardServer](#shardserver)
 - [Example](#example)
 - [Question](#question)
     - [Question](#question)
@@ -45,42 +44,36 @@ go run main.go --config-file sample.yml
 
 ### Container
 
-`Container` is the resource for shard to run in, and `Container` establish `Session` with etcd, the `Session` is use for
-the management of key in etcd, management meaning that:
+`Container` is the resource for shard to run in, and `Container` establish `Session` with etcd, the `Session` is used
+for the management of key in etcd, management meaning that:
 
 * `Container` goes down, heartbeat(container self or shard in it) all will be recycled.
 * Only the unchanged properties of app or shard will stay in etcd permanently, make data to be managed as clean as the
   moonlight.
 
-For more information, you can read
-the [source code](https://github.com/entertainment-venue/sm/blob/main/pkg/apputil/container.go) for `Container`.
-
-### ShardServer
-
-`ShardServer` define common protocol which need sharded application who want to integrate with sm:
+`Container` also define common protocol which need sharded application who want to integrate with sm:
 
 ```
 type ShardInterface interface {
 	Add(id string, spec *ShardSpec) error
 	Drop(id string) error
-	Load(id string) (string, error)
 }
 ```
 
-You can implement the `ShardInterface` and inject the implementation into the `ShardServer`
-with `ShardServerWithShardImplementation`, and also wrap common http api to interact with the sm server. The keep http
-path:
+You can implement the `ShardInterface` and inject the implementation into the `Container`
+with `WithShardImplementation`, and also wrap common http api to interact with the sm server. The keep http path:
 
 * /sm/admin/add-shard
 * /sm/admin/drop-shard
 
-Please be careful not to use the same path as above in `ShardServerWithApiHandler` to extend your api.
+For more information, you can read
+the [source code](https://github.com/entertainment-venue/sm/blob/main/pkg/apputil/container.go) for `Container`.
 
 ## Example
 
 You can see the test code as tip to understand how to construct you own sharded application:
 
-https://github.com/entertainment-venue/sm/blob/main/server/smserver/testutil_test.go#L5
+https://github.com/entertainment-venue/sm/blob/main/client/client_test.go#L13
 
 If you want to no better how the sm server running, see the code below as an entry point:
 
