@@ -515,9 +515,6 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 			zap.Reflect("lease", bridgeLease),
 		)
 	}
-	if _, err := ss.container.Client.GetClient().Revoke(context.TODO(), bridgeLease.ID); err != nil {
-		return errors.Wrap(err, "Revoke error")
-	}
 
 	// 5 grant guard lease
 	guardLeaseResp, err := ss.container.Client.GetClient().Grant(context.TODO(), defaultGuardLeaseTimeout)
