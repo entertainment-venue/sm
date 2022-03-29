@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/zd3tl/evtrigger"
 	bolt "go.etcd.io/bbolt"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -70,6 +69,9 @@ func (suite *ShardKeeperTestSuite) SetupTest() {
 	suite.shardKeeper = &shardKeeper{
 		service: "foo",
 		lg:      lg,
+
+		bridgeLease: noLease,
+		guardLease:  noLease,
 	}
 
 	db, _ := bolt.Open("4unittest.db", 0600, nil)
@@ -83,10 +85,15 @@ func (suite *ShardKeeperTestSuite) SetupTest() {
 
 	suite.shardKeeper.db = db
 	suite.curShard = &ShardKeeperDbValue{
-		Spec:    &ShardSpec{Id: "bar"},
-		LeaseID: clientv3.LeaseID(100),
-		Disp:    true,
-		Drop:    false,
+		Spec: &ShardSpec{
+			Id: "bar",
+			Lease: &Lease{
+				ID:     100,
+				Expire: 100,
+			},
+		},
+		Disp: true,
+		Drop: false,
 	}
 
 	// 写入初始数据
@@ -108,64 +115,23 @@ func (suite *ShardKeeperTestSuite) TestDropByLease_UnmarshalError() {
 			return nil
 		},
 	)
-	err := suite.shardKeeper.dropByLease(1, true)
+	err := suite.shardKeeper.dropByLease(
+		&Lease{
+			ID:     1,
+			Expire: 1,
+		},
+	)
 	assert.NotNil(suite.T(), err)
 	suite.shardKeeper.db.Close()
 }
 
-func (suite *ShardKeeperTestSuite) TestDropByLease_NoLease() {
-	err := suite.shardKeeper.dropByLease(clientv3.NoLease, false)
-	assert.Nil(suite.T(), err)
-	suite.shardKeeper.db.View(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			v := b.Get([]byte(suite.curShard.Spec.Id))
-			var dbValue ShardKeeperDbValue
-			json.Unmarshal(v, &dbValue)
-			assert.False(suite.T(), dbValue.Disp)
-			assert.True(suite.T(), dbValue.Drop)
-			return nil
-		},
-	)
-	suite.shardKeeper.db.Close()
-}
-
-func (suite *ShardKeeperTestSuite) TestDropByLease_LessThanCurrent() {
-	err := suite.shardKeeper.dropByLease(101, false)
-	assert.Nil(suite.T(), err)
-	suite.shardKeeper.db.View(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			v := b.Get([]byte(suite.curShard.Spec.Id))
-			var dbValue ShardKeeperDbValue
-			json.Unmarshal(v, &dbValue)
-			assert.False(suite.T(), dbValue.Disp)
-			assert.True(suite.T(), dbValue.Drop)
-			return nil
-		},
-	)
-	suite.shardKeeper.db.Close()
-}
-
-func (suite *ShardKeeperTestSuite) TestDropByLease_NotIgnoreEqualCase() {
-	err := suite.shardKeeper.dropByLease(100, false)
-	assert.Nil(suite.T(), err)
-	suite.shardKeeper.db.View(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			v := b.Get([]byte(suite.curShard.Spec.Id))
-			var dbValue ShardKeeperDbValue
-			json.Unmarshal(v, &dbValue)
-			assert.False(suite.T(), dbValue.Disp)
-			assert.True(suite.T(), dbValue.Drop)
-			return nil
-		},
-	)
-	suite.shardKeeper.db.Close()
-}
-
 func (suite *ShardKeeperTestSuite) TestDropByLease_IgnoreEqualCase() {
-	err := suite.shardKeeper.dropByLease(100, true)
+	err := suite.shardKeeper.dropByLease(
+		&Lease{
+			ID:     1,
+			Expire: 1,
+		},
+	)
 	assert.Nil(suite.T(), err)
 	suite.shardKeeper.db.View(
 		func(tx *bolt.Tx) error {
@@ -247,15 +213,22 @@ func (suite *ShardKeeperTestSuite) TestDrop_success() {
 }
 
 func (suite *ShardKeeperTestSuite) TestSync_NotInitializedAndDrop() {
-	fakeShardId := suite.curShard.Spec.Id
 	suite.curShard.Drop = true
-	suite.shardKeeper.Add(fakeShardId, suite.curShard.Spec)
+
+	var err error
+	err = suite.shardKeeper.db.Update(
+		func(tx *bolt.Tx) error {
+			b := tx.Bucket([]byte(suite.shardKeeper.service))
+			return b.Put([]byte(suite.curShard.Spec.Id), []byte(suite.curShard.String()))
+		},
+	)
+	assert.Nil(suite.T(), err)
 
 	mockedTrigger := new(MockedTrigger)
 	mockedTrigger.On("Put", mock.Anything).Return(nil)
 	suite.shardKeeper.dispatchTrigger = mockedTrigger
 
-	err := suite.shardKeeper.sync()
+	err = suite.shardKeeper.sync()
 
 	mockedTrigger.AssertExpectations(suite.T())
 	assert.Nil(suite.T(), err)
