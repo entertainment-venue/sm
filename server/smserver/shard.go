@@ -485,6 +485,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 		Assignment:   &assignment,
 	}
 	bridgeLease.ID = bridgeGrantLeaseResp.ID
+	bridgeLease.Expire = time.Now().Unix() + bridgeGrantLeaseResp.TTL
 	bridgePfx := ss.container.nodeManager.nodeServiceBridge(ss.service)
 	if err := ss.container.Client.CreateAndGet(context.TODO(), []string{bridgePfx}, []string{bridgeLease.String()}, bridgeGrantLeaseResp.ID); err != nil {
 		return err
@@ -526,7 +527,10 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 
 	// 6 设置guard lease
 	guardPfx := ss.container.nodeManager.nodeServiceGuard(ss.service)
-	guardLease := apputil.Lease{ID: guardLeaseResp.ID}
+	guardLease := apputil.Lease{
+		ID:     guardLeaseResp.ID,
+		Expire: time.Now().Unix() + guardLeaseResp.TTL,
+	}
 	if _, err := ss.container.Client.Put(context.TODO(), guardPfx, guardLease.String()); err != nil {
 		return err
 	}
