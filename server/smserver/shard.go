@@ -480,11 +480,11 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 		ss.bridgeLeaseID = clientv3.NoLease
 	}()
 	// 3 写入bridge lease节点
-	bridgeLease := apputil.Lease{
-		ID:           bridgeGrantLeaseResp.ID,
+	bridgeLease := apputil.ShardLease{
 		GuardLeaseID: ss.guardLeaseID,
 		Assignment:   &assignment,
 	}
+	bridgeLease.ID = bridgeGrantLeaseResp.ID
 	bridgePfx := ss.container.nodeManager.nodeServiceBridge(ss.service)
 	if err := ss.container.Client.CreateAndGet(context.TODO(), []string{bridgePfx}, []string{bridgeLease.String()}, bridgeGrantLeaseResp.ID); err != nil {
 		return err
@@ -559,7 +559,10 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 		if !ok {
 			// 不是存活shard，可以移动
 			action.DropEndpoint = ""
-			action.Spec.GuardLeaseID = guardLease.ID
+			action.Spec.Lease = &apputil.Lease{
+				ID:     guardLease.ID,
+				Expire: time.Now().Unix() + guardLeaseTimeToLiveResponse.TTL,
+			}
 			addMA = append(addMA, action)
 			continue
 		}
