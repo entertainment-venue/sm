@@ -187,36 +187,6 @@ var doc = `{
                     }
                 }
             }
-        },
-        "/sm/server/update-spec": {
-            "post": {
-                "description": "update spec",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "spec"
-                ],
-                "parameters": [
-                    {
-                        "description": "param",
-                        "name": "param",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/smserver.smAppSpec"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": ""
-                    }
-                }
-            }
         }
     },
     "definitions": {
@@ -224,8 +194,7 @@ var doc = `{
             "type": "object",
             "required": [
                 "service",
-                "shardId",
-                "task"
+                "shardId"
             ],
             "properties": {
                 "group": {
@@ -265,9 +234,6 @@ var doc = `{
         },
         "smserver.smAppSpec": {
             "type": "object",
-            "required": [
-                "service"
-            ],
             "properties": {
                 "createTime": {
                     "type": "integer"

@@ -35,6 +35,11 @@ func (n *nodeManager) nodeSMLeader() string {
 	return fmt.Sprintf("%s/leader", n.nodeSM())
 }
 
+// /sm/app/proxy.dev/
+func (n *nodeManager) nodeService(service string) string {
+	return apputil.EtcdPathAppPrefix(service) + "/"
+}
+
 // /sm/app/foo.bar/service/proxy.dev/spec
 func (n *nodeManager) nodeServiceSpec(appService string) string {
 	return fmt.Sprintf("%s/service/%s/spec", n.nodeSM(), appService)

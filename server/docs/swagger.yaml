@@ -17,7 +17,6 @@ definitions:
     required:
     - service
     - shardId
-    - task
     type: object
   smserver.delShardRequest:
     properties:
@@ -42,8 +41,6 @@ definitions:
       service:
         description: Service 目前app的spec更多承担的是管理职能，shard配置的一个起点，先只配置上service，可以唯一标记一个app
         type: string
-    required:
-    - service
     type: object
 info:
   contact: {}
@@ -146,25 +143,6 @@ paths:
       consumes:
       - application/json
       description: get all service
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: ""
-      tags:
-      - spec
-  /sm/server/update-spec:
-    post:
-      consumes:
-      - application/json
-      description: update spec
-      parameters:
-      - description: param
-        in: body
-        name: param
-        required: true
-        schema:
-          $ref: '#/definitions/smserver.smAppSpec'
       produces:
       - application/json
       responses:
