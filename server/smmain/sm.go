@@ -14,22 +14,100 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-func startSM() error {
-	flag.Parse()
-	checkSettings()
+type AppMixer interface {
+	Addr() string
+}
 
-	if cfg.ConfigFile != "" {
-		data, err := ioutil.ReadFile(cfg.ConfigFile)
-		if err != nil {
-			return errors.Wrap(err, "")
+// defaultAppMixer 内置 Resolver
+type defaultAppMixer struct {
+	port string
+}
+
+func (r *defaultAppMixer) Addr() string {
+	return fmt.Sprintf("%s:%s", smserver.GetLocalIP(), r.port)
+}
+
+type serverOptions struct {
+	// appMixer 提取应用信息，目前只有k8s场景下的Addr需要应用提供出来
+	appMixer AppMixer
+
+	// cfgPath 外部传入yaml格式的配置文件
+	cfgPath string
+}
+
+type serverConfig struct {
+	Service    string   `yaml:"service"`
+	Port       string   `yaml:"port"`
+	Endpoints  []string `yaml:"endpoints"`
+	EtcdPrefix string   `yaml:"etcdPrefix"`
+}
+
+func (cfg *serverConfig) validate() {
+	if cfg.Service == "" {
+		panic("Err: Service require")
+	}
+	if cfg.Port == "" {
+		panic("Err: Port require")
+	}
+	if len(cfg.Endpoints) == 0 {
+		panic("Err: Endpoints require")
+	}
+	if cfg.EtcdPrefix == "" {
+		panic("Err: EtcdPrefix require")
+	}
+}
+
+type ServerOption func(options *serverOptions)
+
+func WithAppMixer(v AppMixer) ServerOption {
+	return func(options *serverOptions) {
+		options.appMixer = v
+	}
+}
+
+func WithCfgPath(v string) ServerOption {
+	return func(options *serverOptions) {
+		options.cfgPath = v
+	}
+}
+
+func Main(opts ...ServerOption) {
+	ops := &serverOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(ops)
 		}
+	}
 
-		if err := yaml.Unmarshal(data, &cfg); err != nil {
-			return errors.Wrap(err, "")
-		}
+	if err := startSM(ops); err != nil {
+		panic(err)
+	}
+}
 
-		cfg.ConfigFile = ""
-		checkSettings()
+func startSM(ops *serverOptions) error {
+	// 配置加载
+	var cfgPath string
+	if ops.cfgPath == "" {
+		flag.Parse()
+		cfgPath = flagCfg.ConfigFile
+	} else {
+		cfgPath = ops.cfgPath
+	}
+	if cfgPath == "" {
+		panic("no config file")
+	}
+	data, err := ioutil.ReadFile(cfgPath)
+	if err != nil {
+		return errors.Wrap(err, "")
+	}
+	srvCfg := &serverConfig{}
+	if err := yaml.Unmarshal(data, &srvCfg); err != nil {
+		return errors.Wrap(err, "")
+	}
+	srvCfg.validate()
+
+	if ops.appMixer == nil {
+		ops.appMixer = &defaultAppMixer{port: srvCfg.Port}
 	}
 
 	lg, zapError := NewSMLogger()
@@ -40,16 +118,16 @@ func startSM() error {
 	defer lg.Sync()
 
 	srv, err := smserver.NewServer(
-		smserver.WithId(fmt.Sprintf("%s:%s", smserver.GetLocalIP(), cfg.Port)),
-		smserver.WithService(cfg.Service),
-		smserver.WithAddr(fmt.Sprintf(":%s", cfg.Port)),
-		smserver.WithEndpoints(cfg.Endpoints),
 		smserver.WithLogger(lg),
-		smserver.WithEtcdPrefix(cfg.EtcdPrefix))
+		smserver.WithId(ops.appMixer.Addr()),
+		smserver.WithService(srvCfg.Service),
+		smserver.WithAddr(fmt.Sprintf(":%s", srvCfg.Port)),
+		smserver.WithEndpoints(srvCfg.Endpoints),
+		smserver.WithEtcdPrefix(srvCfg.EtcdPrefix))
 	if err != nil {
 		lg.Panic(
 			"NewServer error",
-			zap.Reflect("cfg", cfg),
+			zap.Reflect("flagCfg", flagCfg),
 			zap.Error(err),
 		)
 	}
@@ -76,7 +154,7 @@ func startSM() error {
 	}()
 
 	<-srv.Done()
-	lg.Info("ShardManager exit", zap.Reflect("cfg", cfg))
+	lg.Info("ShardManager exit", zap.String("addr", ops.appMixer.Addr()))
 
 	return nil
 }
