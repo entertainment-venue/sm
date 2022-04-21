@@ -57,6 +57,7 @@ func newSMShardApi(container *smContainer) *smShardApi {
 	return &smShardApi{container: container, lg: container.lg}
 }
 
+// GinAddSpec
 // @Description add spec
 // @Tags  spec
 // @Accept  json
@@ -130,6 +131,7 @@ func (ss *smShardApi) GinAddSpec(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{})
 }
 
+// GinDelSpec
 // @Description del spec
 // @Tags  spec
 // @Accept  json
@@ -163,32 +165,23 @@ func (ss *smShardApi) GinDelSpec(c *gin.Context) {
 		return
 	}
 
-	// 停掉worker
-	shard, err := ss.container.GetShard(service)
-	if err != nil {
-		err := errors.Errorf("param error")
-		ss.lg.Error(
-			"shard not found",
-			zap.String("service", service),
-		)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	shard.Close()
-
 	// 清除etcd数据
-	pfx := ss.container.nodeManager.nodeServiceShard(ss.container.Service(), service)
-	if err := ss.container.Client.DelKV(context.Background(), pfx); err != nil {
+	var nodes []string
+	nodes = append(nodes, ss.container.nodeManager.nodeService(service))
+	nodes = append(nodes, ss.container.nodeManager.nodeServiceSpec(service))
+	nodes = append(nodes, ss.container.nodeManager.nodeServiceShard(ss.container.Service(), service))
+	if err := ss.container.Client.DelKVs(context.Background(), nodes); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	ss.lg.Info(
 		"delete spec success",
-		zap.String("pfx", pfx),
+		zap.Strings("nodes", nodes),
 	)
 	c.JSON(http.StatusOK, gin.H{})
 }
 
+// GinGetSpec
 // @Description get all service
 // @Tags  spec
 // @Accept  json
@@ -208,52 +201,6 @@ func (ss *smShardApi) GinGetSpec(c *gin.Context) {
 	}
 	ss.lg.Info("get all service success")
 	c.JSON(http.StatusOK, gin.H{"services": services})
-}
-
-// @Description update spec
-// @Tags  spec
-// @Accept  json
-// @Produce  json
-// @Param param body smAppSpec true "param"
-// @success 200
-// @Router /sm/server/update-spec [post]
-func (ss *smShardApi) GinUpdateSpec(c *gin.Context) {
-	var req smAppSpec
-	if err := c.ShouldBind(&req); err != nil {
-		ss.lg.Error("ShouldBind err", zap.Error(err))
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	req.CreateTime = time.Now().Unix()
-	ss.lg.Info("receive update spec request", zap.String("request", req.String()))
-	//  查询是否存在该service
-	shard, err := ss.container.GetShard(req.Service)
-	if err != nil {
-		ss.lg.Error(
-			"update service err",
-			zap.String("service", req.Service),
-			zap.Error(err),
-		)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "service not exist"})
-		return
-	}
-
-	pfx := ss.container.nodeManager.nodeServiceSpec(req.Service)
-	if err := ss.container.Client.UpdateKV(context.Background(), pfx, req.String()); err != nil {
-		ss.lg.Error("UpdateKV err",
-			zap.String("pfx", pfx),
-			zap.String("value", req.String()),
-			zap.Error(err),
-		)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	//  更新sm container内存中的值
-	shard.SetMaxShardCount(req.MaxShardCount)
-	shard.SetMaxRecoveryTime(req.MaxRecoveryTime)
-
-	ss.lg.Info("update spec success", zap.String("pfx", pfx))
-	c.JSON(http.StatusOK, gin.H{})
 }
 
 type addShardRequest struct {
@@ -276,6 +223,7 @@ func (r *addShardRequest) String() string {
 	return string(b)
 }
 
+// GinAddShard
 // @Description add shard
 // @Tags  shard
 // @Accept  json
@@ -358,6 +306,7 @@ func (r *delShardRequest) String() string {
 	return string(b)
 }
 
+// GinDelShard
 // @Description del shard
 // @Tags  shard
 // @Accept  json
@@ -403,6 +352,7 @@ func (ss *smShardApi) GinDelShard(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{})
 }
 
+// GinGetShard
 // @Description get service all shard
 // @Tags  shard
 // @Accept  json

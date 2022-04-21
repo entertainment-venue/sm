@@ -85,6 +85,10 @@ type MockedEtcdWrapper struct {
 	mock.Mock
 }
 
+func (m *MockedEtcdWrapper) DelKVs(ctx context.Context, prefixes []string) error {
+	panic("implement me")
+}
+
 func (m *MockedEtcdWrapper) NewSession(ctx context.Context, client *clientv3.Client, opts ...concurrency.SessionOption) (*concurrency.Session, error) {
 	panic("implement me")
 }

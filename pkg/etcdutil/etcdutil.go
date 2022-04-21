@@ -40,6 +40,7 @@ var (
 	ErrEtcdNodeExist     = errors.New("etcd: node exist")
 	ErrEtcdValueExist    = errors.New("etcd: value exist")
 	ErrEtcdValueNotMatch = errors.New("etcd: value not match")
+	ErrUnexpected        = errors.New("etcd: unexpected")
 )
 
 // EtcdWrapper 4 unit test
@@ -50,6 +51,7 @@ type EtcdWrapper interface {
 	GetKVs(ctx context.Context, prefix string) (map[string]string, error)
 	UpdateKV(ctx context.Context, key string, value string) error
 	DelKV(ctx context.Context, prefix string) error
+	DelKVs(ctx context.Context, prefixes []string) error
 
 	CreateAndGet(ctx context.Context, nodes []string, values []string, leaseID clientv3.LeaseID) error
 	CompareAndSwap(_ context.Context, node string, curValue string, newValue string, leaseID clientv3.LeaseID) (string, error)
@@ -192,6 +194,29 @@ func (w *EtcdClient) DelKV(ctx context.Context, prefix string) error {
 		w.lg.Warn("no kv exist", zap.String("prefix", prefix))
 	}
 	return nil
+}
+
+func (w *EtcdClient) DelKVs(ctx context.Context, prefixes []string) error {
+	if len(prefixes) == 0 {
+		return nil
+	}
+
+	var delOps []clientv3.Op
+	for _, pfx := range prefixes {
+		delOps = append(delOps, clientv3.OpDelete(pfx, clientv3.WithPrefix()))
+	}
+
+	resp, err := w.Txn(ctx).If().Then(delOps...).Commit()
+	if err != nil {
+		return errors.Wrap(err, "")
+	}
+	if resp.Succeeded {
+		w.lg.Info("del nodes success",
+			zap.Strings("prefixes", prefixes),
+		)
+		return nil
+	}
+	return ErrUnexpected
 }
 
 func (w *EtcdClient) UpdateKV(ctx context.Context, key string, value string) error {
