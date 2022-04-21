@@ -71,7 +71,7 @@ func WithCfgPath(v string) ServerOption {
 	}
 }
 
-func Main(opts ...ServerOption) {
+func StartSM(opts ...ServerOption) error {
 	ops := &serverOptions{}
 	for _, opt := range opts {
 		if opt != nil {
@@ -79,12 +79,6 @@ func Main(opts ...ServerOption) {
 		}
 	}
 
-	if err := startSM(ops); err != nil {
-		panic(err)
-	}
-}
-
-func startSM(ops *serverOptions) error {
 	// 配置加载
 	var cfgPath string
 	if ops.cfgPath == "" {
