@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/entertainment-venue/sm/pkg/logutil"
 	"github.com/entertainment-venue/sm/server/smserver"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -103,8 +104,7 @@ func StartSM(opts ...ServerOption) error {
 	if ops.appMixer == nil {
 		ops.appMixer = &defaultAppMixer{port: srvCfg.Port}
 	}
-
-	lg, zapError := NewSMLogger()
+	lg, zapError := logutil.NewLogger(logutil.WithStdout(true))
 	if zapError != nil {
 		fmt.Printf("error creating zap logger %v", zapError)
 		os.Exit(1)
