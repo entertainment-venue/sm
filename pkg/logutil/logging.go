@@ -18,7 +18,7 @@ type LogOptions struct {
 	MaxSize    int
 	MaxBackups int
 	MaxAge     int
-	Output     string
+	Stdout     bool
 }
 
 var defaultLogOptions = LogOptions{
@@ -26,7 +26,7 @@ var defaultLogOptions = LogOptions{
 	MaxSize:    1024,
 	MaxBackups: 50,
 	MaxAge:     3,
-	Output:     "stdout",
+	Stdout:     false,
 }
 
 type logOptionsFunc func(*LogOptions)
@@ -55,9 +55,9 @@ func WithMaxAge(v int) logOptionsFunc {
 	}
 }
 
-func WithOutput(v string) logOptionsFunc {
+func WithOutput(v bool) logOptionsFunc {
 	return func(o *LogOptions) {
-		o.Output = v
+		o.Stdout = v
 	}
 }
 
@@ -91,7 +91,12 @@ func NewLogger(opt ...logOptionsFunc) (*zap.Logger, error) {
 
 	zap.AddCallerSkip(1)
 	zapCfg := zap.NewProductionConfig()
-	zapCfg.OutputPaths = []string{fmt.Sprintf("rotate://%s",opts.Path), opts.Output}
+
+	zapCfg.OutputPaths = []string{fmt.Sprintf("rotate://%s",opts.Path)}
+	if opts.Stdout {
+		zapCfg.OutputPaths = []string{fmt.Sprintf("rotate://%s",opts.Path), "stdout"}
+	}
+
 	logger, err := zapCfg.Build()
 	if err != nil {
 		return nil, errors.Wrap(err, "")
