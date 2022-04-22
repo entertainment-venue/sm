@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/logutil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -106,7 +107,7 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 		return nil, errors.New("impl empty")
 	}
 
-	lg, err := NewLogger()
+	lg, err := logutil.NewLogger(logutil.WithPath("./log/sm.log"))
 	if err != nil {
 		return nil, errors.Wrap(err, "new zap logger failed")
 	}
