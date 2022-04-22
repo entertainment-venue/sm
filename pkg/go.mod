@@ -13,6 +13,7 @@ require (
 	go.etcd.io/etcd/client/v3 v3.5.1
 	go.uber.org/zap v1.20.0
 	google.golang.org/grpc v1.44.0
+	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 )
 
 require (
