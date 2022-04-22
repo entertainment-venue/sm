@@ -61,7 +61,7 @@ func WithMaxAge(v int) logOptionsFunc {
 	}
 }
 
-func WithOutput(v bool) logOptionsFunc {
+func WithStdout(v bool) logOptionsFunc {
 	return func(o *LogOptions) {
 		o.Stdout = v
 	}
