@@ -394,3 +394,7 @@ func (ss *smShardApi) GinGetShard(c *gin.Context) {
 	)
 	c.JSON(http.StatusOK, gin.H{"shards": shards})
 }
+
+func (ss *smShardApi) GinHealth(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"msg": "success"})
+}
