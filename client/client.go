@@ -106,7 +106,7 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 		return nil, errors.New("impl empty")
 	}
 
-	lg, err := zap.NewProduction()
+	lg, err := NewLogger()
 	if err != nil {
 		return nil, errors.Wrap(err, "new zap logger failed")
 	}
