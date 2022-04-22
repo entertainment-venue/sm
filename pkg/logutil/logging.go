@@ -5,6 +5,7 @@ import (
 	"net/url"
 
 	"github.com/pkg/errors"
+
 	"go.uber.org/zap"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -14,11 +15,16 @@ type logRotationConfig struct {
 }
 
 type LogOptions struct {
-	Path       string
-	MaxSize    int
+	// 日志存储路径
+	Path string
+	// 单个文件大小，单位M
+	MaxSize int
+	// 最多保存文件个数
 	MaxBackups int
-	MaxAge     int
-	Stdout     bool
+	// 最多保留天数
+	MaxAge int
+	// 是否标准输出
+	Stdout bool
 }
 
 var defaultLogOptions = LogOptions{
@@ -75,7 +81,7 @@ func NewLogger(opt ...logOptionsFunc) (*zap.Logger, error) {
 			// 每个文件1g
 			MaxSize: opts.MaxSize,
 
-			// 50g文件
+			// 最多50个文件
 			MaxBackups: opts.MaxBackups,
 
 			// 最多保留3天
@@ -92,9 +98,9 @@ func NewLogger(opt ...logOptionsFunc) (*zap.Logger, error) {
 	zap.AddCallerSkip(1)
 	zapCfg := zap.NewProductionConfig()
 
-	zapCfg.OutputPaths = []string{fmt.Sprintf("rotate://%s",opts.Path)}
+	zapCfg.OutputPaths = []string{fmt.Sprintf("rotate://%s", opts.Path)}
 	if opts.Stdout {
-		zapCfg.OutputPaths = []string{fmt.Sprintf("rotate://%s",opts.Path), "stdout"}
+		zapCfg.OutputPaths = append(zapCfg.OutputPaths, "stdout")
 	}
 
 	logger, err := zapCfg.Build()
