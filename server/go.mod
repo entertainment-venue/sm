@@ -3,7 +3,7 @@ module github.com/entertainment-venue/sm/server
 go 1.17
 
 require (
-	github.com/entertainment-venue/sm/pkg v0.0.0-20220422114102-1efaeb1d39d0
+	github.com/entertainment-venue/sm/pkg v0.0.0-20220427092332-7f2fd75518d7
 	github.com/gin-gonic/gin v1.7.7
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.7.0
@@ -15,7 +15,6 @@ require (
 	go.etcd.io/etcd/client/v3 v3.5.1
 	go.uber.org/zap v1.20.0
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
-	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/yaml.v2 v2.4.0
 )
 
@@ -65,5 +64,6 @@ require (
 	google.golang.org/genproto v0.0.0-20210602131652-f16073e35f0c // indirect
 	google.golang.org/grpc v1.44.0 // indirect
 	google.golang.org/protobuf v1.26.0 // indirect
+	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b // indirect
 )
