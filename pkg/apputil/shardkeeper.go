@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
@@ -139,8 +140,7 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 		bridgeLease: noLease,
 		guardLease:  noLease,
 	}
-
-	db, err := bolt.Open("shard.db", 0600, nil)
+	db, err := bolt.Open(filepath.Join(c.opts.shardDir, "shard.db"), 0600, nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}

@@ -128,6 +128,8 @@ type containerOptions struct {
 
 	// client 允许外部传入
 	client *clientv3.Client
+	// shard.db的存储路径，默认是当前目录
+	shardDir string
 }
 
 type ContainerOption func(options *containerOptions)
@@ -183,6 +185,12 @@ func WithEtcdPrefix(v string) ContainerOption {
 func WithEtcdClient(v *clientv3.Client) ContainerOption {
 	return func(co *containerOptions) {
 		co.client = v
+	}
+}
+
+func WithShardDir(v string) ContainerOption {
+	return func(co *containerOptions) {
+		co.shardDir = v
 	}
 }
 
