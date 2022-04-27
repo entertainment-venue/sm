@@ -3,7 +3,7 @@ module github.com/entertainment-venue/sm/client
 go 1.17
 
 require (
-	github.com/entertainment-venue/sm/pkg v0.0.0-20220422114102-1efaeb1d39d0
+	github.com/entertainment-venue/sm/pkg v0.0.0-20220427092332-7f2fd75518d7
 	github.com/gin-gonic/gin v1.7.7
 	github.com/pkg/errors v0.9.1
 	go.uber.org/zap v1.20.0

@@ -41,6 +41,8 @@ type clientOptions struct {
 	etcdPrefix  string
 	etcdAddr    []string
 	v           apputil.ShardInterface
+	// shard.db存储路径，默认是当前路径
+	shardDir string
 }
 
 var defaultEtcdPrefix = "/sm"
@@ -80,6 +82,12 @@ func ClientWithEtcdAddr(etcdAddr []string) ClientOption {
 func ClientWithImplementation(v apputil.ShardInterface) ClientOption {
 	return func(co *clientOptions) {
 		co.v = v
+	}
+}
+
+func ClientWithShardDir(v string) ClientOption {
+	return func(co *clientOptions) {
+		co.shardDir = v
 	}
 }
 
@@ -172,7 +180,8 @@ func (c *Client) newServer() error {
 		apputil.WithEndpoints(c.opts.etcdAddr),
 		apputil.WithEtcdPrefix(c.opts.etcdPrefix),
 		apputil.WithLogger(c.lg),
-		apputil.WithShardImplementation(c.opts.v))
+		apputil.WithShardImplementation(c.opts.v),
+		apputil.WithShardDir(c.opts.shardDir))
 	if err != nil {
 		if container != nil {
 			container.Close()
