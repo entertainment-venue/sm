@@ -45,9 +45,9 @@ go run main.go --config-file sample.yml
 ### Container
 
 `Container` is the resource for shard to run in, and `Container` establish `Session` with etcd, the `Session` is used
-for the management of key in etcd, management meaning that:
+for the management of keys in etcd, management meaning that:
 
-* `Container` goes down, heartbeat(container self or shard in it) all will be recycled.
+* `Container` goes down, heartbeat which from container to etcd server will be ended.
 * Only the unchanged properties of app or shard will stay in etcd permanently, make data to be managed as clean as the
   moonlight.
 
