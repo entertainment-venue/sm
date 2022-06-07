@@ -51,8 +51,18 @@ func (suite *MapperStateTestSuite) TestForEach() {
 var (
 	fakeContainerId = mock.Anything
 	fakeShards      = []*apputil.ShardKeeperDbValue{
-		{Spec: &apputil.ShardSpec{Id: "foo"}, LeaseID: 1},
-		{Spec: &apputil.ShardSpec{Id: "bar"}, LeaseID: 1},
+		{
+			Spec: &apputil.ShardSpec{
+				Id:    "foo",
+				Lease: &apputil.Lease{ID: 1},
+			},
+		},
+		{
+			Spec: &apputil.ShardSpec{
+				Id:    "bar",
+				Lease: &apputil.Lease{ID: 1},
+			},
+		},
 	}
 )
 

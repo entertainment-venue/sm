@@ -115,7 +115,7 @@ func (suite *ShardKeeperTestSuite) TestDropByLease_UnmarshalError() {
 			return nil
 		},
 	)
-	err := suite.shardKeeper.dropByLease(
+	err := suite.shardKeeper.dropBridgeLease(
 		&Lease{
 			ID:     1,
 			Expire: 1,
@@ -126,7 +126,7 @@ func (suite *ShardKeeperTestSuite) TestDropByLease_UnmarshalError() {
 }
 
 func (suite *ShardKeeperTestSuite) TestDropByLease_IgnoreEqualCase() {
-	err := suite.shardKeeper.dropByLease(
+	err := suite.shardKeeper.dropBridgeLease(
 		&Lease{
 			ID:     1,
 			Expire: 1,
