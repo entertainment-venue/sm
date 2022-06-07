@@ -337,11 +337,11 @@ func (mpr *mapper) Wait(containerId string) error {
 	cur, ok := mpr.containerState.alive[containerId]
 	if !ok {
 		mpr.lg.Info(
-			"not found",
+			"not found in alive container",
 			zap.String("service", mpr.appSpec.Service),
 			zap.String("containerId", containerId),
 		)
-		return apputil.ErrNotExist
+		return nil
 	}
 
 	// 判断是否需要等待一会再处理该事件，队列中的事件在第一个等待事件完结后，可能都已经达到需要被处理的时间点
