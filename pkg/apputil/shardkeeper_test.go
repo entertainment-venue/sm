@@ -3,6 +3,7 @@ package apputil
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -233,6 +234,66 @@ func (suite *ShardKeeperTestSuite) TestSync_NotInitializedAndDrop() {
 	mockedTrigger.AssertExpectations(suite.T())
 	assert.Nil(suite.T(), err)
 	assert.True(suite.T(), suite.shardKeeper.initialized)
+	suite.shardKeeper.db.Close()
+}
+
+func (suite *ShardKeeperTestSuite) TestSync_JsonUnmarshalError() {
+	var err error
+	err = suite.shardKeeper.db.Update(
+		func(tx *bolt.Tx) error {
+			b := tx.Bucket([]byte(suite.shardKeeper.service))
+			return b.Put([]byte(suite.curShard.Spec.Id), []byte("hello world"))
+		},
+	)
+	assert.Nil(suite.T(), err)
+
+	err = suite.shardKeeper.sync()
+	assert.Nil(suite.T(), err)
+	err = suite.shardKeeper.forEachRead(
+		func(k, v []byte) error {
+			if string(k) == suite.curShard.Spec.Id {
+				suite.T().Fatal("json unmarshal error,not delete value")
+			}
+			return nil
+		})
+	assert.Nil(suite.T(), err)
+	suite.shardKeeper.db.Close()
+}
+
+func (suite *ShardKeeperTestSuite) TestSync_LeaseNotEqualGuardLease() {
+	var err error
+	suite.curShard.Spec.Lease = &Lease{
+		ID: 12345678,
+	}
+	suite.shardKeeper.guardLease = &Lease{
+		ID: 87654321,
+	}
+	err = suite.shardKeeper.db.Update(
+		func(tx *bolt.Tx) error {
+			b := tx.Bucket([]byte(suite.shardKeeper.service))
+			return b.Put([]byte(suite.curShard.Spec.Id), []byte(suite.curShard.String()))
+		},
+	)
+	assert.Nil(suite.T(), err)
+
+	suite.shardKeeper.dispatchTrigger, _ = evtrigger.NewTrigger(
+		evtrigger.WithWorkerSize(1),
+	)
+	suite.shardKeeper.dispatchTrigger.Register(dropTrigger, suite.shardKeeper.dispatch)
+	mockedShardInterface := new(MockedShardInterface)
+	mockedShardInterface.On("Drop", suite.curShard.Spec.Id).Return(nil)
+	suite.shardKeeper.shardImpl = mockedShardInterface
+	err = suite.shardKeeper.sync()
+	assert.Nil(suite.T(), err)
+	time.Sleep(1 * time.Second)
+	err = suite.shardKeeper.forEachRead(
+		func(k, v []byte) error {
+			if string(k) == suite.curShard.Spec.Id {
+				suite.T().Fatal("lease not equal guardLease,not delete value")
+			}
+			return nil
+		})
+	assert.Nil(suite.T(), err)
 	suite.shardKeeper.db.Close()
 }
 

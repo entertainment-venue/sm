@@ -613,51 +613,67 @@ func (sk *shardKeeper) forEachRead(visitor func(k, v []byte) error) error {
 
 // sync 没有关注lease，boltdb中存在的就需要提交给app
 func (sk *shardKeeper) sync() error {
-	err := sk.forEachRead(
-		func(k, v []byte) error {
-			var dv ShardKeeperDbValue
-			if err := json.Unmarshal(v, &dv); err != nil {
-				return err
-			}
+	err := sk.db.Update(
+		func(tx *bolt.Tx) error {
+			b := tx.Bucket([]byte(sk.service))
+			return b.ForEach(
+				func(k, v []byte) error {
+					var dv ShardKeeperDbValue
+					if err := json.Unmarshal(v, &dv); err != nil {
+						sk.lg.Error(
+							"json unmarshal shardKeeper value err, will drop",
+							zap.String("v", string(v)),
+							zap.Error(err),
+						)
+						return b.Delete(k)
+					}
 
-			// 已经下发且已经初始化才能返回
-			if dv.Disp && sk.initialized {
-				return nil
-			}
+					// 已经下发且已经初始化才能返回
+					if dv.Disp && sk.initialized {
+						return nil
+					}
 
-			if dv.Drop {
-				return sk.dispatchTrigger.Put(
-					&evtrigger.TriggerEvent{
-						Key:   dropTrigger,
-						Value: &ShardKeeperDbValue{Spec: &ShardSpec{Id: dv.Spec.Id}},
-					},
-				)
-			}
+					if dv.Drop {
+						return sk.dispatchTrigger.Put(
+							&evtrigger.TriggerEvent{
+								Key:   dropTrigger,
+								Value: &ShardKeeperDbValue{Spec: &ShardSpec{Id: dv.Spec.Id}},
+							},
+						)
+					}
 
-			// shard的lease一定和guardLease是相等的才可以下发
-			if !dv.Spec.Lease.EqualTo(sk.guardLease) {
-				sk.lg.Warn(
-					"unexpected lease, wait for rb",
-					zap.Reflect("dv", dv),
-					zap.Reflect("guardLease", sk.guardLease),
-				)
-				return nil
-			}
+					// shard的lease一定和guardLease是相等的才可以下发
+					if !dv.Spec.Lease.EqualTo(sk.guardLease) {
+						sk.lg.Warn(
+							"unexpected lease, wait for rb",
+							zap.Reflect("dv", dv),
+							zap.Reflect("guardLease", sk.guardLease),
+						)
+						return sk.dispatchTrigger.Put(
+							&evtrigger.TriggerEvent{
+								Key:   dropTrigger,
+								Value: &ShardKeeperDbValue{Spec: &ShardSpec{Id: dv.Spec.Id}},
+							},
+						)
+					}
 
-			sk.lg.Info(
-				"shard synchronizing",
-				zap.String("service", sk.service),
-				zap.Reflect("shard", dv),
-			)
+					sk.lg.Info(
+						"shard synchronizing",
+						zap.String("service", sk.service),
+						zap.Reflect("shard", dv),
+					)
 
-			return sk.dispatchTrigger.Put(
-				&evtrigger.TriggerEvent{
-					Key:   addTrigger,
-					Value: &dv,
+					return sk.dispatchTrigger.Put(
+						&evtrigger.TriggerEvent{
+							Key:   addTrigger,
+							Value: &dv,
+						},
+					)
 				},
 			)
 		},
 	)
+
 	if err != nil {
 		return err
 	}
