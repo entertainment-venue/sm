@@ -61,7 +61,7 @@ func (l *Lease) IsExpired() bool {
 	// 1 server时间快，是存在问题的，server可能会把该分片分配给别的client
 	// 2 server时间慢，client先过期，shard会异常停止，倒是频繁rb
 	// 3 2s这个是经验值，机器之间你延迟2秒以上，op接入修复
-	return time.Now().Unix() <= (l.Expire + 2)
+	return time.Now().Unix() >= (l.Expire + 2)
 }
 
 type Assignment struct {
@@ -255,12 +255,7 @@ func (sk *shardKeeper) watchLease() {
 				leasePfx,
 				sk.startRev,
 				func(ctx context.Context, ev *clientv3.Event) error {
-					return sk.rbTrigger.Put(
-						&evtrigger.TriggerEvent{
-							Key:   rebalanceTrigger,
-							Value: ev,
-						},
-					)
+					return sk.rbTrigger.Put(&evtrigger.TriggerEvent{Key: rebalanceTrigger, Value: ev})
 				},
 			)
 		},
@@ -279,7 +274,7 @@ func (sk *shardKeeper) processRbEvent(_ string, value interface{}) error {
 				"parseLease error",
 				zap.Error(err),
 			)
-			return err
+			return nil
 		}
 		sk.lg.Info(
 			"receive rb event",
@@ -297,7 +292,7 @@ func (sk *shardKeeper) processRbEvent(_ string, value interface{}) error {
 					zap.Reflect("lease", lease),
 					zap.Error(err),
 				)
-				return err
+				return nil
 			}
 		case EtcdPathAppGuard(sk.service):
 			if err := sk.acquireGuardLease(ev, lease); err != nil {
@@ -307,7 +302,7 @@ func (sk *shardKeeper) processRbEvent(_ string, value interface{}) error {
 					zap.Reflect("lease", lease),
 					zap.Error(err),
 				)
-				return err
+				return nil
 			}
 		default:
 			return errors.Errorf("unexpected key %s", key)
@@ -344,7 +339,7 @@ func (sk *shardKeeper) acquireBridgeLease(ev *clientv3.Event, lease *ShardLease)
 			return errors.Wrap(err, "")
 		}
 		sk.lg.Info(
-			"drop bridge lease",
+			"drop bridge lease completed",
 			zap.String("pfx", key),
 			zap.Int64("lease", int64(lease.ID)),
 		)
@@ -502,11 +497,13 @@ func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *ShardLease) 
 
 					// app短暂重启，guard lease没有变化
 					if value.Spec.Lease.EqualTo(&lease.Lease) {
-						sk.lg.Info(
-							"guard lease still valid, app may be during restart",
-							zap.Reflect("guard", lease.Lease),
-							zap.String("shardId", value.Spec.Id),
-						)
+						if !lease.Renew {
+							sk.lg.Info(
+								"guard lease valid, app may be during restart",
+								zap.Reflect("guard", lease.Lease),
+								zap.String("shardId", value.Spec.Id),
+							)
+						}
 
 						// 4 debug
 						if value.Drop {
@@ -577,7 +574,7 @@ func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *ShardLease) 
 		return errors.Wrap(err, "acquire guard lease error")
 	}
 	sk.lg.Info(
-		"guard: update success",
+		"guard lease update success",
 		zap.String("key", key),
 		zap.Reflect("guardLease", sk.guardLease),
 	)

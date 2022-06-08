@@ -40,19 +40,8 @@ const (
 
 	// defaultGuardLeaseTimeout 单位s
 	// 颁发的lease要提前过期，应对clock skew，尽量保证server和client的认知一致
-	defaultGuardLeaseTimeout = 10
+	defaultGuardLeaseTimeout = 15
 )
-
-type workerTriggerEvent struct {
-	// Service 预留
-	Service string `json:"service"`
-
-	// EnqueueTime 预留，防止需要做延时
-	EnqueueTime int64 `json:"enqueueTime"`
-
-	// Value 存储moveActionList
-	Value []byte `json:"value"`
-}
 
 // smShardWrapper 实现 ShardWrapper，4 unit test
 type smShardWrapper struct {
@@ -164,7 +153,15 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 	var dv apputil.Lease
 	json.Unmarshal(gresp.Kvs[0].Value, &dv)
 	ss.guardLeaseID = dv.ID
-	ss.guardLeaseKeepaliver()
+	if dv.IsExpired() {
+		ss.lg.Info(
+			"current guard lease expired, do not start guardLeaseKeepaliver",
+			zap.String("service", ss.service),
+			zap.Int64("guardLease", int64(ss.guardLeaseID)),
+		)
+	} else {
+		ss.guardLeaseKeepaliver()
+	}
 
 	// TODO 参数传递的有些冗余，需要重新梳理
 	ss.mpr, err = newMapper(container, &appSpec, ss)
@@ -213,7 +210,7 @@ func (ss *smShard) Close() error {
 
 	ss.stopper.Close()
 	ss.lg.Info(
-		"smShard closing",
+		"smShard closed",
 		zap.String("service", ss.service),
 	)
 	return nil
@@ -434,9 +431,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 			"service start rb",
 			zap.String("service", ss.service),
 		)
-		if err := ss.rb(allShardMoves); err != nil {
-			return err
-		}
+		return ss.rb(allShardMoves)
 	}
 	return nil
 }
@@ -596,7 +591,7 @@ func (ss *smShard) guardLeaseKeepaliver() {
 			apputil.TickerLoop(
 				ctx,
 				ss.lg,
-				2*time.Second,
+				3*time.Second,
 				fmt.Sprintf("leaseStopper exit %s", ss.service),
 				func(ctx context.Context) error {
 					lease := apputil.ShardLease{
@@ -605,10 +600,21 @@ func (ss *smShard) guardLeaseKeepaliver() {
 					lease.ID = ss.guardLeaseID
 					lease.Expire = time.Now().Unix() + defaultGuardLeaseTimeout
 					_, err := ss.container.Client.Put(context.TODO(), guardPfx, lease.String())
+
+					ss.lg.Info(
+						"guardLeaseKeepaliver looping",
+						zap.String("service", ss.service),
+						zap.Reflect("newLease", lease),
+					)
+
 					return err
 				},
 			)
 		},
+	)
+	ss.lg.Info(
+		"guardLeaseKeepaliver started",
+		zap.String("service", ss.service),
 	)
 }
 
