@@ -696,71 +696,91 @@ func (sk *shardKeeper) forEachRead(visitor func(k, v []byte) error) error {
 
 // sync 没有关注lease，boltdb中存在的就需要提交给app
 func (sk *shardKeeper) sync() error {
-	err := sk.forEachRead(
-		func(k, v []byte) error {
-			var dv ShardKeeperDbValue
-			if err := json.Unmarshal(v, &dv); err != nil {
-				return err
-			}
-
-			// 已经下发且已经初始化才能返回
-			if dv.Disp && sk.initialized {
-
-				// 过期lease对应的shard需要立即停止服务，保证和server认知一致
-				// 1 真正依赖lease机制，而不是依赖boltdb在本地操作的稳定性，不容易出现drop不掉的情况
-				// 2 在server和client网络隔离的情况下，能保证cache失效的手段，为了达成一致
-				// 3 sync最慢在300ms之后就会给app下达指令，这里其实最终会依赖app对于shardkeeper的承诺（必须短时间内停止shard）
-				if dv.Spec.Lease.IsExpired() {
-					sk.lg.Info(
-						"lease expired",
-						zap.Reflect("dv", dv),
-					)
-					err := sk.dispatchTrigger.Put(&evtrigger.TriggerEvent{Key: dropTrigger, Value: &dv})
-					if err != nil {
-						sk.lg.Warn(
-							"unexpected err when try to drop expired shard",
-							zap.Reflect("dv", dv),
+	err := sk.db.Update(
+		func(tx *bolt.Tx) error {
+			b := tx.Bucket([]byte(sk.service))
+			return b.ForEach(
+				func(k, v []byte) error {
+					var dv ShardKeeperDbValue
+					if err := json.Unmarshal(v, &dv); err != nil {
+						sk.lg.Error(
+							"Unmarshal error, will be dropped",
+							zap.String("v", string(v)),
 							zap.Error(err),
 						)
+						return b.Delete(k)
 					}
-				}
 
-				return nil
-			}
+					// 已经下发且已经初始化才能返回
+					if dv.Disp && sk.initialized {
 
-			if dv.Drop {
-				sk.lg.Info(
-					"drop shard from app",
-					zap.String("service", sk.service),
-					zap.Reflect("shard", dv),
-				)
+						// 过期lease对应的shard需要立即停止服务，保证和server认知一致
+						// 1 真正依赖lease机制，而不是依赖boltdb在本地操作的稳定性，不容易出现drop不掉的情况
+						// 2 在server和client网络隔离的情况下，能保证cache失效的手段，为了达成一致
+						// 3 sync最慢在300ms之后就会给app下达指令，这里其实最终会依赖app对于shardkeeper的承诺（必须短时间内停止shard）
+						if dv.Spec.Lease.IsExpired() {
+							sk.lg.Info(
+								"lease expired",
+								zap.Reflect("dv", dv),
+							)
+							err := sk.dispatchTrigger.Put(&evtrigger.TriggerEvent{Key: dropTrigger, Value: &dv})
+							if err != nil {
+								sk.lg.Warn(
+									"unexpected err when try to drop expired shard",
+									zap.Reflect("dv", dv),
+									zap.Error(err),
+								)
+							}
+						}
 
-				return sk.dispatchTrigger.Put(
-					&evtrigger.TriggerEvent{
-						Key:   dropTrigger,
-						Value: &ShardKeeperDbValue{Spec: &ShardSpec{Id: dv.Spec.Id}},
-					},
-				)
-			}
+						return nil
+					}
 
-			// shard的lease一定和guardLease是相等的才可以下发
-			// rb中新的guard lease生成出来，delay一段时间，等待shard从bridge过度到新的guard，然后下发新的shard
-			if !dv.Spec.Lease.EqualTo(sk.guardLease) {
-				sk.lg.Warn(
-					"unexpected lease, wait for rb to completed",
-					zap.Reflect("dv", dv),
-					zap.Reflect("guardLease", sk.guardLease),
-				)
-				return nil
-			}
+					if dv.Drop {
+						sk.lg.Info(
+							"drop shard from app",
+							zap.String("service", sk.service),
+							zap.Reflect("shard", dv),
+						)
 
-			sk.lg.Info(
-				"add shard to app",
-				zap.String("service", sk.service),
-				zap.Reflect("shard", dv),
+						return sk.dispatchTrigger.Put(
+							&evtrigger.TriggerEvent{
+								Key:   dropTrigger,
+								Value: &ShardKeeperDbValue{Spec: &ShardSpec{Id: dv.Spec.Id}},
+							},
+						)
+					}
+
+					// shard的lease一定和guardLease是相等的才可以下发
+					/*
+						这种要求shardkeeper下发shard的情况，有两个通道：
+						1. 从http add请求
+						2. watch lease，发现需要drop（不会走到问题逻辑）
+						1这种情况，sm在guardlease的更新和http请求下发之间停10s，等待client同步，然后下发，如果10s这个问题client都没同步到最新的guardlease，drop即可
+					*/
+					if !dv.Spec.Lease.EqualTo(sk.guardLease) {
+						sk.lg.Warn(
+							"unexpected lease, will be dropped",
+							zap.Reflect("dv", dv),
+							zap.Reflect("guardLease", sk.guardLease),
+						)
+						return sk.dispatchTrigger.Put(
+							&evtrigger.TriggerEvent{
+								Key:   dropTrigger,
+								Value: &ShardKeeperDbValue{Spec: &ShardSpec{Id: dv.Spec.Id}},
+							},
+						)
+					}
+
+					sk.lg.Info(
+						"add shard to app",
+						zap.String("service", sk.service),
+						zap.Reflect("shard", dv),
+					)
+
+					return sk.dispatchTrigger.Put(&evtrigger.TriggerEvent{Key: addTrigger, Value: &dv})
+				},
 			)
-
-			return sk.dispatchTrigger.Put(&evtrigger.TriggerEvent{Key: addTrigger, Value: &dv})
 		},
 	)
 	if err != nil {
