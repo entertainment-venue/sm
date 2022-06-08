@@ -527,7 +527,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 				"leaseStopper exit",
 				func(ctx context.Context) error {
 					lease := apputil.ShardLease{
-						//		Renew: true
+						Renew: true,
 					}
 					lease.ID = ss.guardLeaseID
 					lease.Expire = time.Now().Unix() + defaultGuardLeaseTimeout
