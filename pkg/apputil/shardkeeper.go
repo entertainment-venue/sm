@@ -74,6 +74,9 @@ type ShardLease struct {
 	// GuardLeaseID 不是 clientv3.NoLease ，代表是bridge阶段，且要求本地shard的lease属性是该值
 	GuardLeaseID clientv3.LeaseID `json:"guardLeaseID"`
 
+	// Renew 用于对guard lease续约，下一个过期时间使用 Lease.Expire
+	Renew bool `json:"renew"`
+
 	// Assignment 包含本轮需要drop掉的shard
 	Assignment *Assignment `json:"assignment"`
 }
