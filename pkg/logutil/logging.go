@@ -7,6 +7,7 @@ import (
 	"github.com/pkg/errors"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -97,6 +98,7 @@ func NewLogger(opt ...logOptionsFunc) (*zap.Logger, error) {
 
 	zap.AddCallerSkip(1)
 	zapCfg := zap.NewProductionConfig()
+	zapCfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 
 	zapCfg.OutputPaths = []string{fmt.Sprintf("rotate://%s", opts.Path)}
 	if opts.Stdout {
