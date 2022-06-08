@@ -523,8 +523,8 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 			apputil.TickerLoop(
 				ctx,
 				ss.lg,
-				1*time.Second,
-				"",
+				2*time.Second,
+				"leaseStopper exit",
 				func(ctx context.Context) error {
 					lease := apputil.ShardLease{
 						//		Renew: true
@@ -568,9 +568,10 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 			action.Spec.Lease = &apputil.Lease{
 				ID: guardLease.ID,
 
-				// 7等待10s，所有shardKeeper应该都切换到新guard lease上来，guard lease有自己的Expire延期策略，不依赖于8的网络耗时
-				// 所以这块给-1，没必要下发给client
-				Expire: -1,
+				// 旧shardkeeper，在bridge过期的之后，会干掉lease比bridge还早的shard，这些shard灭有切换到new guard上。
+				// 给1的原因是，兼容旧的根据bridge进行drop的逻辑，防止直接走到ID大小的判断上来，误drop掉shard，具体可以参考shardkeeper.go
+				// TODO 升级完sdk之后，去掉这块逻辑
+				Expire: bridgeLease.Expire + 1,
 			}
 			addMALs = append(addMALs, action)
 			continue
@@ -596,6 +597,9 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 		)
 		return err
 	}
+
+	// 4 debug，日志排查困难
+	time.Sleep(3 * time.Second)
 
 	return nil
 }
