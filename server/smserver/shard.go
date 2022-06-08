@@ -164,6 +164,7 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 	var dv apputil.Lease
 	json.Unmarshal(gresp.Kvs[0].Value, &dv)
 	ss.guardLeaseID = dv.ID
+	ss.guardLeaseKeepaliver()
 
 	// TODO 参数传递的有些冗余，需要重新梳理
 	ss.mpr, err = newMapper(container, &appSpec, ss)
@@ -207,6 +208,8 @@ func (ss *smShard) Spec() *apputil.ShardSpec {
 
 func (ss *smShard) Close() error {
 	ss.mpr.Close()
+
+	ss.leaseStopper.Close()
 
 	ss.stopper.Close()
 	ss.lg.Info(
@@ -518,25 +521,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	}
 
 	// guard lease需要定时续约，把Expire延长，防止app清除掉shard
-	ss.leaseStopper.Wrap(
-		func(ctx context.Context) {
-			apputil.TickerLoop(
-				ctx,
-				ss.lg,
-				2*time.Second,
-				"leaseStopper exit",
-				func(ctx context.Context) error {
-					lease := apputil.ShardLease{
-						Renew: true,
-					}
-					lease.ID = ss.guardLeaseID
-					lease.Expire = time.Now().Unix() + defaultGuardLeaseTimeout
-					_, err := ss.container.Client.Put(context.TODO(), guardPfx, lease.String())
-					return err
-				},
-			)
-		},
-	)
+	ss.guardLeaseKeepaliver()
 
 	// 7 等待bridge到guard迁移，以及bridge expired，足够网络健康状态下的所有节点的shard迁移
 	ss.lg.Info(
@@ -602,6 +587,29 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	time.Sleep(3 * time.Second)
 
 	return nil
+}
+
+func (ss *smShard) guardLeaseKeepaliver() {
+	guardPfx := ss.container.nodeManager.nodeServiceGuard(ss.service)
+	ss.leaseStopper.Wrap(
+		func(ctx context.Context) {
+			apputil.TickerLoop(
+				ctx,
+				ss.lg,
+				2*time.Second,
+				fmt.Sprintf("leaseStopper exit %s", ss.service),
+				func(ctx context.Context) error {
+					lease := apputil.ShardLease{
+						Renew: true,
+					}
+					lease.ID = ss.guardLeaseID
+					lease.Expire = time.Now().Unix() + defaultGuardLeaseTimeout
+					_, err := ss.container.Client.Put(context.TODO(), guardPfx, lease.String())
+					return err
+				},
+			)
+		},
+	)
 }
 
 func (ss *smShard) validateGuardLease() error {
