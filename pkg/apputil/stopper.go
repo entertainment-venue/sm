@@ -35,10 +35,12 @@ type GoroutineStopper struct {
 type StopableFunc func(ctx context.Context)
 
 func (stopper *GoroutineStopper) Wrap(fn StopableFunc) {
-	stopper.once.Do(func() {
-		// 不需要外部ctx
-		stopper.ctx, stopper.cancel = context.WithCancel(context.TODO())
-	})
+	stopper.once.Do(
+		func() {
+			// 不需要外部ctx
+			stopper.ctx, stopper.cancel = context.WithCancel(context.TODO())
+		},
+	)
 
 	stopper.wg.Add(1)
 	go func(fn StopableFunc, ctx context.Context) {
@@ -51,6 +53,9 @@ func (stopper *GoroutineStopper) Wrap(fn StopableFunc) {
 func (stopper *GoroutineStopper) Close() {
 	if stopper.cancel != nil {
 		stopper.cancel()
+
+		// bugfix: stopper调用Close之后，再次调用Wrap，这时的ctx和cancel不合法，会导致goroutine立即退出，在Close之后需要重新初始化
+		stopper.ctx, stopper.cancel = context.WithCancel(context.TODO())
 	}
 	stopper.wg.Wait()
 }

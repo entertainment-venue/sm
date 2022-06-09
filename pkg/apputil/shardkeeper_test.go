@@ -2,6 +2,7 @@ package apputil
 
 import (
 	"encoding/json"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"testing"
 	"time"
 
@@ -116,7 +117,7 @@ func (suite *ShardKeeperTestSuite) TestDropByLease_UnmarshalError() {
 			return nil
 		},
 	)
-	err := suite.shardKeeper.dropByLease(
+	err := suite.shardKeeper.dropBridgeLease(
 		&Lease{
 			ID:     1,
 			Expire: 1,
@@ -127,7 +128,7 @@ func (suite *ShardKeeperTestSuite) TestDropByLease_UnmarshalError() {
 }
 
 func (suite *ShardKeeperTestSuite) TestDropByLease_IgnoreEqualCase() {
-	err := suite.shardKeeper.dropByLease(
+	err := suite.shardKeeper.dropBridgeLease(
 		&Lease{
 			ID:     1,
 			Expire: 1,
@@ -149,8 +150,14 @@ func (suite *ShardKeeperTestSuite) TestDropByLease_IgnoreEqualCase() {
 }
 
 func (suite *ShardKeeperTestSuite) TestAdd_create() {
-	fakeShardId := "bar"
-	err := suite.shardKeeper.Add(fakeShardId, &ShardSpec{Id: fakeShardId})
+	fakeShardId := mock.Anything
+	err := suite.shardKeeper.Add(fakeShardId, &ShardSpec{
+		Id: fakeShardId,
+		Lease: &Lease{
+			ID:     0,
+			Expire: 101,
+		},
+	})
 	assert.Nil(suite.T(), err)
 	suite.shardKeeper.db.View(
 		func(tx *bolt.Tx) error {
@@ -161,6 +168,8 @@ func (suite *ShardKeeperTestSuite) TestAdd_create() {
 			assert.False(suite.T(), dbValue.Disp)
 			assert.False(suite.T(), dbValue.Drop)
 			assert.Equal(suite.T(), fakeShardId, dbValue.Spec.Id)
+			assert.Equal(suite.T(), clientv3.LeaseID(0), dbValue.Spec.Lease.ID)
+			assert.Equal(suite.T(), int64(0), dbValue.Spec.Lease.Expire)
 			return nil
 		},
 	)
@@ -177,7 +186,38 @@ func (suite *ShardKeeperTestSuite) TestAdd_update() {
 			v := b.Get([]byte(fakeShardId))
 			var dbValue ShardKeeperDbValue
 			json.Unmarshal(v, &dbValue)
-			assert.False(suite.T(), dbValue.Disp)
+
+			// shard已经存在，不允许更新
+			assert.True(suite.T(), dbValue.Disp)
+
+			assert.False(suite.T(), dbValue.Drop)
+			assert.Equal(suite.T(), fakeShardId, dbValue.Spec.Id)
+			return nil
+		},
+	)
+	suite.shardKeeper.db.Close()
+}
+
+func (suite *ShardKeeperTestSuite) TestAdd_leaseNotEqual() {
+	fakeShardId := suite.curShard.Spec.Id
+	err := suite.shardKeeper.Add(fakeShardId, &ShardSpec{
+		Id: fakeShardId,
+		Lease: &Lease{
+			ID:     0,
+			Expire: 101,
+		},
+	})
+	assert.Nil(suite.T(), err)
+	suite.shardKeeper.db.View(
+		func(tx *bolt.Tx) error {
+			b := tx.Bucket([]byte(suite.shardKeeper.service))
+			v := b.Get([]byte(fakeShardId))
+			var dbValue ShardKeeperDbValue
+			json.Unmarshal(v, &dbValue)
+
+			// shard已经存在，不允许更新
+			assert.True(suite.T(), dbValue.Disp)
+
 			assert.False(suite.T(), dbValue.Drop)
 			assert.Equal(suite.T(), fakeShardId, dbValue.Spec.Id)
 			return nil
