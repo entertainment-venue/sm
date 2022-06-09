@@ -47,14 +47,6 @@ type Lease struct {
 	Expire int64 `json:"expire"`
 }
 
-func (l *Lease) BiggerThan(lease *Lease) bool {
-	if l.Expire > 0 {
-		return l.Expire > lease.Expire
-	}
-	// 兼容旧逻辑，保证etcd没有leader变更的情况且shard.db没有被写入的情况下，能够判断出lease的优先级
-	return l.ID > lease.ID
-}
-
 func (l *Lease) EqualTo(lease *Lease) bool {
 	return l.ID == lease.ID
 }
@@ -62,6 +54,14 @@ func (l *Lease) EqualTo(lease *Lease) bool {
 func (l *Lease) String() string {
 	b, _ := json.Marshal(l)
 	return string(b)
+}
+
+func (l *Lease) IsExpired() bool {
+	// shardKeeper 提前2s过期，容忍一定范围的机器时钟问题
+	// 1 server时间快，是存在问题的，server可能会把该分片分配给别的client
+	// 2 server时间慢，client先过期，shard会异常停止，倒是频繁rb
+	// 3 2s这个是经验值，机器之间你延迟2秒以上，op接入修复
+	return time.Now().Unix() >= (l.Expire + 2)
 }
 
 type Assignment struct {
@@ -73,6 +73,9 @@ type ShardLease struct {
 
 	// GuardLeaseID 不是 clientv3.NoLease ，代表是bridge阶段，且要求本地shard的lease属性是该值
 	GuardLeaseID clientv3.LeaseID `json:"guardLeaseID"`
+
+	// Renew 用于对guard lease续约，下一个过期时间使用 Lease.Expire
+	Renew bool `json:"renew"`
 
 	// Assignment 包含本轮需要drop掉的shard
 	Assignment *Assignment `json:"assignment"`
@@ -106,9 +109,9 @@ type shardKeeper struct {
 
 	// startRev 记录lease节点的rev，用于开启watch goroutine
 	startRev int64
-	// bridgeLease
+	// bridgeLease acquireBridgeLease 赋值，当前bridge lease，rb阶段只需要拿到第一次通过etcd下发的lease，没有lease续约的动作
 	bridgeLease *Lease
-	// guardLease acquireGuardLease 成功时才能赋值，直到下次rb
+	// guardLease acquireGuardLease 赋值，当前guard lease，成功时才能赋值，直到下次rb
 	guardLease *Lease
 }
 
@@ -210,7 +213,17 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 		if err := json.Unmarshal(gresp.Kvs[0].Value, &lease); err != nil {
 			return nil, errors.Wrap(err, "")
 		}
-		sk.guardLease = &lease.Lease
+		// client启动，etcd中存在合法guard lease的情况下，才能让sync goroutine工作。
+		// 依赖下面的watchLease和sm服务端的恢复，boltdb已经被标记被待下发的shard才能给到app。
+		if !lease.IsExpired() {
+			sk.guardLease = &lease.Lease
+		} else {
+			sk.lg.Error(
+				"guard lease in etcd is expired",
+				zap.String("leasePfx", leasePfx),
+				zap.Reflect("guardLease", lease.Lease),
+			)
+		}
 	}
 	sk.startRev = gresp.Header.Revision + 1
 
@@ -242,12 +255,7 @@ func (sk *shardKeeper) watchLease() {
 				leasePfx,
 				sk.startRev,
 				func(ctx context.Context, ev *clientv3.Event) error {
-					return sk.rbTrigger.Put(
-						&evtrigger.TriggerEvent{
-							Key:   rebalanceTrigger,
-							Value: ev,
-						},
-					)
+					return sk.rbTrigger.Put(&evtrigger.TriggerEvent{Key: rebalanceTrigger, Value: ev})
 				},
 			)
 		},
@@ -266,7 +274,7 @@ func (sk *shardKeeper) processRbEvent(_ string, value interface{}) error {
 				"parseLease error",
 				zap.Error(err),
 			)
-			return err
+			return nil
 		}
 		sk.lg.Info(
 			"receive rb event",
@@ -284,7 +292,7 @@ func (sk *shardKeeper) processRbEvent(_ string, value interface{}) error {
 					zap.Reflect("lease", lease),
 					zap.Error(err),
 				)
-				return err
+				return nil
 			}
 		case EtcdPathAppGuard(sk.service):
 			if err := sk.acquireGuardLease(ev, lease); err != nil {
@@ -294,7 +302,7 @@ func (sk *shardKeeper) processRbEvent(_ string, value interface{}) error {
 					zap.Reflect("lease", lease),
 					zap.Error(err),
 				)
-				return err
+				return nil
 			}
 		default:
 			return errors.Errorf("unexpected key %s", key)
@@ -327,30 +335,19 @@ func (sk *shardKeeper) acquireBridgeLease(ev *clientv3.Event, lease *ShardLease)
 	}
 
 	if ev.Type == mvccpb.DELETE {
-		// delete事件，已经错过加入时机，需要回收掉和lease相关的所有shard，此处在rb中，
-		// 是明确要drop掉所有shard的，理论上，所有bridge lease的shard都应该已经迁移到guard lease
-		if err := sk.dropByLease(&lease.Lease); err != nil {
+		if err := sk.dropBridgeLease(&lease.Lease); err != nil {
 			return errors.Wrap(err, "")
 		}
 		sk.lg.Info(
-			"drop bridge lease",
+			"drop bridge lease completed",
 			zap.String("pfx", key),
 			zap.Int64("lease", int64(lease.ID)),
 		)
 		return nil
 	}
 
+	// reset bridge lease，清除 shardKeeper 当前的临时变量，方便开启新的rb
 	sk.bridgeLease = noLease
-
-	// 软删除
-	// sync goroutine 提取db中待清理的shard，通过单独的trigger同步到app
-	// 这块如果要确定app drop成功，可以有两个方案：
-	// 1 先app drop，然后shard del
-	// 2 先shard del，然后app drop
-	// 上述方案在一致性会有点差异：
-	// 1 db中保留shard，持续保持心跳，smserver可以认定shard没有被清理
-	// 2 db中清理shard，但是app drop失败，会导致smserver认定shard被清理，但仍旧在工作，这种不一致不可接受
-	// 所以1可以接受，但考虑到和app的耦合会造成过多问题，这里整体迁移到另一个trigger处理
 
 	dropM := make(map[string]struct{})
 	for _, drop := range lease.Assignment.Drops {
@@ -381,13 +378,13 @@ func (sk *shardKeeper) acquireBridgeLease(ev *clientv3.Event, lease *ShardLease)
 							zap.Reflect("v", dv),
 							zap.Int64("bridgeLease", int64(lease.ID)),
 						)
-						// 软删除
+						// 异步删除，下发drop指令到app，通过sync goroutine
 						dv.Disp = false
 						dv.Drop = true
 					} else {
 						if lease.GuardLeaseID == dv.Spec.Lease.ID {
 							sk.lg.Info(
-								"acquire bridge",
+								"migrate from guard to bridge",
 								zap.String("shardID", shardID),
 								zap.Int64("GuardLeaseID", int64(lease.GuardLeaseID)),
 								zap.Reflect("v", dv),
@@ -402,7 +399,7 @@ func (sk *shardKeeper) acquireBridgeLease(ev *clientv3.Event, lease *ShardLease)
 								zap.Int64("GuardLeaseID", int64(lease.GuardLeaseID)),
 								zap.Reflect("v", dv),
 							)
-							// 软删除
+							// 异步删除，下发drop指令到app，通过sync goroutine
 							dv.Disp = false
 							dv.Drop = true
 						}
@@ -429,27 +426,59 @@ func (sk *shardKeeper) acquireBridgeLease(ev *clientv3.Event, lease *ShardLease)
 func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *ShardLease) error {
 	// guard处理创建场景，等待下一个event，smserver保证rb是由modify触发
 	if ev.IsCreate() {
-		err := errors.New("create event, wait until modify event")
-		return errors.Wrap(err, "")
+		sk.lg.Info(
+			"create event, guard lease only handle modify event",
+			zap.Int64("lease", int64(lease.ID)),
+		)
+		return nil
 	}
 
 	key := string(ev.Kv.Key)
 
+	// 续约场景，需要和当前 shardKeeper 的guardLease一致，否则报错
+	if lease.Renew {
+		// renew场景，bridgeLease应该为noLease
+		if !sk.bridgeLease.EqualTo(noLease) {
+			return errors.Errorf(
+				"bridge lease should be zero when renew happened, key [%s] guard [%d]",
+				key,
+				lease.ID,
+			)
+		}
+
+		if lease.ID != sk.guardLease.ID {
+			return errors.Errorf(
+				"renew guard lease with id %d, but current lease is %d",
+				lease.ID,
+				sk.guardLease.ID,
+			)
+		}
+
+		if lease.IsExpired() {
+			return errors.Errorf(
+				"renew guard lease with id %d, but already expired %d",
+				lease.ID,
+				lease.Expire,
+			)
+		}
+	} else {
+		// 非renew场景，肯定是在rb中，所以当前的bridgeLease需要存在值
+		if sk.bridgeLease.EqualTo(noLease) {
+			return errors.Errorf(
+				"bridge lease is zero, can not participating rb, key [%s] guard [%d]",
+				key,
+				lease.ID,
+			)
+		}
+
+		defer func() {
+			// 清理bridge，不管逻辑是否出错
+			sk.bridgeLease = noLease
+		}()
+	}
+
 	// 预先设定guardLease，boltdb的shard逐个过度到guardLease下
 	sk.guardLease = &lease.Lease
-
-	if sk.bridgeLease.EqualTo(noLease) {
-		sk.lg.Warn(
-			"guard: found bridge lease zero, do not not participating rb",
-			zap.String("key", key),
-			zap.Int64("guardLease", int64(lease.ID)),
-		)
-		return nil
-	}
-	defer func() {
-		// 清理bridge，不管逻辑是否出错
-		sk.bridgeLease = noLease
-	}()
 
 	// 每个shard的lease存在下面3种状态：
 	// 1 shard的lease和guard lease相等，shard分配有效，什么都不用做
@@ -466,13 +495,15 @@ func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *ShardLease) 
 						return err
 					}
 
-					// app短暂重启
+					// app短暂重启，guard lease没有变化
 					if value.Spec.Lease.EqualTo(&lease.Lease) {
-						sk.lg.Info(
-							"lease valid",
-							zap.Reflect("guard", lease.Lease),
-							zap.String("shardId", value.Spec.Id),
-						)
+						if !lease.Renew {
+							sk.lg.Info(
+								"guard lease valid, app may be during restart",
+								zap.Reflect("guard", lease.Lease),
+								zap.String("shardId", value.Spec.Id),
+							)
+						}
 
 						// 4 debug
 						if value.Drop {
@@ -482,16 +513,35 @@ func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *ShardLease) 
 								zap.String("shardId", value.Spec.Id),
 							)
 						}
+
+						// renew只关注拥有合法lease的shard，其他是rb考虑的事情
+						if lease.Renew {
+							value.Spec.Lease = &lease.Lease
+							return b.Put(k, []byte(value.String()))
+						}
+
+						return nil
+					}
+
+					// 暂不做处理，保证renew功能单一
+					if lease.Renew {
+						sk.lg.Warn(
+							"got renew lease, found shard lease error",
+							zap.String("shardId", value.Spec.Id),
+							zap.Reflect("shardGuard", value.Spec.Lease),
+							zap.Reflect("renewGuard", lease.Lease),
+						)
 						return nil
 					}
 
 					// guard和bridge有绑定关系，经过bridge才能guard
 					if value.Spec.Lease.EqualTo(sk.bridgeLease) {
 						sk.lg.Info(
-							"lease valid",
+							"can migrate from bridge to guard",
 							zap.Reflect("bridge", sk.bridgeLease),
 							zap.Int64("guard", int64(lease.ID)),
 							zap.String("shardId", value.Spec.Id),
+							zap.Bool("renew", lease.Renew),
 						)
 						value.Spec.Lease = &lease.Lease
 
@@ -503,11 +553,11 @@ func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *ShardLease) 
 							)
 						}
 					} else {
-						// 出现概率较少
+						// 出现概率较少，删除shard等待rb即可
 						sk.lg.Warn(
-							"lease too old",
-							zap.Reflect("cur", value.Spec.Lease),
-							zap.Reflect("guard", lease),
+							"can not migrate from bridge to guard, may be local lease is too old",
+							zap.Reflect("localLease", value.Spec.Lease),
+							zap.Reflect("guardLease", lease),
 							zap.String("shardId", value.Spec.Id),
 						)
 
@@ -515,26 +565,23 @@ func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *ShardLease) 
 						value.Drop = true
 					}
 
-					if err := b.Put(k, []byte(value.String())); err != nil {
-						return errors.Wrap(err, "")
-					}
-					return nil
+					return b.Put(k, []byte(value.String()))
 				},
 			)
 		},
 	)
 	if err != nil {
-		return errors.Wrap(err, "")
+		return errors.Wrap(err, "acquire guard lease error")
 	}
 	sk.lg.Info(
-		"guard: update success",
+		"guard lease update success",
 		zap.String("key", key),
 		zap.Reflect("guardLease", sk.guardLease),
 	)
 	return nil
 }
 
-func (sk *shardKeeper) dropByLease(lease *Lease) error {
+func (sk *shardKeeper) dropBridgeLease(lease *Lease) error {
 	return sk.db.Update(
 		func(tx *bolt.Tx) error {
 			b := tx.Bucket([]byte(sk.service))
@@ -545,13 +592,17 @@ func (sk *shardKeeper) dropByLease(lease *Lease) error {
 						return err
 					}
 
-					// 要覆盖lease所有需要drop场景
-					// 1 clientv3.NoLease server端把lease重置，无差别放弃本地的lease，后续新的lease不可能和本地的相同，人工做数据，或者etcd集群变更才会出现
-					// 2 过期的lease一定要drop，不知道这个shard在其他节点的占用情况(分布式系统在有网络延时的情况下知道shard没人占用，意义不大)
-					// 3 对于lease合法的情况，只有bridge场景下才可以drop。已经过渡到guard lease或者在rb中间加入的情况都可以drop
-					if lease.ID == clientv3.NoLease || lease.BiggerThan(value.Spec.Lease) {
+					// 1 clientv3.NoLease server端把lease重置，直接修改etcd或者etcd集群故障才可能出现
+					// 2 bridge lease收到delete event，需要drop掉所有没有迁移到guard lease的shard，这里只关注从bridge -> guard
+					if lease.ID == clientv3.NoLease || lease.EqualTo(value.Spec.Lease) {
 						value.Disp = false
 						value.Drop = true
+
+						sk.lg.Warn(
+							"will remove shard because failed bridge -> guard",
+							zap.Int64("shardLease", int64(value.Spec.Lease.ID)),
+							zap.Int64("bridgeLease", int64(lease.ID)),
+						)
 						if err := b.Put(k, []byte(value.String())); err != nil {
 							return err
 						}
@@ -571,7 +622,36 @@ func (sk *shardKeeper) Add(id string, spec *ShardSpec) error {
 	}
 	err := sk.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(sk.service))
-		return b.Put([]byte(id), []byte(value.String()))
+
+		k := []byte(id)
+		v := b.Get(k)
+		if v != nil {
+			// id已经存在，不需要写入boltdb
+			sk.lg.Info(
+				"shard already exist",
+				zap.String("service", sk.service),
+				zap.String("id", id),
+			)
+			return nil
+		}
+
+		if !spec.Lease.EqualTo(sk.guardLease) {
+			sk.lg.Error(
+				"received server add shard request, but local guard is not the newest",
+				zap.String("service", sk.service),
+				zap.String("id", id),
+				zap.Int64("newGuardLease", int64(spec.Lease.ID)),
+				zap.Int64("localGuardLease", int64(sk.guardLease.ID)),
+				zap.Int64("localBridgeLease", int64(sk.bridgeLease.ID)),
+			)
+			return nil
+		}
+
+		// 刷新Expire时间，防止网络延迟，导致 Expire 过期，最终导致sync goroutine把该shard drop掉。
+		// sk.guardLease.Expire 是shardKeeper本地watch etcd得到的值，以etcd为准。
+		value.Spec.Lease.Expire = sk.guardLease.Expire
+
+		return b.Put(k, []byte(value.String()))
 	})
 	return errors.Wrap(err, "")
 }
@@ -584,7 +664,7 @@ func (sk *shardKeeper) Drop(id string) error {
 		// 多次下发drop指令，发现boltdb中为nil，return ASAP
 		if raw == nil {
 			sk.lg.Warn(
-				"drop shard again",
+				"shard not exist when try to drop",
 				zap.String("service", sk.service),
 				zap.String("id", id),
 			)
@@ -621,7 +701,7 @@ func (sk *shardKeeper) sync() error {
 					var dv ShardKeeperDbValue
 					if err := json.Unmarshal(v, &dv); err != nil {
 						sk.lg.Error(
-							"json unmarshal shardKeeper value err, will drop",
+							"Unmarshal error, will be dropped",
 							zap.String("v", string(v)),
 							zap.Error(err),
 						)
@@ -630,10 +710,36 @@ func (sk *shardKeeper) sync() error {
 
 					// 已经下发且已经初始化才能返回
 					if dv.Disp && sk.initialized {
+
+						// 过期lease对应的shard需要立即停止服务，保证和server认知一致
+						// 1 真正依赖lease机制，而不是依赖boltdb在本地操作的稳定性，不容易出现drop不掉的情况
+						// 2 在server和client网络隔离的情况下，能保证cache失效的手段，为了达成一致
+						// 3 sync最慢在300ms之后就会给app下达指令，这里其实最终会依赖app对于shardkeeper的承诺（必须短时间内停止shard）
+						if dv.Spec.Lease.IsExpired() {
+							sk.lg.Info(
+								"lease expired",
+								zap.Reflect("dv", dv),
+							)
+							err := sk.dispatchTrigger.Put(&evtrigger.TriggerEvent{Key: dropTrigger, Value: &dv})
+							if err != nil {
+								sk.lg.Warn(
+									"unexpected err when try to drop expired shard",
+									zap.Reflect("dv", dv),
+									zap.Error(err),
+								)
+							}
+						}
+
 						return nil
 					}
 
 					if dv.Drop {
+						sk.lg.Info(
+							"drop shard from app",
+							zap.String("service", sk.service),
+							zap.Reflect("shard", dv),
+						)
+
 						return sk.dispatchTrigger.Put(
 							&evtrigger.TriggerEvent{
 								Key:   dropTrigger,
@@ -643,9 +749,15 @@ func (sk *shardKeeper) sync() error {
 					}
 
 					// shard的lease一定和guardLease是相等的才可以下发
+					/*
+						这种要求shardkeeper下发shard的情况，有两个通道：
+						1. 从http add请求
+						2. watch lease，发现需要drop（不会走到问题逻辑）
+						1这种情况，sm在guardlease的更新和http请求下发之间停10s，等待client同步，然后下发，如果10s这个问题client都没同步到最新的guardlease，drop即可
+					*/
 					if !dv.Spec.Lease.EqualTo(sk.guardLease) {
 						sk.lg.Warn(
-							"unexpected lease, wait for rb",
+							"unexpected lease, will be dropped",
 							zap.Reflect("dv", dv),
 							zap.Reflect("guardLease", sk.guardLease),
 						)
@@ -658,22 +770,16 @@ func (sk *shardKeeper) sync() error {
 					}
 
 					sk.lg.Info(
-						"shard synchronizing",
+						"add shard to app",
 						zap.String("service", sk.service),
 						zap.Reflect("shard", dv),
 					)
 
-					return sk.dispatchTrigger.Put(
-						&evtrigger.TriggerEvent{
-							Key:   addTrigger,
-							Value: &dv,
-						},
-					)
+					return sk.dispatchTrigger.Put(&evtrigger.TriggerEvent{Key: addTrigger, Value: &dv})
 				},
 			)
 		},
 	)
-
 	if err != nil {
 		return err
 	}

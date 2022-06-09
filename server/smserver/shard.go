@@ -26,7 +26,6 @@ import (
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/pkg/errors"
-	"github.com/zd3tl/evtrigger"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -37,27 +36,12 @@ var (
 )
 
 const (
-	workerTrigger = "workerTrigger"
-
 	defaultMaxShardCount = math.MaxInt
 
-	// defaultBridgeLeaseTimeout 单位s
-	defaultBridgeLeaseTimeout = 10
-
 	// defaultGuardLeaseTimeout 单位s
-	defaultGuardLeaseTimeout = 10
+	// 颁发的lease要提前过期，应对clock skew，尽量保证server和client的认知一致
+	defaultGuardLeaseTimeout = 15
 )
-
-type workerTriggerEvent struct {
-	// Service 预留
-	Service string `json:"service"`
-
-	// EnqueueTime 预留，防止需要做延时
-	EnqueueTime int64 `json:"enqueueTime"`
-
-	// Value 存储moveActionList
-	Value []byte `json:"value"`
-}
 
 // smShardWrapper 实现 ShardWrapper，4 unit test
 type smShardWrapper struct {
@@ -98,8 +82,6 @@ type smShard struct {
 	// mpr 存储当前存活的container和shard信息，代理etcd访问
 	mpr *mapper
 
-	// trigger 负责分片移动任务的任务提交和处理
-	trigger evtrigger.Trigger
 	// operator 对接接入方，通过http请求下发shard move指令
 	operator *operator
 
@@ -109,14 +91,18 @@ type smShard struct {
 
 	bridgeLeaseID clientv3.LeaseID
 	guardLeaseID  clientv3.LeaseID
+
+	// leaseStopper 维护guard lease的keepalive
+	leaseStopper *apputil.GoroutineStopper
 }
 
 func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard, error) {
 	ss := &smShard{
-		container: container,
-		shardSpec: shardSpec,
-		stopper:   &apputil.GoroutineStopper{},
-		lg:        container.lg,
+		container:    container,
+		shardSpec:    shardSpec,
+		stopper:      &apputil.GoroutineStopper{},
+		lg:           container.lg,
+		leaseStopper: &apputil.GoroutineStopper{},
 	}
 
 	// 解析任务中需要负责的service
@@ -146,13 +132,6 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 	}
 	ss.appSpec = &appSpec
 
-	// 封装事件异步处理
-	trigger, _ := evtrigger.NewTrigger(
-		evtrigger.WithLogger(ss.lg),
-		evtrigger.WithWorkerSize(1),
-	)
-	_ = trigger.Register(workerTrigger, ss.processEvent)
-	ss.trigger = trigger
 	ss.operator = newOperator(ss.lg, shardSpec.Service)
 
 	// 提供当前的guard lease
@@ -174,6 +153,15 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 	var dv apputil.Lease
 	json.Unmarshal(gresp.Kvs[0].Value, &dv)
 	ss.guardLeaseID = dv.ID
+	if dv.IsExpired() {
+		ss.lg.Info(
+			"current guard lease expired, do not start guardLeaseKeepaliver",
+			zap.String("service", ss.service),
+			zap.Int64("guardLease", int64(ss.guardLeaseID)),
+		)
+	} else {
+		ss.guardLeaseKeepaliver()
+	}
 
 	// TODO 参数传递的有些冗余，需要重新梳理
 	ss.mpr, err = newMapper(container, &appSpec, ss)
@@ -218,15 +206,11 @@ func (ss *smShard) Spec() *apputil.ShardSpec {
 func (ss *smShard) Close() error {
 	ss.mpr.Close()
 
-	ss.trigger.Close()
-	ss.lg.Info(
-		"trigger closing",
-		zap.String("service", ss.service),
-	)
+	ss.leaseStopper.Close()
 
 	ss.stopper.Close()
 	ss.lg.Info(
-		"smShard closing",
+		"smShard closed",
 		zap.String("service", ss.service),
 	)
 	return nil
@@ -447,14 +431,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 			"service start rb",
 			zap.String("service", ss.service),
 		)
-		if err := ss.rb(allShardMoves); err != nil {
-			return err
-		}
-	} else {
-		// ss.lg.Info(
-		// 	"service safe, no shard moves",
-		// 	zap.String("service", ss.service),
-		// )
+		return ss.rb(allShardMoves)
 	}
 	return nil
 }
@@ -470,8 +447,12 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 		// 涉及到移动的分片，都需要公布出来，防止以下情况，
 		assignment.Drops = append(assignment.Drops, action.ShardId)
 	}
-	// 2 获取新的bridge lease
-	bridgeGrantLeaseResp, err := ss.container.Client.GetClient().Grant(context.TODO(), defaultBridgeLeaseTimeout)
+	// 2 获取新的bridge lease，bridge lease的过期不应该和rb绑定，可以通过时间触发分离出去，让程序机制更合理
+	// 这里是defaultGuardLeaseTimeout的2倍，原因：
+	// a bridge颁发，需要等待一个10s，old guard -> bridge & old guard expired
+	// b new guard颁发，再等待10s，bridge -> new guard & bridge expired
+	// 上面的expired是保证一致性的关键，让server端能够确认client的行为，利用time clock得到一个基本正确的结论，除非clock skew过大
+	bridgeGrantLeaseResp, err := ss.container.Client.GetClient().Grant(context.TODO(), 2*defaultGuardLeaseTimeout)
 	if err != nil {
 		return errors.Wrap(err, "Grant error")
 	}
@@ -485,74 +466,75 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 		Assignment:   &assignment,
 	}
 	bridgeLease.ID = bridgeGrantLeaseResp.ID
+	// 注意这个 Expire 不需要特别精确，保证server的时间戳加上一个时间段，大部分client都会快速切换到bridge上，少部分慢的，也通过下面的sleep保证过期掉
 	bridgeLease.Expire = time.Now().Unix() + bridgeGrantLeaseResp.TTL
 	bridgePfx := ss.container.nodeManager.nodeServiceBridge(ss.service)
 	if err := ss.container.Client.CreateAndGet(context.TODO(), []string{bridgePfx}, []string{bridgeLease.String()}, bridgeGrantLeaseResp.ID); err != nil {
 		return err
 	}
-	// 4 等待bridge timeout
-	bridgeLeaseTimeToLiveResponse, err := ss.container.Client.GetClient().TimeToLive(context.TODO(), bridgeLease.ID)
-	if err != nil {
-		return errors.Wrap(err, "TimeToLive error")
-	}
-	if bridgeLeaseTimeToLiveResponse.TTL == -1 {
-		ss.lg.Info(
-			"bridge lease already expired",
-			zap.String("bridgePfx", bridgePfx),
-			zap.Int64("ttl", bridgeLeaseTimeToLiveResponse.TTL),
-			zap.Reflect("lease", bridgeLease),
-		)
-	} else {
-		ss.lg.Info(
-			"waiting bridge lease expired",
-			zap.String("bridgePfx", bridgePfx),
-			zap.Int64("ttl", bridgeLeaseTimeToLiveResponse.TTL),
-			zap.Reflect("lease", bridgeLease),
-		)
-		time.Sleep(time.Duration(bridgeLeaseTimeToLiveResponse.TTL+1) * time.Second)
-		ss.lg.Info(
-			"bridge lease expired",
-			zap.String("bridgePfx", bridgePfx),
-			zap.Reflect("lease", bridgeLease),
-		)
-	}
 
-	// 5 grant guard lease
+	// 4 等待客户端lease确定超时，客户端将old guard lease的shard都停止工作，最长停止10s，也就是在bridge lease下发之后立即
+
+	// old guard lease不继续续约，etcd中的数据不在刷新，会导致Expire停止更新，下面的等待就能保证切换到bridge有延迟的shard被drop掉
+	ss.leaseStopper.Close()
+
+	ss.lg.Info(
+		"waiting old guard expired",
+		zap.Int64("oldGuardLease", int64(ss.guardLeaseID)),
+		zap.String("currentBridgePfx", bridgePfx),
+		zap.Reflect("currentBridgeLease", bridgeLease),
+	)
+	// 颁发bridge的前提下，等待旧的guard lease过期掉，client会提前2s过期，按照目前的设定，8s过期，这块其实就是lease的核心保证，也是依赖
+	// 服务器时钟同步的点。
+	// 这个就是slicer论文4.5中提到的delay：
+	// The Assigner writes and distributes assignment
+	// A2, creates the bridge lease, delays for Slicelets to acquire the bridge lease for reading, and only then does it
+	// recall and rewrite the guard lease.
+	time.Sleep(defaultGuardLeaseTimeout * time.Second)
+	ss.lg.Info(
+		"old guard expired",
+		zap.Int64("oldGuardLease", int64(ss.guardLeaseID)),
+		zap.String("currentBridgePfx", bridgePfx),
+		zap.Reflect("currentBridgeLease", bridgeLease),
+	)
+
+	// 5 grant guard lease，这里的lease不和guard节点存活挂钩，只用到leaseID，所以timeout是多少暂时无所谓，如果关联guard lease，涉及到改动太大包括shardKeeper
 	guardLeaseResp, err := ss.container.Client.GetClient().Grant(context.TODO(), defaultGuardLeaseTimeout)
 	if err != nil {
 		return errors.Wrap(err, "Grant error")
 	}
 	// 刷新内存的guard lease
 	ss.guardLeaseID = guardLeaseResp.ID
-
-	// 6 设置guard lease
+	// 6 设置guard lease，lease的过期不会影响到guard lease节点，所以Expire设置的有误差
 	guardPfx := ss.container.nodeManager.nodeServiceGuard(ss.service)
 	guardLease := apputil.Lease{
 		ID:     guardLeaseResp.ID,
-		Expire: time.Now().Unix() + guardLeaseResp.TTL,
+		Expire: time.Now().Unix() + defaultGuardLeaseTimeout,
 	}
 	if _, err := ss.container.Client.Put(context.TODO(), guardPfx, guardLease.String()); err != nil {
 		return err
 	}
-	// 7 等待guard timeout
-	guardLeaseTimeToLiveResponse, err := ss.container.Client.GetClient().TimeToLive(context.TODO(), guardLeaseResp.ID)
-	if err != nil {
-		return errors.Wrap(err, "TimeToLive error")
-	}
+
+	// guard lease需要定时续约，把Expire延长，防止app清除掉shard
+	ss.guardLeaseKeepaliver()
+
+	// 7 等待bridge到guard迁移，以及bridge expired，足够网络健康状态下的所有节点的shard迁移
 	ss.lg.Info(
-		"waiting guard lease expired",
+		"waiting bridge expired",
 		zap.String("guardPfx", guardPfx),
-		zap.Int64("ttl", guardLeaseTimeToLiveResponse.TTL),
-		zap.Reflect("lease", guardLease),
+		zap.Reflect("currentBridgeLease", bridgeLease),
+		zap.Reflect("newGuardLease", guardLease),
 	)
-	time.Sleep(time.Duration(guardLeaseTimeToLiveResponse.TTL+1) * time.Second)
+	time.Sleep(defaultGuardLeaseTimeout * time.Second)
 	ss.lg.Info(
-		"guard lease expired",
+		"bridge expired",
 		zap.String("guardPfx", guardPfx),
-		zap.Reflect("lease", guardLease),
+		zap.Reflect("currentBridgeLease", bridgeLease),
+		zap.Reflect("newGuardLease", guardLease),
 	)
+
 	// 8 下发add请求
-	var addMA moveActionList
+	var addMALs moveActionList
 	shards := ss.mpr.AliveShards()
 	for _, action := range shardMoves {
 		if action.AddEndpoint == "" {
@@ -564,10 +546,14 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 			// 不是存活shard，可以移动
 			action.DropEndpoint = ""
 			action.Spec.Lease = &apputil.Lease{
-				ID:     guardLease.ID,
-				Expire: time.Now().Unix() + guardLeaseTimeToLiveResponse.TTL,
+				ID: guardLease.ID,
+
+				// 旧shardkeeper，在bridge过期的之后，会干掉lease比bridge还早的shard，这些shard灭有切换到new guard上。
+				// 给1的原因是，兼容旧的根据bridge进行drop的逻辑，防止直接走到ID大小的判断上来，误drop掉shard，具体可以参考shardkeeper.go
+				// TODO 升级完sdk之后，去掉这块逻辑
+				Expire: bridgeLease.Expire + 1,
 			}
-			addMA = append(addMA, action)
+			addMALs = append(addMALs, action)
 			continue
 		}
 
@@ -580,19 +566,56 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 			zap.Reflect("t", t),
 		)
 	}
-	if len(addMA) > 0 {
-		ev := workerTriggerEvent{
-			Service:     ss.service,
-			EnqueueTime: time.Now().Unix(),
-			Value:       []byte(addMA.String()),
-		}
-		_ = ss.trigger.Put(&evtrigger.TriggerEvent{Key: workerTrigger, Value: &ev})
+	// http请求成功，boltdb中就会记录新的shard，这个shard会随着下一个heartbeat上报上来，这块http异步走，可能和下次rb冲突，case变得复杂。
+	// 并发或者同步会把延迟算到guard lease的下次续约延时中，也会影响系统稳定性。所以这块需要做lease keepalive。
+	if err := ss.dispatchMALs(addMALs); err != nil {
+		ss.lg.Error(
+			"dispatchMALs error",
+			zap.String("service", ss.service),
+			zap.Reflect("mal", addMALs),
+			zap.Error(err),
+		)
+		return err
 	}
 
-	// 9 要等shardkeeper内部的分片下发，且方式立即开启一次rb
-	time.Sleep(5 * time.Second)
+	// 4 debug，日志排查困难
+	time.Sleep(3 * time.Second)
 
 	return nil
+}
+
+func (ss *smShard) guardLeaseKeepaliver() {
+	guardPfx := ss.container.nodeManager.nodeServiceGuard(ss.service)
+	ss.leaseStopper.Wrap(
+		func(ctx context.Context) {
+			apputil.TickerLoop(
+				ctx,
+				ss.lg,
+				3*time.Second,
+				fmt.Sprintf("leaseStopper exit %s", ss.service),
+				func(ctx context.Context) error {
+					lease := apputil.ShardLease{
+						Renew: true,
+					}
+					lease.ID = ss.guardLeaseID
+					lease.Expire = time.Now().Unix() + defaultGuardLeaseTimeout
+					_, err := ss.container.Client.Put(context.TODO(), guardPfx, lease.String())
+
+					ss.lg.Info(
+						"guardLeaseKeepaliver looping",
+						zap.String("service", ss.service),
+						zap.Reflect("newLease", lease),
+					)
+
+					return err
+				},
+			)
+		},
+	)
+	ss.lg.Info(
+		"guardLeaseKeepaliver started",
+		zap.String("service", ss.service),
+	)
 }
 
 func (ss *smShard) validateGuardLease() error {
@@ -825,40 +848,13 @@ func (ss *smShard) maxHold(containerCnt, shardCnt int) int {
 	return r
 }
 
-func (ss *smShard) processEvent(key string, value interface{}) error {
-	event := value.(*workerTriggerEvent)
-
-	var mal moveActionList
-	if err := json.Unmarshal(event.Value, &mal); err != nil {
-		ss.lg.Error(
-			"Unmarshal error",
-			zap.ByteString("value", event.Value),
-			zap.Error(err),
-		)
-		// return ASAP unmarshal失败重试没意义，需要人工接入进行数据修正
-		return errors.Wrap(err, "")
-	}
-	ss.lg.Info(
-		"event received",
-		zap.String("key", key),
-		zap.Reflect("mal", mal),
-	)
+func (ss *smShard) dispatchMALs(mal moveActionList) error {
 	if len(mal) == 0 {
 		ss.lg.Warn(
-			"empty move actions",
-			zap.String("key", key),
+			"empty mal",
+			zap.String("service", ss.service),
 		)
 		return nil
 	}
-
-	if err := ss.operator.move(mal); err != nil {
-		ss.lg.Error(
-			"move error",
-			zap.String("key", key),
-			zap.Reflect("ev", event),
-			zap.Error(err),
-		)
-		return errors.Wrap(err, "")
-	}
-	return nil
+	return ss.operator.move(mal)
 }
