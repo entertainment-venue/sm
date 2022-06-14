@@ -60,6 +60,9 @@ type ShardSpec struct {
 	// 这些shard之间不相关的balance到现有container上
 	Group string `json:"group"`
 
+	// WorkerGroup shard只能分配到属于WorkerGroup的container上
+	WorkerGroup string
+
 	// Lease Add时带上guard lease，存储时可能存bridge和guard
 	Lease *Lease `json:"lease"`
 }
