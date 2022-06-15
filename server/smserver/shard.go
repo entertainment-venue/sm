@@ -279,7 +279,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 	shardIdAndShardSpec := make(map[string]*apputil.ShardSpec)
 	for id, value := range etcdShardIdAndAny {
 		var ssc apputil.ShardSpec
-		if err := json.Unmarshal([]byte(value), &ss); err != nil {
+		if err := json.Unmarshal([]byte(value), &ssc); err != nil {
 			return errors.Wrap(err, "")
 		}
 		shardIdAndShardSpec[id] = &ssc
