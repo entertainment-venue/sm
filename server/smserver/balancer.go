@@ -1,5 +1,10 @@
 package smserver
 
+import (
+	"fmt"
+	"strings"
+)
+
 type balancer struct {
 	bcs map[string]*balancerContainer
 }
@@ -60,28 +65,44 @@ func newBalanceGroup() *balancerGroup {
 	}
 }
 
-type balancerWorkerGroup struct {
-	workerGroup map[string]*balancerGroup
+type balancerGroupManager struct {
+	balancerGroup map[string]*balancerGroup
 }
 
-func newBalanceWorkerGroup() *balancerWorkerGroup {
-	return &balancerWorkerGroup{
-		workerGroup: make(map[string]*balancerGroup),
+func newBalanceWorkerGroupManager() *balancerGroupManager {
+	return &balancerGroupManager{
+		balancerGroup: make(map[string]*balancerGroup),
 	}
 }
 
-func (b *balancerWorkerGroup) addShard(shardId string, containerId string, workerGroup string) {
-	bg := b.workerGroup[workerGroup]
+func (b *balancerGroupManager) addShard(shardId, containerId, group, workerGroup string) {
+	key := generateBalanceGroupKey(group, workerGroup)
+	bg := b.balancerGroup[key]
 	if bg == nil {
-		b.workerGroup[workerGroup] = newBalanceGroup()
+		b.balancerGroup[key] = newBalanceGroup()
 	}
-	b.workerGroup[workerGroup].fixShardIdAndManualContainerId[shardId] = containerId
+	b.balancerGroup[key].fixShardIdAndManualContainerId[shardId] = containerId
 }
 
-func (b *balancerWorkerGroup) addHbShard(shardId string, containerId string, workerGroup string) {
-	bg := b.workerGroup[workerGroup]
+func (b *balancerGroupManager) addHbShard(shardId, containerId, group, workerGroup string) {
+	key := generateBalanceGroupKey(group, workerGroup)
+	bg := b.balancerGroup[key]
 	if bg == nil {
-		b.workerGroup[workerGroup] = newBalanceGroup()
+		b.balancerGroup[key] = newBalanceGroup()
 	}
-	b.workerGroup[workerGroup].hbShardIdAndContainerId[shardId] = containerId
+	b.balancerGroup[key].hbShardIdAndContainerId[shardId] = containerId
+}
+
+var splitMark = "$$@@##"
+
+func generateBalanceGroupKey(group, workerGroup string) string {
+	return fmt.Sprintf("%s%s%s", group, splitMark, workerGroup)
+}
+
+func getGroupAndWorkerGroupByKey(key string) (string, string) {
+	arr := strings.Split(key, splitMark)
+	if len(arr) == 2 {
+		return arr[0], arr[1]
+	}
+	return "", ""
 }
