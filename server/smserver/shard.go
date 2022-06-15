@@ -369,8 +369,6 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 		}
 	}
 
-	//
-
 	// 增加workerGroup粒度阈值限制，防止单进程过载导致雪崩
 	workerGroupShards := make(map[string]int)
 	for shardId := range etcdShardIdAndAny {
