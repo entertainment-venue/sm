@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
@@ -216,6 +217,9 @@ type addShardRequest struct {
 
 	// Group 同一个service需要区分不同种类的shard，这些shard之间不相关的balance到现有container上
 	Group string `json:"group"`
+
+	// WorkerGroup 同一个service需要区分不同种类的container，shard可以指定分配到那一组container上
+	WorkerGroup string `json:"workerGroup"`
 }
 
 func (r *addShardRequest) String() string {
@@ -393,6 +397,162 @@ func (ss *smShardApi) GinGetShard(c *gin.Context) {
 		zap.Strings("shards", shards),
 	)
 	c.JSON(http.StatusOK, gin.H{"shards": shards})
+}
+
+type workerRequest struct {
+	// 在哪个资源组下面添加worker
+	WorkerGroup string `json:"workerGroup" binding:"required"`
+
+	// 为哪个业务app增加worker
+	Service string `json:"service" binding:"required"`
+
+	// 需要添加的资源，添加后，shard中如果存在WorkerGroup，只会将shard分配到该WorkerGroup下的worker中。
+	Worker string `json:"worker" binding:"required"`
+}
+
+// GinAddWorker
+// @Description add service worker
+// @Tags  worker
+// @Accept  json
+// @Produce  json
+// @Param param body workerRequest true "param"
+// @success 200
+// @Router /sm/server/add-worker [post]
+func (ss *smShardApi) GinAddWorker(c *gin.Context) {
+	var req workerRequest
+	if err := c.ShouldBind(&req); err != nil {
+		ss.lg.Error("ShouldBind err", zap.Error(err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	ss.lg.Info(
+		"add worker request",
+		zap.Reflect("req", req),
+	)
+
+	// 检查是否存在该service
+	resp, err := ss.container.Client.GetKV(context.Background(), ss.container.nodeManager.nodeServiceSpec(req.Service), nil)
+	if err != nil {
+		ss.lg.Error("GetKV error",
+			zap.String("service node", ss.container.nodeManager.nodeServiceSpec(req.Service)),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if resp.Count == 0 {
+		ss.lg.Warn("service not exist", zap.String("service", req.Service))
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("service[%s] not exist", req.Service)})
+		return
+	}
+
+	var (
+		nodes  = []string{ss.container.nodeManager.nodeServiceWorker(req.Service, req.WorkerGroup, req.Worker)}
+		values = []string{""}
+	)
+	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
+		ss.lg.Error("CreateAndGet error",
+			zap.Strings("nodes", nodes),
+			zap.Strings("values", values),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{})
+}
+
+// GinDelWorker
+// @Description del service worker
+// @Tags  worker
+// @Accept  json
+// @Produce  json
+// @Param param body workerRequest true "param"
+// @success 200
+// @Router /sm/server/del-worker [post]
+func (ss *smShardApi) GinDelWorker(c *gin.Context) {
+	var req workerRequest
+	if err := c.ShouldBind(&req); err != nil {
+		ss.lg.Error("ShouldBind err", zap.Error(err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	ss.lg.Info(
+		"del worker request",
+		zap.Reflect("req", req),
+	)
+
+	// 删除worker节点
+	pfx := ss.container.nodeManager.nodeServiceWorker(req.Service, req.WorkerGroup, req.Worker)
+	delResp, err := ss.container.Client.Delete(context.TODO(), pfx)
+	if err != nil {
+		ss.lg.Error("Delete err",
+			zap.String("pfx", pfx),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if delResp.Deleted != 1 {
+		ss.lg.Warn("worker not exist",
+			zap.Reflect("req", req),
+			zap.String("pfx", pfx),
+		)
+		c.JSON(http.StatusOK, gin.H{})
+		return
+	}
+
+	ss.lg.Info(
+		"delete worker success",
+		zap.Reflect("req", req),
+		zap.String("pfx", pfx),
+	)
+	c.JSON(http.StatusOK, gin.H{})
+}
+
+// GinGetWorker
+// @Description get service workerpool all worker
+// @Tags  worker
+// @Accept  json
+// @Produce  json
+// @Param service query string true "param"
+// @success 200
+// @Router /sm/server/get-worker [get]
+func (ss *smShardApi) GinGetWorker(c *gin.Context) {
+	service := c.Query("service")
+	if service == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "service and workerGroup must not empty"})
+		return
+	}
+	result := map[string][]string{}
+	pfx := ss.container.nodeManager.nodeServiceWorkerGroup(service)
+	resp, err := ss.container.Client.Get(context.TODO(), pfx, clientv3.WithPrefix())
+	if err != nil {
+		ss.lg.Error(
+			"GetKVs error",
+			zap.String("service", service),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	for _, kv := range resp.Kvs {
+		// /sm/app/foo.bar/service/foo.bar/workerpool/g1/127.0.0.1:8801
+		arr := strings.Split(string(kv.Key), "/")
+		if len(arr)-2 > 0 {
+			if _, ok := result[arr[len(arr)-2]]; ok {
+				result[arr[len(arr)-2]] = append(result[arr[len(arr)-2]], arr[len(arr)-1])
+				continue
+			}
+			result[arr[len(arr)-2]] = []string{arr[len(arr)-1]}
+		}
+	}
+	ss.lg.Info(
+		"get worker success",
+		zap.String("pfx", pfx),
+		zap.Reflect("shards", result),
+	)
+	c.JSON(http.StatusOK, gin.H{"workers": result})
 }
 
 func (ss *smShardApi) GinHealth(c *gin.Context) {

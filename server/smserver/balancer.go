@@ -59,3 +59,29 @@ func newBalanceGroup() *balancerGroup {
 		hbShardIdAndContainerId:        make(ArmorMap),
 	}
 }
+
+type balancerWorkerGroup struct {
+	workerGroup map[string]*balancerGroup
+}
+
+func newBalanceWorkerGroup() *balancerWorkerGroup {
+	return &balancerWorkerGroup{
+		workerGroup: make(map[string]*balancerGroup),
+	}
+}
+
+func (b *balancerWorkerGroup) addShard(shardId string, containerId string, workerGroup string) {
+	bg := b.workerGroup[workerGroup]
+	if bg == nil {
+		b.workerGroup[workerGroup] = newBalanceGroup()
+	}
+	b.workerGroup[workerGroup].fixShardIdAndManualContainerId[shardId] = containerId
+}
+
+func (b *balancerWorkerGroup) addHbShard(shardId string, containerId string, workerGroup string) {
+	bg := b.workerGroup[workerGroup]
+	if bg == nil {
+		b.workerGroup[workerGroup] = newBalanceGroup()
+	}
+	b.workerGroup[workerGroup].hbShardIdAndContainerId[shardId] = containerId
+}

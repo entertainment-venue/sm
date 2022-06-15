@@ -69,3 +69,13 @@ func (n *nodeManager) nodeServiceGuard(appService string) string {
 func (n *nodeManager) nodeServiceBridge(appService string) string {
 	return fmt.Sprintf("%s/lease/bridge", apputil.EtcdPathAppPrefix(appService))
 }
+
+// nodeServiceWorkerGroup /sm/app/foo.bar/service/proxy.dev/workerpool
+func (n *nodeManager) nodeServiceWorkerGroup(appService string) string {
+	return fmt.Sprintf("%s/service/%s/workerpool", n.nodeSM(), appService)
+}
+
+// nodeServiceWorker /sm/app/foo.bar/service/proxy.dev/workerpool/workerGroup/worker
+func (n *nodeManager) nodeServiceWorker(appService, workerGroup, worker string) string {
+	return fmt.Sprintf("%s/%s/%s", n.nodeServiceWorkerGroup(appService), workerGroup, worker)
+}
