@@ -264,7 +264,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 		groups = make(map[string]*balancerWorkerGroup)
 	)
 	// shard可以指定分配到某一个workerGroup,一个workerGroup可以包含多个container
-	workerGroupAndContainers,err := ss.getWorkerGroupAndContainers()
+	workerGroupAndContainers, err := ss.getHbWorkerGroupAndContainers(etcdHbContainerIdAndAny)
 	if err != nil {
 		return err
 	}
@@ -284,15 +284,34 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 		}
 		shardIdAndShardSpec[id] = &ssc
 
-		// shard的workerGroup不存在则不参与rb
-		if _, ok := workerGroupAndContainers[ssc.WorkerGroup]; !ok {
-			ss.lg.Warn(
-				"shard worker group not exist",
-				zap.String("service", ss.service),
-				zap.Reflect("workerGroup", ssc.WorkerGroup),
-			)
-			delete(etcdShardIdAndAny, id)
-			continue
+		// shard手动指定的container不存活则不参与rb
+		if ssc.ManualContainerId != "" {
+			if _, ok := etcdHbContainerIdAndAny[ssc.ManualContainerId]; !ok {
+				ss.lg.Error(
+					"shard manualContainerId not alive",
+					zap.String("service", ss.service),
+					zap.String("shardId", id),
+					zap.String("manualContainerId", ssc.ManualContainerId),
+				)
+				delete(etcdShardIdAndAny, id)
+				continue
+			}
+			// 将shard的workerGroup置为空，防止出现不存在的workerGroup影响下面的逻辑
+			ssc.WorkerGroup = ""
+		} else {
+			// shard手动指定的优先级高于workerGroup
+			// shard的workerGroup不存在则不参与rb
+			if _, ok := workerGroupAndContainers[ssc.WorkerGroup]; !ok {
+				ss.lg.Error(
+					"shard worker group not alive container",
+					zap.String("service", ss.service),
+					zap.String("shardId", id),
+					zap.String("workerGroup", ssc.WorkerGroup),
+					zap.Reflect("alive workerGroup containers", workerGroupAndContainers),
+				)
+				delete(etcdShardIdAndAny, id)
+				continue
+			}
 		}
 
 		// 按照group聚合
@@ -317,6 +336,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 	var deleting moveActionList
 	for hbShardId, value := range etcdHbShardIdAndValue {
 		isDel := false
+
 		// shard的group不存在，需要删除
 		if _, ok := shardIdAndGroup[hbShardId]; ok {
 			isDel = true
@@ -325,14 +345,26 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 		if _, ok := etcdShardIdAndAny[hbShardId]; !ok {
 			isDel = true
 		} else {
-			// shard的workerGroup不存在，需要删除
-			cs, ok := workerGroupAndContainers[shardIdAndShardSpec[hbShardId].WorkerGroup]
-			if !ok {
+			// shard配置存在
+			// shard当前的container和指定的container不一致，需要删除
+			mci := shardIdAndShardSpec[hbShardId].ManualContainerId
+			if mci != "" && value.curContainerId != shardIdAndShardSpec[hbShardId].ManualContainerId {
 				isDel = true
+			}
+			// shard指定container的优先级大于workerGroup
+			if mci != "" {
+				// 将shard的workerGroup置为空，防止出现不存在的workerGroup影响下面的逻辑
+				shardIdAndShardSpec[hbShardId].WorkerGroup = ""
 			} else {
-				// shard所属的workerGroup的containers不包含shard所在的container，需要删除
-				if _, ok := cs[value.curContainerId]; !ok {
+				// shard的workerGroup不存在，需要删除
+				cs, ok := workerGroupAndContainers[shardIdAndShardSpec[hbShardId].WorkerGroup]
+				if !ok {
 					isDel = true
+				} else {
+					// shard所属的workerGroup的containers不包含shard所在的container，需要删除
+					if _, ok := cs[value.curContainerId]; !ok {
+						isDel = true
+					}
 				}
 			}
 		}
@@ -886,7 +918,8 @@ func (ss *smShard) dispatchMALs(mal moveActionList) error {
 	return ss.operator.move(mal)
 }
 
-func (ss *smShard) getWorkerGroupAndContainers() (map[string]ArmorMap, error) {
+// 获取存在心跳的WorkerGroup的Containers
+func (ss *smShard) getHbWorkerGroupAndContainers(hbContainers ArmorMap) (map[string]ArmorMap, error) {
 	wgc := make(map[string]ArmorMap)
 	pfx := ss.container.nodeManager.nodeServiceWorkerGroup(ss.service)
 	resp, err := ss.container.Client.Get(context.TODO(), pfx, clientv3.WithPrefix())
@@ -902,12 +935,17 @@ func (ss *smShard) getWorkerGroupAndContainers() (map[string]ArmorMap, error) {
 	for _, kv := range resp.Kvs {
 		// /sm/app/foo.bar/service/foo.bar/workerpool/g1/127.0.0.1:8801
 		arr := strings.Split(string(kv.Key), "/")
-		if len(arr)-2 > 0 {
-			cs := wgc[arr[len(arr)-2]]
-			if cs == nil {
-				wgc[arr[len(arr)-2]] = make(ArmorMap)
+		// container存活
+		if _, ok := hbContainers[arr[len(arr)-1]]; ok {
+			if len(arr)-2 > 0 {
+				cs := wgc[arr[len(arr)-2]]
+				if cs == nil {
+					wgc[arr[len(arr)-2]] = make(ArmorMap)
+				}
+				wgc[arr[len(arr)-2]][arr[len(arr)-1]] = ""
 			}
-			wgc[arr[len(arr)-2]][arr[len(arr)-1]] = ""
+			// workerGroup为空的时候，所有的container都符合
+			wgc[""][arr[len(arr)-1]] = ""
 		}
 	}
 	return wgc, nil
