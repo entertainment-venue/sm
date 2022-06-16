@@ -82,7 +82,7 @@ func (n *nodeManager) nodeServiceWorker(appService, workerGroup, worker string) 
 }
 
 // getWorkerGroupAndContainerByEtcdPath /sm/app/foo.bar/service/foo.bar/workerpool/g1/127.0.0.1:8801
-func (n *nodeManager) getWorkerGroupAndContainerByEtcdPath(path string) (string, string) {
+func (n *nodeManager) parseWorkerGroupAndContainer(path string) (string, string) {
 	arr := strings.Split(path, "/")
 	if len(arr) >= 2 {
 		return arr[len(arr)-2], arr[len(arr)-1]

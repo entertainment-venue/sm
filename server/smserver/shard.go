@@ -917,7 +917,7 @@ func (ss *smShard) getHbWorkerGroupAndContainers(hbContainers ArmorMap) (map[str
 	}
 	for _, kv := range resp.Kvs {
 		// /sm/app/foo.bar/service/foo.bar/workerpool/g1/127.0.0.1:8801
-		wGroup, container := ss.container.nodeManager.getWorkerGroupAndContainerByEtcdPath(string(kv.Key))
+		wGroup, container := ss.container.nodeManager.parseWorkerGroupAndContainer(string(kv.Key))
 
 		// container存活
 		if _, ok := hbContainers[container]; ok {
