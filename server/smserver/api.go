@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
@@ -538,13 +537,11 @@ func (ss *smShardApi) GinGetWorker(c *gin.Context) {
 	}
 	for _, kv := range resp.Kvs {
 		// /sm/app/foo.bar/service/foo.bar/workerpool/g1/127.0.0.1:8801
-		arr := strings.Split(string(kv.Key), "/")
-		if len(arr)-2 > 0 {
-			if _, ok := result[arr[len(arr)-2]]; ok {
-				result[arr[len(arr)-2]] = append(result[arr[len(arr)-2]], arr[len(arr)-1])
-				continue
-			}
-			result[arr[len(arr)-2]] = []string{arr[len(arr)-1]}
+		wGroup, container := ss.container.nodeManager.getWorkerGroupAndContainerByEtcdPath(string(kv.Key))
+		if _, ok := result[wGroup]; ok {
+			result[wGroup] = append(result[wGroup], container)
+		} else {
+			result[wGroup] = []string{container}
 		}
 	}
 	ss.lg.Info(

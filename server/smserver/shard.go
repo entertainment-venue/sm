@@ -21,7 +21,6 @@ import (
 	"math"
 	"reflect"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -273,8 +272,6 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// 支持手动指定container
-	shardIdAndGroup := make(ArmorMap)
 	// 提供给 moveAction，做内容下发，防止sdk再次获取，sdk不会有sm空间的访问权限
 	shardIdAndShardSpec := make(map[string]*apputil.ShardSpec)
 	for id, value := range etcdShardIdAndAny {
@@ -282,7 +279,6 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 		if err := json.Unmarshal([]byte(value), &ssc); err != nil {
 			return errors.Wrap(err, "")
 		}
-		shardIdAndShardSpec[id] = &ssc
 
 		// shard手动指定的container不存活则不参与rb
 		if ssc.ManualContainerId != "" {
@@ -303,7 +299,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 			// shard的workerGroup不存在则不参与rb
 			if _, ok := workerGroupAndContainers[ssc.WorkerGroup]; !ok {
 				ss.lg.Error(
-					"shard worker group not alive container",
+					"shard worker group no alive containers",
 					zap.String("service", ss.service),
 					zap.String("shardId", id),
 					zap.String("workerGroup", ssc.WorkerGroup),
@@ -313,12 +309,9 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 				continue
 			}
 		}
-
+		shardIdAndShardSpec[id] = &ssc
 		// 按照group聚合
-		groups.addShard(id,ssc.ManualContainerId,ssc.Group,ssc.WorkerGroup)
-
-		// 建立index
-		shardIdAndGroup[id] = ssc.Group
+		groups.addShard(id, ssc.ManualContainerId, ssc.Group, ssc.WorkerGroup)
 	}
 
 	// 获取当前存活shard，存活shard的container分配关系如果命中可以不生产moveAction
@@ -331,40 +324,9 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 	// 提取需要被移除的shard
 	var deleting moveActionList
 	for hbShardId, value := range etcdHbShardIdAndValue {
-		isDel := false
-
-		// shard的group不存在，需要删除
-		if _, ok := shardIdAndGroup[hbShardId]; ok {
-			isDel = true
-		}
 		// shard配置不存在，需要删除
-		if _, ok := etcdShardIdAndAny[hbShardId]; !ok {
-			isDel = true
-		} else {
-			// shard配置存在
-			// shard当前的container和指定的container不一致，需要删除
-			mci := shardIdAndShardSpec[hbShardId].ManualContainerId
-			if mci != "" && value.curContainerId != shardIdAndShardSpec[hbShardId].ManualContainerId {
-				isDel = true
-			}
-			// shard指定container的优先级大于workerGroup
-			if mci != "" {
-				// 将shard的workerGroup置为空，防止出现不存在的workerGroup影响下面的逻辑
-				shardIdAndShardSpec[hbShardId].WorkerGroup = ""
-			} else {
-				// shard的workerGroup不存在，需要删除
-				cs, ok := workerGroupAndContainers[shardIdAndShardSpec[hbShardId].WorkerGroup]
-				if !ok {
-					isDel = true
-				} else {
-					// shard所属的workerGroup的containers不包含shard所在的container，需要删除
-					if _, ok := cs[value.curContainerId]; !ok {
-						isDel = true
-					}
-				}
-			}
-		}
-		if isDel {
+		spec, ok := shardIdAndShardSpec[hbShardId]
+		if !ok {
 			deleting = append(
 				deleting,
 				&moveAction{
@@ -374,11 +336,42 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 				},
 			)
 			delete(etcdHbShardIdAndValue, hbShardId)
-		} else {
-			// shard配置中存在group
-			groups.addHbShard(hbShardId, value.curContainerId, shardIdAndGroup[hbShardId],shardIdAndShardSpec[hbShardId].WorkerGroup)
+			continue
 		}
+
+		// shard当前的container和指定的container不一致，需要删除
+		mci := shardIdAndShardSpec[hbShardId].ManualContainerId
+		if mci != "" && value.curContainerId != spec.ManualContainerId {
+			deleting = append(
+				deleting,
+				&moveAction{
+					Service:      ss.service,
+					ShardId:      hbShardId,
+					DropEndpoint: value.curContainerId,
+				},
+			)
+			delete(etcdHbShardIdAndValue, hbShardId)
+			continue
+		}
+
+		// shard所属的workerGroup的containers不包含shard所在的container，需要删除
+		if cs, ok := workerGroupAndContainers[spec.WorkerGroup]; ok {
+			if _, ok := cs[value.curContainerId]; !ok {
+				deleting = append(
+					deleting,
+					&moveAction{
+						Service:      ss.service,
+						ShardId:      hbShardId,
+						DropEndpoint: value.curContainerId,
+					},
+				)
+				delete(etcdHbShardIdAndValue, hbShardId)
+				continue
+			}
+		}
+		groups.addHbShard(hbShardId, value.curContainerId, spec.Group, spec.WorkerGroup)
 	}
+
 	if len(deleting) > 0 {
 		allShardMoves = append(allShardMoves, deleting...)
 		ss.lg.Info(
@@ -398,35 +391,31 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 	}
 
 	// 增加workerGroup粒度阈值限制，防止单进程过载导致雪崩
-	workerGroupShards := make(map[string]int)
-	for shardId := range etcdShardIdAndAny {
-		workerGroupShards[shardIdAndShardSpec[shardId].WorkerGroup] = workerGroupShards[shardIdAndShardSpec[shardId].WorkerGroup] + 1
-	}
-	for wg, shardCnt := range workerGroupShards {
-		maxHold := ss.maxHold(len(workerGroupAndContainers[wg]), shardCnt)
-		if maxHold > ss.appSpec.MaxShardCount {
-			err := errors.New("MaxShardCount exceeded")
-			ss.lg.Error(
-				err.Error(),
-				zap.String("service", ss.service),
-				zap.String("workerGroup", wg),
-				zap.Int("maxHold", maxHold),
-				zap.Int("containerCnt", len(workerGroupAndContainers[wg])),
-				zap.Int("shardCnt", shardCnt),
-				zap.Error(err),
-			)
-			// 一个资源组的分配超过最大限制，不影响其他资源组的分配
-			delete(workerGroupShards, wg)
-		}
-	}
+	//workerGroupShards := make(map[string]int)
+	//for shardId := range etcdShardIdAndAny {
+	//	workerGroupShards[shardIdAndShardSpec[shardId].WorkerGroup] = workerGroupShards[shardIdAndShardSpec[shardId].WorkerGroup] + 1
+	//}
+	//for wg, shardCnt := range workerGroupShards {
+	//	maxHold := ss.maxHold(len(workerGroupAndContainers[wg]), shardCnt)
+	//	if maxHold > ss.appSpec.MaxShardCount {
+	//		err := errors.New("MaxShardCount exceeded")
+	//		ss.lg.Error(
+	//			err.Error(),
+	//			zap.String("service", ss.service),
+	//			zap.String("workerGroup", wg),
+	//			zap.Int("maxHold", maxHold),
+	//			zap.Int("containerCnt", len(workerGroupAndContainers[wg])),
+	//			zap.Int("shardCnt", shardCnt),
+	//			zap.Error(err),
+	//		)
+	//		// 一个资源组的分配超过最大限制，不影响其他资源组的分配
+	//		delete(workerGroupShards, wg)
+	//	}
+	//}
 
 	// 现存shard的分配
 	for groupkey, bg := range groups.balancerGroup {
-		group,wGroup := getGroupAndWorkerGroupByKey(groupkey)
-		// 没超过阈值限制的workerGroup才允许分配
-		if _, ok := workerGroupShards[wGroup]; !ok {
-			continue
-		}
+		group, wGroup := getGroupAndWorkerGroupByKey(groupkey)
 		hbContainerIds := workerGroupAndContainers[wGroup].KeyList()
 		fixShardIds := bg.fixShardIdAndManualContainerId.KeyList()
 		hbShardIds := bg.hbShardIdAndContainerId.KeyList()
@@ -928,18 +917,17 @@ func (ss *smShard) getHbWorkerGroupAndContainers(hbContainers ArmorMap) (map[str
 	}
 	for _, kv := range resp.Kvs {
 		// /sm/app/foo.bar/service/foo.bar/workerpool/g1/127.0.0.1:8801
-		arr := strings.Split(string(kv.Key), "/")
+		wGroup, container := ss.container.nodeManager.getWorkerGroupAndContainerByEtcdPath(string(kv.Key))
+
 		// container存活
-		if _, ok := hbContainers[arr[len(arr)-1]]; ok {
-			if len(arr)-2 > 0 {
-				cs := wgc[arr[len(arr)-2]]
-				if cs == nil {
-					wgc[arr[len(arr)-2]] = make(ArmorMap)
-				}
-				wgc[arr[len(arr)-2]][arr[len(arr)-1]] = ""
+		if _, ok := hbContainers[container]; ok {
+			cs := wgc[wGroup]
+			if cs == nil {
+				wgc[wGroup] = make(ArmorMap)
 			}
+			wgc[wGroup][container] = ""
 			// workerGroup为空的时候，所有的container都符合
-			wgc[""][arr[len(arr)-1]] = ""
+			wgc[""][container] = ""
 		}
 	}
 	return wgc, nil

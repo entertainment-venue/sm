@@ -16,6 +16,7 @@ package smserver
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
 )
@@ -78,4 +79,13 @@ func (n *nodeManager) nodeServiceWorkerGroup(appService string) string {
 // nodeServiceWorker /sm/app/foo.bar/service/proxy.dev/workerpool/workerGroup/worker
 func (n *nodeManager) nodeServiceWorker(appService, workerGroup, worker string) string {
 	return fmt.Sprintf("%s/%s/%s", n.nodeServiceWorkerGroup(appService), workerGroup, worker)
+}
+
+// getWorkerGroupAndContainerByEtcdPath /sm/app/foo.bar/service/foo.bar/workerpool/g1/127.0.0.1:8801
+func (n *nodeManager) getWorkerGroupAndContainerByEtcdPath(path string) (string, string) {
+	arr := strings.Split(path, "/")
+	if len(arr) >= 2 {
+		return arr[len(arr)-1], arr[len(arr)-2]
+	}
+	return "", ""
 }
