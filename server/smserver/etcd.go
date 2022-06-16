@@ -85,7 +85,7 @@ func (n *nodeManager) nodeServiceWorker(appService, workerGroup, worker string) 
 func (n *nodeManager) getWorkerGroupAndContainerByEtcdPath(path string) (string, string) {
 	arr := strings.Split(path, "/")
 	if len(arr) >= 2 {
-		return arr[len(arr)-1], arr[len(arr)-2]
+		return arr[len(arr)-2], arr[len(arr)-1]
 	}
 	return "", ""
 }
