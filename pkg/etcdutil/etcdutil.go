@@ -120,11 +120,6 @@ func (w *EtcdClient) Delete(ctx context.Context, key string, opts ...clientv3.Op
 	return resp, errors.Wrap(err, "")
 }
 func (w *EtcdClient) Watch(ctx context.Context, key string, opts ...clientv3.OpOption) clientv3.WatchChan {
-	var cancelFunc context.CancelFunc
-	if ctx == context.TODO() || ctx == context.Background() {
-		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
-		defer cancelFunc()
-	}
 	return w.Client.Watch(ctx, key, opts...)
 }
 
