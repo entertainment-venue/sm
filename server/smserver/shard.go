@@ -904,6 +904,8 @@ func (ss *smShard) dispatchMALs(mal moveActionList) error {
 // 获取存在心跳的WorkerGroup的Containers
 func (ss *smShard) getHbWorkerGroupAndContainers(hbContainers ArmorMap) (map[string]ArmorMap, error) {
 	wgc := make(map[string]ArmorMap)
+	// workerGroup为空的时候，所有的container都符合
+	wgc[""]=hbContainers
 	pfx := ss.container.nodeManager.nodeServiceWorkerGroup(ss.service)
 	resp, err := ss.container.Client.Get(context.TODO(), pfx, clientv3.WithPrefix())
 	if err != nil {
@@ -926,8 +928,6 @@ func (ss *smShard) getHbWorkerGroupAndContainers(hbContainers ArmorMap) (map[str
 				wgc[wGroup] = make(ArmorMap)
 			}
 			wgc[wGroup][container] = ""
-			// workerGroup为空的时候，所有的container都符合
-			wgc[""][container] = ""
 		}
 	}
 	return wgc, nil

@@ -277,6 +277,7 @@ func (ss *smShardApi) GinAddShard(c *gin.Context) {
 		UpdateTime:        time.Now().Unix(),
 		ManualContainerId: req.ManualContainerId,
 		Group:             req.Group,
+		WorkerGroup:       req.WorkerGroup,
 	}
 
 	// 区分更新和添加
