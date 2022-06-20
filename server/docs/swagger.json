@@ -64,6 +64,36 @@
                 }
             }
         },
+        "/sm/server/add-worker": {
+            "post": {
+                "description": "add service worker",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "worker"
+                ],
+                "parameters": [
+                    {
+                        "description": "param",
+                        "name": "param",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/smserver.workerRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    }
+                }
+            }
+        },
         "/sm/server/del-shard": {
             "post": {
                 "description": "del shard",
@@ -122,6 +152,36 @@
                 }
             }
         },
+        "/sm/server/del-worker": {
+            "post": {
+                "description": "del service worker",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "worker"
+                ],
+                "parameters": [
+                    {
+                        "description": "param",
+                        "name": "param",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/smserver.workerRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    }
+                }
+            }
+        },
         "/sm/server/get-shard": {
             "get": {
                 "description": "get service all shard",
@@ -168,6 +228,34 @@
                     }
                 }
             }
+        },
+        "/sm/server/get-worker": {
+            "get": {
+                "description": "get service workerpool all worker",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "worker"
+                ],
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "param",
+                        "name": "service",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -194,6 +282,10 @@
                 },
                 "task": {
                     "description": "业务app自己定义task内容",
+                    "type": "string"
+                },
+                "workerGroup": {
+                    "description": "WorkerGroup 同一个service需要区分不同种类的container，shard可以指定分配到那一组container上",
                     "type": "string"
                 }
             }
@@ -229,6 +321,28 @@
                 },
                 "service": {
                     "description": "Service 目前app的spec更多承担的是管理职能，shard配置的一个起点，先只配置上service，可以唯一标记一个app",
+                    "type": "string"
+                }
+            }
+        },
+        "smserver.workerRequest": {
+            "type": "object",
+            "required": [
+                "service",
+                "worker",
+                "workerGroup"
+            ],
+            "properties": {
+                "service": {
+                    "description": "为哪个业务app增加worker",
+                    "type": "string"
+                },
+                "worker": {
+                    "description": "需要添加的资源，添加后，shard中如果存在WorkerGroup，只会将shard分配到该WorkerGroup下的worker中。",
+                    "type": "string"
+                },
+                "workerGroup": {
+                    "description": "在哪个资源组下面添加worker",
                     "type": "string"
                 }
             }
