@@ -93,8 +93,6 @@ loop:
 					zap.Int64("startRev", startRev),
 					zap.Error(err),
 				)
-				time.Sleep(3 * time.Second)
-				goto loop
 			}
 		}
 
