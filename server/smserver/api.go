@@ -558,6 +558,7 @@ type serviceDetail struct {
 	ShardSpec         map[string]*apputil.ShardSpec `json:"shardSpec"`
 	WorkerGroup       map[string][]string           `json:"workerGroup"`
 	Allocate          map[string][]string           `json:"allocate"`
+	AliveContainers   []string                      `json:"aliveContainers"`
 	NotAllocateShards []string                      `json:"notAllocateShards"`
 }
 
@@ -685,10 +686,11 @@ func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
 	allocateShard := map[string]string{}
 	for _, kv := range resp3.Kvs {
 		container := ss.container.nodeManager.parseContainer(string(kv.Key))
-		info := &apputil.ContainerHeartbeat{}
 		if string(kv.Value) == "" {
 			continue
 		}
+		result.AliveContainers = append(result.AliveContainers, container)
+		info := &apputil.ContainerHeartbeat{}
 		if err := json.Unmarshal(kv.Value, &info); err != nil {
 			ss.lg.Error(
 				"json unmarshal error",
