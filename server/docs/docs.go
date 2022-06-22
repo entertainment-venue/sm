@@ -201,6 +201,34 @@ var doc = `{
                 }
             }
         },
+        "/sm/server/detail": {
+            "get": {
+                "description": "get service detail",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "service"
+                ],
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "param",
+                        "name": "service",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    }
+                }
+            }
+        },
         "/sm/server/get-shard": {
             "get": {
                 "description": "get service all shard",

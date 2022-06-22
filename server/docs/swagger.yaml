@@ -177,6 +177,24 @@ paths:
           description: ""
       tags:
       - worker
+  /sm/server/detail:
+    get:
+      consumes:
+      - application/json
+      description: get service detail
+      parameters:
+      - description: param
+        in: query
+        name: service
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: ""
+      tags:
+      - service
   /sm/server/get-shard:
     get:
       consumes:
