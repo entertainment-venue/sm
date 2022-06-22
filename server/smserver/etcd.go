@@ -90,7 +90,7 @@ func (n *nodeManager) parseWorkerGroupAndContainer(path string) (string, string)
 	return "", ""
 }
 
-// parseWorkerGroupAndContainer /sm/app/foo.bar/containerhb/127.0.0.1:8801/694d818416078d06
+// parseContainer /sm/app/foo.bar/containerhb/127.0.0.1:8801/694d818416078d06
 func (n *nodeManager) parseContainer(hbPath string) string {
 	arr := strings.Split(hbPath, "/")
 	if len(arr) >= 2 {
