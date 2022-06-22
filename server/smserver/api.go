@@ -521,7 +521,7 @@ func (ss *smShardApi) GinDelWorker(c *gin.Context) {
 func (ss *smShardApi) GinGetWorker(c *gin.Context) {
 	service := c.Query("service")
 	if service == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "service and workerGroup must not empty"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "service must not empty"})
 		return
 	}
 	result := map[string][]string{}
@@ -529,7 +529,7 @@ func (ss *smShardApi) GinGetWorker(c *gin.Context) {
 	resp, err := ss.container.Client.Get(context.TODO(), pfx, clientv3.WithPrefix())
 	if err != nil {
 		ss.lg.Error(
-			"GetKVs error",
+			"Get error",
 			zap.String("service", service),
 			zap.Error(err),
 		)
@@ -551,6 +551,174 @@ func (ss *smShardApi) GinGetWorker(c *gin.Context) {
 		zap.Reflect("shards", result),
 	)
 	c.JSON(http.StatusOK, gin.H{"workers": result})
+}
+
+type serviceDetail struct {
+	Spec              *smAppSpec                    `json:"spec"`
+	ShardSpec         map[string]*apputil.ShardSpec `json:"shardSpec"`
+	WorkerGroup       map[string][]string           `json:"workerGroup"`
+	Allocate          map[string][]string           `json:"allocate"`
+	NotAllocateShards []string                      `json:"notAllocateShards"`
+}
+
+// GinServiceDetail
+// @Description get service detail
+// @Tags  service
+// @Accept  json
+// @Produce  json
+// @Param service query string true "param"
+// @success 200
+// @Router /sm/server/detail [get]
+func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
+	service := c.Query("service")
+	if service == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "service must not empty"})
+		return
+	}
+	result := serviceDetail{Spec: &smAppSpec{}, ShardSpec: make(map[string]*apputil.ShardSpec), WorkerGroup: make(map[string][]string), Allocate: make(map[string][]string)}
+
+	// 1.获取service的配置信息
+	// /sm/app/foo.bar/service/worker-test.dev/spec
+	// {"service":"worker-test.dev","createTime":1655707418,"maxShardCount":0,"maxRecoveryTime":0}
+	pfx := ss.container.nodeManager.nodeServiceSpec(service)
+	resp, err := ss.container.Client.GetKV(context.Background(), pfx, nil)
+	if err != nil {
+		ss.lg.Error("GetKV error",
+			zap.String("service node", pfx),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if resp.Count == 0 {
+		ss.lg.Warn("service not exist", zap.String("service", service))
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("service[%s] not exist", service)})
+		return
+	}
+	if string(resp.Kvs[0].Value) == "" {
+		ss.lg.Error(
+			"service spec empty",
+			zap.String("service", service),
+			zap.String("content", string(resp.Kvs[0].Value)),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "service spec empty"})
+		return
+	}
+	if err := json.Unmarshal(resp.Kvs[0].Value, result.Spec); err != nil {
+		ss.lg.Error(
+			"json unmarshal error",
+			zap.String("service", service),
+			zap.String("content", string(resp.Kvs[0].Value)),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 2.获取分片信息
+	// /sm/app/foo.bar/service/worker-test.dev/shard/task-A
+	// {"id":"","service":"worker-test.dev","task":"":"","group":"","WorkerGroup":"g2","lease":null}
+	pfx = ss.container.nodeManager.nodeServiceShard(service, "")
+	resp1, err := ss.container.Client.GetKVs(context.Background(), pfx)
+	if err != nil {
+		ss.lg.Error("GetKVs error",
+			zap.String("service node", pfx),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	for shardId, shardSpec := range resp1 {
+		sp := &apputil.ShardSpec{}
+		if shardSpec == "" {
+			continue
+		}
+		if err := json.Unmarshal([]byte(shardSpec), sp); err != nil {
+			ss.lg.Error(
+				"json unmarshal error",
+				zap.String("service", service),
+				zap.String("content", shardSpec),
+				zap.Error(err),
+			)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		result.ShardSpec[shardId] = sp
+	}
+
+	// 3.获取workerGroup信息
+	// /sm/app/foo.bar/service/worker-test.dev/workerpool/g1/127.0.0.1:9100
+	pfx = ss.container.nodeManager.nodeServiceWorkerGroup(service)
+	resp2, err := ss.container.Client.Get(context.TODO(), pfx, clientv3.WithPrefix())
+	if err != nil {
+		ss.lg.Error(
+			"Get error",
+			zap.String("service node", pfx),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	for _, kv := range resp2.Kvs {
+		wGroup, container := ss.container.nodeManager.parseWorkerGroupAndContainer(string(kv.Key))
+		if _, ok := result.WorkerGroup[wGroup]; ok {
+			result.WorkerGroup[wGroup] = append(result.WorkerGroup[wGroup], container)
+		} else {
+			result.WorkerGroup[wGroup] = []string{container}
+		}
+	}
+
+	// 4.获取container上的shard分配信息
+	// /sm/app/foo.bar/containerhb/127.0.0.1:8801/694d818416078d06
+	// {"shards":[{"spec":{"id":"worker-test.dev","service":"foo.bar","task":"{\"governedService\":\"worker-test.dev\"}","updateTime":1655707418,"manualContainerId":"","group":"","workerGroup":"","lease":{"id":7587863351494413604,"expire":1655794762}},"disp":true,"drop":false}]}
+	pfx = ss.container.nodeManager.nodeServiceContainerHb(service)
+	resp3, err := ss.container.Client.Get(context.TODO(), pfx, clientv3.WithPrefix())
+	if err != nil {
+		ss.lg.Error(
+			"Get error",
+			zap.String("service node", pfx),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	allocateShard := map[string]string{}
+	for _, kv := range resp3.Kvs {
+		container := ss.container.nodeManager.parseContainer(string(kv.Key))
+		info := &apputil.ContainerHeartbeat{}
+		if string(kv.Value) == "" {
+			continue
+		}
+		if err := json.Unmarshal(kv.Value, &info); err != nil {
+			ss.lg.Error(
+				"json unmarshal error",
+				zap.String("service", service),
+				zap.String("content", string(kv.Value)),
+				zap.Error(err),
+			)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if info.Shards != nil {
+			for _, shard := range info.Shards {
+				if shard.Disp {
+					if _, ok := result.Allocate[container]; ok {
+						result.Allocate[container] = append(result.Allocate[container], shard.Spec.Id)
+					} else {
+						result.Allocate[container] = []string{shard.Spec.Id}
+					}
+					allocateShard[shard.Spec.Id] = ""
+				}
+			}
+		}
+	}
+	// 判断哪些shards是没有被分配的
+	for shard, _ := range result.ShardSpec {
+		if _, ok := allocateShard[shard]; !ok {
+			result.NotAllocateShards = append(result.NotAllocateShards, shard)
+		}
+	}
+	c.JSON(http.StatusOK, result)
 }
 
 func (ss *smShardApi) GinHealth(c *gin.Context) {

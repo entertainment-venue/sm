@@ -144,6 +144,7 @@ func (c *smContainer) getHttpHandlers() map[string]func(c *gin.Context) {
 	handlers["/sm/server/add-worker"] = apiSrv.GinAddWorker
 	handlers["/sm/server/del-worker"] = apiSrv.GinDelWorker
 	handlers["/sm/server/get-worker"] = apiSrv.GinGetWorker
+	handlers["/sm/server/detail"] = apiSrv.GinServiceDetail
 	handlers["/sm/server/health"] = apiSrv.GinHealth
 	handlers["/swagger/*any"] = ginSwagger.WrapHandler(swaggerfiles.Handler)
 	return handlers
