@@ -189,6 +189,9 @@ func (c *Client) newServer() error {
 		return errors.Wrap(err, "new container failed")
 	}
 	c.container = container
+	if err := c.container.Run();err != nil {
+		return errors.Wrap(err, "")
+	}
 	return nil
 }
 
