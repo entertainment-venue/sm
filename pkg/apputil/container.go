@@ -131,8 +131,11 @@ type containerOptions struct {
 
 	// client 允许外部传入
 	client *clientv3.Client
-	// shard.db的存储路径，默认是当前目录
+	// shardDir shard.db的存储路径，默认是当前目录
 	shardDir string
+
+	// dropExpiredShard 默认false，分片应用明确决定对lease敏感，才开启
+	dropExpiredShard bool
 }
 
 type ContainerOption func(options *containerOptions)
@@ -194,6 +197,12 @@ func WithEtcdClient(v *clientv3.Client) ContainerOption {
 func WithShardDir(v string) ContainerOption {
 	return func(co *containerOptions) {
 		co.shardDir = v
+	}
+}
+
+func WithDropExpiredShard(v bool) ContainerOption {
+	return func(co *containerOptions) {
+		co.dropExpiredShard = v
 	}
 }
 
