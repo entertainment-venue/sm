@@ -260,36 +260,39 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 		stopper: &GoroutineStopper{},
 		donec:   make(chan struct{}),
 	}
+	return &c, nil
+}
 
+func (ctr *Container) Run() error {
 	// keeper: 向调用方下发shard move指令，提供本地持久存储能力
-	keeper, err := newShardKeeper(ops.lg, &c)
+	keeper, err := newShardKeeper(ctr.opts.lg, ctr)
 	if err != nil {
-		return nil, errors.Wrap(err, "")
+		return errors.Wrap(err, "")
 	}
-	c.keeper = keeper
+	ctr.keeper = keeper
 
 	// 上报container初始shard状态，初始化同步做一次，
 	// shard带有lease属性，lease的状态分几种：
 	// 1 lease和server一致，server不会因为本container触发rb
 	// 2 lease和server不一致，server会因为本container触发rb
 	// 在container的shard的状态上报ok的情况，shardkeeper的逻辑更容易推算
-	if err := c.heartbeat(context.TODO()); err != nil {
+	if err := ctr.heartbeat(context.TODO()); err != nil {
 		// 报错，但不停止
-		c.opts.lg.Error(
+		ctr.opts.lg.Error(
 			"heartbeat error",
-			zap.String("service", c.opts.service),
+			zap.String("service", ctr.opts.service),
 			zap.Error(err),
 		)
-		return nil, errors.Wrap(err, "")
+		return errors.Wrap(err, "")
 	}
 
 	// 在server知晓本地shard属性的前提下，开启处理本地shard的goroutine
-	c.keeper.watchLease()
+	ctr.keeper.watchLease()
 
 	// 通过heartbeat上报数据
-	c.stopper.Wrap(
+	ctr.stopper.Wrap(
 		func(ctx context.Context) {
-			TickerLoop(ctx, ops.lg, 3*time.Second, "container stop upload load", c.heartbeat)
+			TickerLoop(ctx, ctr.opts.lg, 3*time.Second, "container stop upload load", ctr.heartbeat)
 		},
 	)
 
@@ -297,64 +300,63 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	// 2 使用donec，关注外部调用Close导致的关闭
 	go func() {
 		select {
-		case <-c.donec:
+		case <-ctr.donec:
 			// 被动关闭
-			c.opts.lg.Info("container: stopper closed",
-				zap.String("id", c.Id()),
-				zap.String("service", c.Service()),
+			ctr.opts.lg.Info("container: stopper closed",
+				zap.String("id", ctr.Id()),
+				zap.String("service", ctr.Service()),
 			)
-		case <-c.Session.Done():
+		case <-ctr.Session.Done():
 			// 主动关闭
-			c.close()
+			ctr.close()
 
-			c.opts.lg.Info("container: session closed",
-				zap.String("id", c.Id()),
-				zap.String("service", c.Service()),
+			ctr.opts.lg.Info("container: session closed",
+				zap.String("id", ctr.Id()),
+				zap.String("service", ctr.Service()),
 			)
 		}
 	}()
 
 	// 有addr,启动webserver，相当于app自己选择被集成，例如sm自己
-	if ops.addr != "" {
+	if ctr.opts.addr != "" {
 		router := gin.Default()
-		if ops.routeAndHandler != nil {
-			for route, handler := range ops.routeAndHandler {
+		if ctr.opts.routeAndHandler != nil {
+			for route, handler := range ctr.opts.routeAndHandler {
 				router.Any(route, handler)
 			}
 		}
 
 		ssg := router.Group("/sm/admin")
 		{
-			ssg.POST("/add-shard", c.AddShard)
-			ssg.POST("/drop-shard", c.DropShard)
+			ssg.POST("/add-shard", ctr.AddShard)
+			ssg.POST("/drop-shard", ctr.DropShard)
 		}
 
 		// https://learnku.com/docs/gin-gonic/2019/examples-graceful-restart-or-stop/6173
 		srv := &http.Server{
-			Addr:    ops.addr,
+			Addr:    ctr.opts.addr,
 			Handler: router,
 		}
-		c.srv = srv
+		ctr.srv = srv
 
 		// FIXME 这个goroutine在退出时，没有回收当前资源，后续，会改造把gin从sm剔除掉
 		go func() {
 			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				ops.lg.Panic(
+				ctr.opts.lg.Panic(
 					"failed to listen",
 					zap.Error(err),
-					zap.String("addr", ops.addr),
+					zap.String("addr", ctr.opts.addr),
 				)
 				return
 			}
-			ops.lg.Info(
+			ctr.opts.lg.Info(
 				"ListenAndServe exit",
-				zap.String("addr", ops.addr),
-				zap.String("service", c.Service()),
+				zap.String("addr", ctr.opts.addr),
+				zap.String("service", ctr.Service()),
 			)
 		}()
 	}
-
-	return &c, nil
+	return nil
 }
 
 func (ctr *Container) Close() {
