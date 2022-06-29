@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
+	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -80,8 +81,31 @@ loop:
 				"WatchLoop error",
 				zap.String("key", key),
 				zap.Int64("startRev", startRev),
+				zap.Int64("CompactRevision", wr.CompactRevision),
 				zap.Error(err),
 			)
+			// https://github.com/etcd-io/etcd/issues/8668
+			if err == rpctypes.ErrCompacted {
+				// 需要重新当前key的最新revision，修正startRev
+				resp, err := client.Get(context.Background(), key, clientv3.WithPrefix())
+				if err != nil {
+					lg.Error(
+						"WatchLoop try to get newest revision failed",
+						zap.String("key", key),
+						zap.Int64("startRev", startRev),
+						zap.Error(err),
+					)
+				} else {
+					lg.Info(
+						"WatchLoop correct startRev",
+						zap.String("key", key),
+						zap.Int64("oldStartRev", startRev),
+						zap.Int64("newStartRev", resp.Header.Revision+1),
+					)
+					startRev = resp.Header.Revision + 1
+				}
+			}
+			time.Sleep(300 * time.Millisecond)
 			goto loop
 		}
 

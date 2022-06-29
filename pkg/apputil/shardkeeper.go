@@ -113,6 +113,9 @@ type shardKeeper struct {
 	bridgeLease *Lease
 	// guardLease acquireGuardLease 赋值，当前guard lease，成功时才能赋值，直到下次rb
 	guardLease *Lease
+
+	// dropExpiredShard 默认false，分片应用明确决定对lease敏感，才开启
+	dropExpiredShard bool
 }
 
 // ShardKeeperDbValue 存储分片数据和管理信息
@@ -142,6 +145,8 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 
 		bridgeLease: noLease,
 		guardLease:  noLease,
+
+		dropExpiredShard: c.opts.dropExpiredShard,
 	}
 	db, err := bolt.Open(filepath.Join(c.opts.shardDir, "shard.db"), 0600, nil)
 	if err != nil {
@@ -719,14 +724,17 @@ func (sk *shardKeeper) sync() error {
 							sk.lg.Info(
 								"lease expired",
 								zap.Reflect("dv", dv),
+								zap.Bool("dropExpiredShard", sk.dropExpiredShard),
 							)
-							err := sk.dispatchTrigger.Put(&evtrigger.TriggerEvent{Key: dropTrigger, Value: &dv})
-							if err != nil {
-								sk.lg.Warn(
-									"unexpected err when try to drop expired shard",
-									zap.Reflect("dv", dv),
-									zap.Error(err),
-								)
+							if sk.dropExpiredShard {
+								err := sk.dispatchTrigger.Put(&evtrigger.TriggerEvent{Key: dropTrigger, Value: &dv})
+								if err != nil {
+									sk.lg.Warn(
+										"unexpected err when try to drop expired shard",
+										zap.Reflect("dv", dv),
+										zap.Error(err),
+									)
+								}
 							}
 						}
 
