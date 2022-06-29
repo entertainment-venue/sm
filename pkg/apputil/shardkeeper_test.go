@@ -2,7 +2,6 @@ package apputil
 
 import (
 	"encoding/json"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"testing"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/zd3tl/evtrigger"
 	bolt "go.etcd.io/bbolt"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
