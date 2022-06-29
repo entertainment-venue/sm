@@ -220,7 +220,7 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 		}
 		// client启动，etcd中存在合法guard lease的情况下，才能让sync goroutine工作。
 		// 依赖下面的watchLease和sm服务端的恢复，boltdb已经被标记被待下发的shard才能给到app。
-		if !lease.IsExpired() {
+		if !lease.IsExpired() || !sk.dropExpiredShard {
 			sk.guardLease = &lease.Lease
 		} else {
 			sk.lg.Error(
