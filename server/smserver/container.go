@@ -121,6 +121,9 @@ func newSMContainer(opts *serverOptions) (*smContainer, error) {
 		return nil, errors.Wrap(err, "")
 	}
 	sCtr.Container = container
+	if err := sCtr.Run();err != nil {
+		return nil, errors.Wrap(err, "")
+	}
 
 	// 竞争leader
 	sCtr.stopper.Wrap(
