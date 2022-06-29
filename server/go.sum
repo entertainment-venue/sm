@@ -42,6 +42,8 @@ github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSs
 github.com/dustin/go-humanize v1.0.0/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
 github.com/entertainment-venue/sm/pkg v0.0.0-20220621023812-a71243e38f5e h1:iifH4dTSEHtn0bVd1FWY3hZ4Z6HpWOeKhiArVwaY5ns=
 github.com/entertainment-venue/sm/pkg v0.0.0-20220621023812-a71243e38f5e/go.mod h1:9WCGRDrN6FeRDn7XWiYg20+CvifqwuaZiijHbZRDMJs=
+github.com/entertainment-venue/sm/pkg v0.0.0-20220629030815-88b2ee3ad7e8 h1:ElhNvUMUisi2aeEuLQ5Byi+BDQvfqW1YEN/n2YJ/8OA=
+github.com/entertainment-venue/sm/pkg v0.0.0-20220629030815-88b2ee3ad7e8/go.mod h1:9WCGRDrN6FeRDn7XWiYg20+CvifqwuaZiijHbZRDMJs=
 github.com/envoyproxy/go-control-plane v0.9.0/go.mod h1:YTl/9mNaCwkRvm6d1a2C3ymFceY/DCBVvsKhRF0iEA4=
 github.com/envoyproxy/go-control-plane v0.9.1-0.20191026205805-5f8ba28d4473/go.mod h1:YTl/9mNaCwkRvm6d1a2C3ymFceY/DCBVvsKhRF0iEA4=
 github.com/envoyproxy/go-control-plane v0.9.4/go.mod h1:6rpuAdCZL397s3pYoYcLgu1mIlRU8Am5FuJP05cCM98=
