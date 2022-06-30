@@ -155,13 +155,12 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 	ss.guardLeaseID = dv.ID
 	if dv.IsExpired() {
 		ss.lg.Info(
-			"current guard lease expired, do not start guardLeaseKeepaliver",
+			"current guard lease expired, still start guardLeaseKeepaliver",
 			zap.String("service", ss.service),
 			zap.Int64("guardLease", int64(ss.guardLeaseID)),
 		)
-	} else {
-		ss.guardLeaseKeepaliver()
 	}
+	ss.guardLeaseKeepaliver()
 
 	// TODO 参数传递的有些冗余，需要重新梳理
 	ss.mpr, err = newMapper(container, &appSpec, ss)
@@ -905,7 +904,7 @@ func (ss *smShard) dispatchMALs(mal moveActionList) error {
 func (ss *smShard) getHbWorkerGroupAndContainers(hbContainers ArmorMap) (map[string]ArmorMap, error) {
 	wgc := make(map[string]ArmorMap)
 	// workerGroup为空的时候，所有的container都符合
-	wgc[""]=hbContainers
+	wgc[""] = hbContainers
 	pfx := ss.container.nodeManager.nodeServiceWorkerGroup(ss.service)
 	resp, err := ss.container.Client.Get(context.TODO(), pfx, clientv3.WithPrefix())
 	if err != nil {
