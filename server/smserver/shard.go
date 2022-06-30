@@ -482,6 +482,9 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 		return err
 	}
 
+	// old guard lease不继续续约，etcd中的数据不在刷新，会导致Expire停止更新，下面的等待就能保证切换到bridge有延迟的shard被drop掉
+	ss.leaseStopper.Close()
+
 	// 1 先梳理出来drop的shard
 	assignment := apputil.Assignment{}
 	for _, action := range shardMoves {
@@ -515,9 +518,6 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	}
 
 	// 4 等待客户端lease确定超时，客户端将old guard lease的shard都停止工作，最长停止10s，也就是在bridge lease下发之后立即
-
-	// old guard lease不继续续约，etcd中的数据不在刷新，会导致Expire停止更新，下面的等待就能保证切换到bridge有延迟的shard被drop掉
-	ss.leaseStopper.Close()
 
 	ss.lg.Info(
 		"waiting old guard expired",
