@@ -3,6 +3,7 @@ package logutil
 import (
 	"fmt"
 	"net/url"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -98,7 +99,11 @@ func NewLogger(opt ...logOptionsFunc) (*zap.Logger, error) {
 
 	zap.AddCallerSkip(1)
 	zapCfg := zap.NewProductionConfig()
-	zapCfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	zapCfg.Encoding = "console"
+	zapCfg.EncoderConfig.EncodeLevel = func(level zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
+		enc.AppendString(fmt.Sprintf("%s %s",level.CapitalString(),time.Now().Format("2006-01-02 15:04:05.999")))
+	}
+	zapCfg.EncoderConfig.EncodeTime = func(t time.Time, encoder zapcore.PrimitiveArrayEncoder) {}
 
 	zapCfg.OutputPaths = []string{fmt.Sprintf("rotate://%s", opts.Path)}
 	if opts.Stdout {
