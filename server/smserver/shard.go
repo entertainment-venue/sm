@@ -155,13 +155,12 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 	ss.guardLeaseID = dv.ID
 	if dv.IsExpired() {
 		ss.lg.Info(
-			"current guard lease expired, do not start guardLeaseKeepaliver",
+			"current guard lease expired, still start guardLeaseKeepaliver",
 			zap.String("service", ss.service),
 			zap.Int64("guardLease", int64(ss.guardLeaseID)),
 		)
-	} else {
-		ss.guardLeaseKeepaliver()
 	}
+	ss.guardLeaseKeepaliver()
 
 	// TODO 参数传递的有些冗余，需要重新梳理
 	ss.mpr, err = newMapper(container, &appSpec, ss)
@@ -483,6 +482,9 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 		return err
 	}
 
+	// old guard lease不继续续约，etcd中的数据不在刷新，会导致Expire停止更新，下面的等待就能保证切换到bridge有延迟的shard被drop掉
+	ss.leaseStopper.Close()
+
 	// 1 先梳理出来drop的shard
 	assignment := apputil.Assignment{}
 	for _, action := range shardMoves {
@@ -516,9 +518,6 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	}
 
 	// 4 等待客户端lease确定超时，客户端将old guard lease的shard都停止工作，最长停止10s，也就是在bridge lease下发之后立即
-
-	// old guard lease不继续续约，etcd中的数据不在刷新，会导致Expire停止更新，下面的等待就能保证切换到bridge有延迟的shard被drop掉
-	ss.leaseStopper.Close()
 
 	ss.lg.Info(
 		"waiting old guard expired",
@@ -905,7 +904,7 @@ func (ss *smShard) dispatchMALs(mal moveActionList) error {
 func (ss *smShard) getHbWorkerGroupAndContainers(hbContainers ArmorMap) (map[string]ArmorMap, error) {
 	wgc := make(map[string]ArmorMap)
 	// workerGroup为空的时候，所有的container都符合
-	wgc[""]=hbContainers
+	wgc[""] = hbContainers
 	pfx := ss.container.nodeManager.nodeServiceWorkerGroup(ss.service)
 	resp, err := ss.container.Client.Get(context.TODO(), pfx, clientv3.WithPrefix())
 	if err != nil {
