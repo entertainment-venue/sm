@@ -19,6 +19,8 @@ func TestNewClient(t *testing.T) {
 		ClientWithEtcdAddr([]string{"127.0.0.1:2379"}),
 		ClientWithService("test-service"),
 		ClientWithImplementation(&testShard{ids: make(map[string]string)}),
+		ClientWithLogPath("./logs"),
+		ClientWithLogConsole(false),
 	)
 	if err != nil {
 		log.Fatal(err)
