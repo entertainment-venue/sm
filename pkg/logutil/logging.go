@@ -27,14 +27,17 @@ type LogOptions struct {
 	MaxAge int
 	// 是否标准输出
 	Stdout bool
+	// 输出console格式
+	EncodingConsole bool
 }
 
 var defaultLogOptions = LogOptions{
-	Path:       "./logs/sm.log",
-	MaxSize:    1024,
-	MaxBackups: 50,
-	MaxAge:     3,
-	Stdout:     false,
+	Path:            "./logs/sm.log",
+	MaxSize:         1024,
+	MaxBackups:      50,
+	MaxAge:          3,
+	Stdout:          false,
+	EncodingConsole: false,
 }
 
 type logOptionsFunc func(*LogOptions)
@@ -69,6 +72,12 @@ func WithStdout(v bool) logOptionsFunc {
 	}
 }
 
+func WithEncodingConsole(v bool) logOptionsFunc {
+	return func(o *LogOptions) {
+		o.EncodingConsole = v
+	}
+}
+
 // Sync implements zap.Sink
 func (logRotationConfig) Sync() error { return nil }
 
@@ -99,12 +108,14 @@ func NewLogger(opt ...logOptionsFunc) (*zap.Logger, error) {
 
 	zap.AddCallerSkip(1)
 	zapCfg := zap.NewProductionConfig()
-	zapCfg.Encoding = "console"
-	zapCfg.EncoderConfig.EncodeLevel = func(level zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
-		enc.AppendString(fmt.Sprintf("%s %s",level.CapitalString(),time.Now().Format("2006-01-02 15:04:05.999")))
+	zapCfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	if opts.EncodingConsole {
+		zapCfg.Encoding = "console"
+		zapCfg.EncoderConfig.EncodeLevel = func(level zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
+			enc.AppendString(fmt.Sprintf("%s %s", level.CapitalString(), time.Now().Format("2006-01-02 15:04:05.999")))
+		}
+		zapCfg.EncoderConfig.EncodeTime = func(t time.Time, encoder zapcore.PrimitiveArrayEncoder) {}
 	}
-	zapCfg.EncoderConfig.EncodeTime = func(t time.Time, encoder zapcore.PrimitiveArrayEncoder) {}
-
 	zapCfg.OutputPaths = []string{fmt.Sprintf("rotate://%s", opts.Path)}
 	if opts.Stdout {
 		zapCfg.OutputPaths = append(zapCfg.OutputPaths, "stdout")
