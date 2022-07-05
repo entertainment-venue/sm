@@ -16,6 +16,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -43,9 +44,17 @@ type clientOptions struct {
 	v           apputil.ShardInterface
 	// shard.db存储路径，默认是当前路径
 	shardDir string
+	// 日志存储路径
+	logPath string
+	// 日志输出console格式
+	logConsole bool
 }
 
-var defaultEtcdPrefix = "/sm"
+var defaultClientOptions = &clientOptions{
+	etcdPrefix: "/sm",
+	logPath:    "./log",
+	logConsole: false,
+}
 
 type ClientOption func(options *clientOptions)
 
@@ -91,8 +100,20 @@ func ClientWithShardDir(v string) ClientOption {
 	}
 }
 
+func ClientWithLogPath(v string) ClientOption {
+	return func(co *clientOptions) {
+		co.logPath = v
+	}
+}
+
+func ClientWithLogConsole(v bool) ClientOption {
+	return func(co *clientOptions) {
+		co.logConsole = v
+	}
+}
+
 func NewClient(opts ...ClientOption) (*Client, error) {
-	ops := &clientOptions{}
+	ops := defaultClientOptions
 	for _, opt := range opts {
 		opt(ops)
 	}
@@ -105,9 +126,6 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 	if ops.containerId == "" {
 		return nil, errors.New("containerId empty")
 	}
-	if ops.etcdPrefix == "" {
-		ops.etcdPrefix = defaultEtcdPrefix
-	}
 	if ops.etcdAddr == nil {
 		return nil, errors.New("etcdAddr empty")
 	}
@@ -115,7 +133,7 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 		return nil, errors.New("impl empty")
 	}
 
-	lg, err := logutil.NewLogger(logutil.WithPath("./log/sm.log"))
+	lg, err := logutil.NewLogger(logutil.WithPath(fmt.Sprintf("%s/%s", ops.logPath, "sm.log")), logutil.WithEncodingConsole(ops.logConsole))
 	if err != nil {
 		return nil, errors.Wrap(err, "new zap logger failed")
 	}
@@ -189,7 +207,7 @@ func (c *Client) newServer() error {
 		return errors.Wrap(err, "new container failed")
 	}
 	c.container = container
-	if err := c.container.Run();err != nil {
+	if err := c.container.Run(); err != nil {
 		return errors.Wrap(err, "")
 	}
 	return nil
