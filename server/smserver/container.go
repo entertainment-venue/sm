@@ -121,7 +121,10 @@ func newSMContainer(opts *serverOptions) (*smContainer, error) {
 		return nil, errors.Wrap(err, "")
 	}
 	sCtr.Container = container
-	if err := sCtr.Run();err != nil {
+	if err := sCtr.Run(); err != nil {
+		if container != nil {
+			container.Close()
+		}
 		return nil, errors.Wrap(err, "")
 	}
 

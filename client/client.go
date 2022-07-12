@@ -178,10 +178,20 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 					return
 				case <-c.container.Done():
 					lg.Info("session done, try again")
-					if err := c.newServer(); err != nil {
+					for {
+						select {
+						case <-ctx.Done():
+							c.lg.Info("client exit")
+							return
+						default:
+						}
+						if err := c.newServer(); err == nil {
+							lg.Info("restart success")
+							break
+						}
 						lg.Error("new server failed",
 							zap.String("service", ops.service),
-							zap.String("err", err.Error()),
+							zap.Error(err),
 						)
 						time.Sleep(3 * time.Second)
 					}
@@ -201,13 +211,14 @@ func (c *Client) newServer() error {
 		apputil.WithShardImplementation(c.opts.v),
 		apputil.WithShardDir(c.opts.shardDir))
 	if err != nil {
+		return errors.Wrap(err, "new container failed")
+	}
+	// container.Run()里面的协程调用了c.container的方法，所以必须先c.container = container，才能Run,否则可能会panic
+	c.container = container
+	if err := c.container.Run(); err != nil {
 		if container != nil {
 			container.Close()
 		}
-		return errors.Wrap(err, "new container failed")
-	}
-	c.container = container
-	if err := c.container.Run(); err != nil {
 		return errors.Wrap(err, "")
 	}
 	return nil
