@@ -178,7 +178,16 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 					return
 				case <-c.container.Done():
 					lg.Info("session done, try again")
-					if err := c.newServer(); err != nil {
+					for {
+						select {
+						case <-ctx.Done():
+							c.lg.Info("client exit")
+							return
+						default:
+						}
+						if err := c.newServer(); err == nil {
+							break
+						}
 						lg.Error("new server failed",
 							zap.String("service", ops.service),
 							zap.String("err", err.Error()),
