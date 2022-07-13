@@ -53,6 +53,8 @@ func Test_tickerLoop(t *testing.T) {
 			select {
 			case <-time.After(3 * time.Second):
 				cancel()
+				time.Sleep(1 * time.Second)
+				wg.Done()
 			}
 		}
 	}()
