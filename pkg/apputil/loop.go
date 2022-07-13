@@ -25,10 +25,11 @@ import (
 )
 
 func TickerLoop(ctx context.Context, lg *zap.Logger, duration time.Duration, exitMsg string, fn func(ctx context.Context) error) {
-	ticker := time.Tick(duration)
+	ticker := time.NewTicker(duration)
+	defer ticker.Stop()
 	for {
 		select {
-		case <-ticker:
+		case <-ticker.C:
 		case <-ctx.Done():
 			lg.Info(exitMsg)
 			return
