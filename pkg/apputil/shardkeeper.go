@@ -198,7 +198,7 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 		return nil, errors.Wrap(err, "")
 	}
 
-	leasePfx := EtcdPathAppLease(sk.service)
+	leasePfx := LeasePath(sk.service)
 	gresp, err := sk.client.Get(context.Background(), leasePfx, clientv3.WithPrefix())
 	if err != nil {
 		return nil, errors.Wrap(err, "")
@@ -250,7 +250,7 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 
 // watchLease 监听lease节点，及时参与到rb中
 func (sk *shardKeeper) watchLease() {
-	leasePfx := EtcdPathAppLease(sk.service)
+	leasePfx := LeasePath(sk.service)
 	sk.stopper.Wrap(
 		func(ctx context.Context) {
 			WatchLoop(
@@ -289,7 +289,7 @@ func (sk *shardKeeper) processRbEvent(_ string, value interface{}) error {
 		)
 
 		switch key {
-		case EtcdPathAppBridge(sk.service):
+		case LeaseBridgePath(sk.service):
 			if err := sk.acquireBridgeLease(ev, lease); err != nil {
 				sk.lg.Error(
 					"acquireBridgeLease error",
@@ -299,7 +299,7 @@ func (sk *shardKeeper) processRbEvent(_ string, value interface{}) error {
 				)
 				return nil
 			}
-		case EtcdPathAppGuard(sk.service):
+		case LeaseGuardPath(sk.service):
 			if err := sk.acquireGuardLease(ev, lease); err != nil {
 				sk.lg.Error(
 					"acquireGuardLease error",

@@ -14,40 +14,38 @@
 
 package apputil
 
-import "fmt"
+import (
+	"path"
+)
 
 var (
-	// etcdPrefix 需要可配置
-	etcdPrefix = "/sm"
+	// smPrefix 需要可配置
+	smPrefix = "/sm"
 )
 
 func InitEtcdPrefix(prefix string) {
 	if prefix == "" {
 		panic("prefix should not be empty")
 	}
-	etcdPrefix = prefix
+	smPrefix = prefix
 }
 
-func EtcdPathAppPrefix(service string) string {
-	return fmt.Sprintf("%s/app/%s", etcdPrefix, service)
+func AppRootPath(service string) string {
+	return path.Join(smPrefix, "app", service)
 }
 
-func EtcdPathAppContainerIdHb(service, id string) string {
-	return fmt.Sprintf("%s/containerhb/%s", EtcdPathAppPrefix(service), id)
+func ContainerPath(service, id string) string {
+	return path.Join(AppRootPath(service), "containerhb", id)
 }
 
-func EtcdPathAppShardHbId(service, id string) string {
-	return fmt.Sprintf("%s/shardhb/%s", EtcdPathAppPrefix(service), id)
+func LeasePath(service string) string {
+	return path.Join(AppRootPath(service), "lease")
 }
 
-func EtcdPathAppBridge(service string) string {
-	return fmt.Sprintf("%s/lease/bridge", EtcdPathAppPrefix(service))
+func LeaseBridgePath(service string) string {
+	return path.Join(LeasePath(service), "bridge")
 }
 
-func EtcdPathAppGuard(service string) string {
-	return fmt.Sprintf("%s/lease/guard", EtcdPathAppPrefix(service))
-}
-
-func EtcdPathAppLease(service string) string {
-	return fmt.Sprintf("%s/lease", EtcdPathAppPrefix(service))
+func LeaseGuardPath(service string) string {
+	return path.Join(LeasePath(service), "guard")
 }
