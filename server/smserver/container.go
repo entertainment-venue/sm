@@ -88,9 +88,9 @@ func newSMContainer(opts *serverOptions) (*smContainer, error) {
 	if err := sCtr.Client.CreateAndGet(
 		context.TODO(),
 		[]string{
-			sCtr.nodeManager.nodeServiceSpec(opts.service),
-			sCtr.nodeManager.nodeServiceGuard(opts.service),
-			sCtr.nodeManager.nodeServiceContainerHb(opts.service),
+			sCtr.nodeManager.ServiceSpecPath(opts.service),
+			sCtr.nodeManager.ExternalLeaseGuardPath(opts.service),
+			sCtr.nodeManager.ExternalContainerHbDir(opts.service),
 		},
 		[]string{
 			spec.String(),
@@ -305,7 +305,7 @@ func (c *smContainer) campaign(ctx context.Context) {
 		default:
 		}
 
-		leaderNodePrefix := c.nodeManager.nodeSMLeader()
+		leaderNodePrefix := c.nodeManager.LeaderPath()
 		lvalue := leaderEtcdValue{ContainerId: c.Id(), CreateTime: time.Now().Unix()}
 		election := concurrency.NewElection(c.Session, leaderNodePrefix)
 		if err := election.Campaign(ctx, lvalue.String()); err != nil {

@@ -113,7 +113,7 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 	ss.service = st.GovernedService
 
 	// worker需要service的配置信息，作为balance的因素
-	serviceSpec := container.nodeManager.nodeServiceSpec(ss.service)
+	serviceSpec := container.nodeManager.ServiceSpecPath(ss.service)
 	resp, err := container.Client.GetKV(context.TODO(), serviceSpec, nil)
 	if err != nil {
 		return nil, err
@@ -135,7 +135,7 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 	ss.operator = newOperator(ss.lg, shardSpec.Service)
 
 	// 提供当前的guard lease
-	leasePfx := ss.container.nodeManager.nodeServiceGuard(ss.service)
+	leasePfx := ss.container.nodeManager.ExternalLeaseGuardPath(ss.service)
 	gresp, err := ss.container.Client.Get(context.TODO(), leasePfx, clientv3.WithPrefix())
 	if err != nil {
 		return nil, err
@@ -266,7 +266,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	shardKey := ss.container.nodeManager.nodeServiceShard(ss.service, "")
+	shardKey := ss.container.nodeManager.ShardDir(ss.service)
 	etcdShardIdAndAny, err = ss.container.Client.GetKVs(ctx, shardKey)
 	if err != nil {
 		return err
@@ -478,7 +478,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 }
 
 func (ss *smShard) rb(shardMoves moveActionList) error {
-	if _, err := ss.container.Client.Delete(context.TODO(), ss.container.nodeManager.nodeServiceBridge(ss.service)); err != nil {
+	if _, err := ss.container.Client.Delete(context.TODO(), ss.container.nodeManager.ExternalLeaseBridgePath(ss.service)); err != nil {
 		return err
 	}
 
@@ -512,7 +512,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	bridgeLease.ID = bridgeGrantLeaseResp.ID
 	// 注意这个 Expire 不需要特别精确，保证server的时间戳加上一个时间段，大部分client都会快速切换到bridge上，少部分慢的，也通过下面的sleep保证过期掉
 	bridgeLease.Expire = time.Now().Unix() + bridgeGrantLeaseResp.TTL
-	bridgePfx := ss.container.nodeManager.nodeServiceBridge(ss.service)
+	bridgePfx := ss.container.nodeManager.ExternalLeaseBridgePath(ss.service)
 	if err := ss.container.Client.CreateAndGet(context.TODO(), []string{bridgePfx}, []string{bridgeLease.String()}, bridgeGrantLeaseResp.ID); err != nil {
 		return err
 	}
@@ -547,7 +547,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	// 刷新内存的guard lease
 	ss.guardLeaseID = guardLeaseResp.ID
 	// 6 设置guard lease，lease的过期不会影响到guard lease节点，所以Expire设置的有误差
-	guardPfx := ss.container.nodeManager.nodeServiceGuard(ss.service)
+	guardPfx := ss.container.nodeManager.ExternalLeaseGuardPath(ss.service)
 	guardLease := apputil.Lease{
 		ID:     guardLeaseResp.ID,
 		Expire: time.Now().Unix() + defaultGuardLeaseTimeout,
@@ -626,7 +626,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 }
 
 func (ss *smShard) guardLeaseKeepaliver() {
-	guardPfx := ss.container.nodeManager.nodeServiceGuard(ss.service)
+	guardPfx := ss.container.nodeManager.ExternalLeaseGuardPath(ss.service)
 	ss.leaseStopper.Wrap(
 		func(ctx context.Context) {
 			apputil.TickerLoop(
@@ -661,7 +661,7 @@ func (ss *smShard) guardLeaseKeepaliver() {
 
 func (ss *smShard) validateGuardLease() error {
 	// 获取guard lease
-	guardPfx := ss.container.nodeManager.nodeServiceGuard(ss.service)
+	guardPfx := ss.container.nodeManager.ExternalLeaseGuardPath(ss.service)
 	resp, err := ss.container.Client.GetKV(context.TODO(), guardPfx, []clientv3.OpOption{clientv3.WithPrefix()})
 	if err != nil {
 		return err
@@ -905,7 +905,7 @@ func (ss *smShard) getHbWorkerGroupAndContainers(hbContainers ArmorMap) (map[str
 	wgc := make(map[string]ArmorMap)
 	// workerGroup为空的时候，所有的container都符合
 	wgc[""] = hbContainers
-	pfx := ss.container.nodeManager.nodeServiceWorkerGroup(ss.service)
+	pfx := ss.container.nodeManager.WorkerGroupPath(ss.service)
 	resp, err := ss.container.Client.Get(context.TODO(), pfx, clientv3.WithPrefix())
 	if err != nil {
 		ss.lg.Error(
