@@ -30,16 +30,16 @@ func InitEtcdPrefix(prefix string) {
 	smPrefix = prefix
 }
 
-func AppRootPath(service string) string {
+func ServicePath(service string) string {
 	return path.Join(smPrefix, "app", service)
 }
 
 func ContainerPath(service, id string) string {
-	return path.Join(AppRootPath(service), "containerhb", id)
+	return path.Join(ServicePath(service), "containerhb", id)
 }
 
 func LeasePath(service string) string {
-	return path.Join(AppRootPath(service), "lease")
+	return path.Join(ServicePath(service), "lease")
 }
 
 func LeaseBridgePath(service string) string {

@@ -3,7 +3,7 @@ package apputil
 import "testing"
 
 func Test_EtcdPath(t *testing.T) {
-	if AppRootPath("foo") != "/sm/app/foo" {
+	if ServicePath("foo") != "/sm/app/foo" {
 		t.Errorf("path error")
 		t.SkipNow()
 	}
