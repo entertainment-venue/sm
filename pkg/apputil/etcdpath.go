@@ -49,3 +49,13 @@ func LeaseBridgePath(service string) string {
 func LeaseGuardPath(service string) string {
 	return path.Join(LeasePath(service), "guard")
 }
+
+func LeaseSessionDir(service string) string {
+	return path.Join(LeasePath(service), "session")
+}
+
+// LeaseSessionPath 作为guard lease过期的监控点，在得到新的lease的时候创建，server可以通过不续约让这个节点过期，
+// 这样shardkeeper感知到guard lease被过期，发起shard drop动作，注意
+func LeaseSessionPath(service string, container string) string {
+	return path.Join(LeasePath(service), "session", container)
+}

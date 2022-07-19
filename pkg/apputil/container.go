@@ -287,7 +287,7 @@ func (ctr *Container) Run() error {
 	}
 
 	// 在server知晓本地shard属性的前提下，开启处理本地shard的goroutine
-	ctr.keeper.watchLease()
+	ctr.keeper.WatchLease()
 
 	// 通过heartbeat上报数据
 	ctr.stopper.Wrap(
