@@ -33,7 +33,7 @@ var (
 )
 
 var (
-	defaultTimeout = 1 * time.Second
+	DefaultRequestTimeout = 1 * time.Second
 )
 
 var (
@@ -93,7 +93,7 @@ func NewEtcdClientWithClient(client *clientv3.Client, lg *zap.Logger) *EtcdClien
 func (w *EtcdClient) Get(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error) {
 	var cancelFunc context.CancelFunc
 	if ctx == context.TODO() || ctx == context.Background() {
-		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		ctx, cancelFunc = context.WithTimeout(ctx, DefaultRequestTimeout)
 		defer cancelFunc()
 	}
 	resp, err := w.Client.Get(ctx, key, opts...)
@@ -103,7 +103,7 @@ func (w *EtcdClient) Get(ctx context.Context, key string, opts ...clientv3.OpOpt
 func (w *EtcdClient) Put(ctx context.Context, key, val string, opts ...clientv3.OpOption) (*clientv3.PutResponse, error) {
 	var cancelFunc context.CancelFunc
 	if ctx == context.TODO() || ctx == context.Background() {
-		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		ctx, cancelFunc = context.WithTimeout(ctx, DefaultRequestTimeout)
 		defer cancelFunc()
 	}
 	resp, err := w.Client.Put(ctx, key, val, opts...)
@@ -113,7 +113,7 @@ func (w *EtcdClient) Put(ctx context.Context, key, val string, opts ...clientv3.
 func (w *EtcdClient) Delete(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.DeleteResponse, error) {
 	var cancelFunc context.CancelFunc
 	if ctx == context.TODO() || ctx == context.Background() {
-		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		ctx, cancelFunc = context.WithTimeout(ctx, DefaultRequestTimeout)
 		defer cancelFunc()
 	}
 	resp, err := w.Client.Delete(ctx, key, opts...)
@@ -138,7 +138,7 @@ func (w *EtcdClient) GetClient() *EtcdClient {
 func (w *EtcdClient) GetKV(ctx context.Context, node string, opts []clientv3.OpOption) (*clientv3.GetResponse, error) {
 	var cancelFunc context.CancelFunc
 	if ctx == context.TODO() || ctx == context.Background() {
-		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		ctx, cancelFunc = context.WithTimeout(ctx, DefaultRequestTimeout)
 		defer cancelFunc()
 	}
 
@@ -152,7 +152,7 @@ func (w *EtcdClient) GetKV(ctx context.Context, node string, opts []clientv3.OpO
 func (w *EtcdClient) GetKVs(ctx context.Context, prefix string) (map[string]string, error) {
 	var cancelFunc context.CancelFunc
 	if ctx == context.TODO() || ctx == context.Background() {
-		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		ctx, cancelFunc = context.WithTimeout(ctx, DefaultRequestTimeout)
 		defer cancelFunc()
 	}
 
@@ -177,7 +177,7 @@ func (w *EtcdClient) GetKVs(ctx context.Context, prefix string) (map[string]stri
 func (w *EtcdClient) DelKV(ctx context.Context, prefix string) error {
 	var cancelFunc context.CancelFunc
 	if ctx == context.TODO() || ctx == context.Background() {
-		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		ctx, cancelFunc = context.WithTimeout(ctx, DefaultRequestTimeout)
 		defer cancelFunc()
 	}
 
@@ -217,7 +217,7 @@ func (w *EtcdClient) DelKVs(ctx context.Context, prefixes []string) error {
 func (w *EtcdClient) UpdateKV(ctx context.Context, key string, value string) error {
 	var cancelFunc context.CancelFunc
 	if ctx == context.TODO() || ctx == context.Background() {
-		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		ctx, cancelFunc = context.WithTimeout(ctx, DefaultRequestTimeout)
 		defer cancelFunc()
 	}
 
@@ -248,7 +248,7 @@ func (w *EtcdClient) CreateAndGet(ctx context.Context, nodes []string, values []
 
 	var cancelFunc context.CancelFunc
 	if ctx == context.TODO() || ctx == context.Background() {
-		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		ctx, cancelFunc = context.WithTimeout(ctx, DefaultRequestTimeout)
 		defer cancelFunc()
 	}
 
@@ -273,7 +273,7 @@ func (w *EtcdClient) CompareAndSwap(ctx context.Context, node string, curValue s
 
 	var cancelFunc context.CancelFunc
 	if ctx == context.TODO() || ctx == context.Background() {
-		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		ctx, cancelFunc = context.WithTimeout(ctx, DefaultRequestTimeout)
 		defer cancelFunc()
 	}
 
@@ -329,7 +329,7 @@ func (w *EtcdClient) Inc(ctx context.Context, pfx string) (string, error) {
 
 	var cancelFunc context.CancelFunc
 	if ctx == context.TODO() || ctx == context.Background() {
-		ctx, cancelFunc = context.WithTimeout(ctx, defaultTimeout)
+		ctx, cancelFunc = context.WithTimeout(ctx, DefaultRequestTimeout)
 		defer cancelFunc()
 	}
 

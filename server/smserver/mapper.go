@@ -107,7 +107,7 @@ func (mpr *mapper) extractId(key string) string {
 }
 
 func (mpr *mapper) initAndWatch() error {
-	pfx := mpr.container.nodeManager.nodeServiceContainerHb(mpr.appSpec.Service)
+	pfx := mpr.container.nodeManager.ExternalContainerHbDir(mpr.appSpec.Service)
 	getOpts := []clientv3.OpOption{clientv3.WithPrefix()}
 	resp, err := mpr.container.Client.Get(context.TODO(), pfx, getOpts...)
 	if err != nil {

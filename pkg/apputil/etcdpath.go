@@ -14,40 +14,48 @@
 
 package apputil
 
-import "fmt"
+import (
+	"path"
+)
 
 var (
-	// etcdPrefix 需要可配置
-	etcdPrefix = "/sm"
+	// smPrefix 需要可配置
+	smPrefix = "/sm"
 )
 
 func InitEtcdPrefix(prefix string) {
 	if prefix == "" {
 		panic("prefix should not be empty")
 	}
-	etcdPrefix = prefix
+	smPrefix = prefix
 }
 
-func EtcdPathAppPrefix(service string) string {
-	return fmt.Sprintf("%s/app/%s", etcdPrefix, service)
+func ServicePath(service string) string {
+	return path.Join(smPrefix, "app", service)
 }
 
-func EtcdPathAppContainerIdHb(service, id string) string {
-	return fmt.Sprintf("%s/containerhb/%s", EtcdPathAppPrefix(service), id)
+func ContainerPath(service, id string) string {
+	return path.Join(ServicePath(service), "containerhb", id)
 }
 
-func EtcdPathAppShardHbId(service, id string) string {
-	return fmt.Sprintf("%s/shardhb/%s", EtcdPathAppPrefix(service), id)
+func LeasePath(service string) string {
+	return path.Join(ServicePath(service), "lease")
 }
 
-func EtcdPathAppBridge(service string) string {
-	return fmt.Sprintf("%s/lease/bridge", EtcdPathAppPrefix(service))
+func LeaseBridgePath(service string) string {
+	return path.Join(LeasePath(service), "bridge")
 }
 
-func EtcdPathAppGuard(service string) string {
-	return fmt.Sprintf("%s/lease/guard", EtcdPathAppPrefix(service))
+func LeaseGuardPath(service string) string {
+	return path.Join(LeasePath(service), "guard")
 }
 
-func EtcdPathAppLease(service string) string {
-	return fmt.Sprintf("%s/lease", EtcdPathAppPrefix(service))
+func LeaseSessionDir(service string) string {
+	return path.Join(LeasePath(service), "session")
+}
+
+// LeaseSessionPath 作为guard lease过期的监控点，在得到新的lease的时候创建，server可以通过不续约让这个节点过期，
+// 这样shardkeeper感知到guard lease被过期，发起shard drop动作，注意
+func LeaseSessionPath(service string, container string) string {
+	return path.Join(LeasePath(service), "session", container)
 }

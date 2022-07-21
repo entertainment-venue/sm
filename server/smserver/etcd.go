@@ -15,7 +15,7 @@
 package smserver
 
 import (
-	"fmt"
+	"path"
 	"strings"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
@@ -26,59 +26,72 @@ type nodeManager struct {
 	smService string
 }
 
-// /sm/app/foo.bar
-func (n *nodeManager) nodeSM() string {
-	return apputil.EtcdPathAppPrefix(n.smService)
+// SMRootPath /sm/app/foo.bar
+func (n *nodeManager) SMRootPath() string {
+	return apputil.ServicePath(n.smService)
 }
 
-// /sm/app/foo.bar/leader
-func (n *nodeManager) nodeSMLeader() string {
-	return fmt.Sprintf("%s/leader", n.nodeSM())
+// LeaderPath /sm/app/foo.bar/leader
+func (n *nodeManager) LeaderPath() string {
+	return path.Join(n.SMRootPath(), "leader")
 }
 
-// /sm/app/proxy.dev/
-func (n *nodeManager) nodeService(service string) string {
-	return apputil.EtcdPathAppPrefix(service) + "/"
+// ServicePath sm会需要得到外部service的路径
+func (n *nodeManager) ServicePath(service string) string {
+	return path.Join(n.SMRootPath(), "service", service)
 }
 
-// /sm/app/foo.bar/service/proxy.dev/spec
-func (n *nodeManager) nodeServiceSpec(appService string) string {
-	return fmt.Sprintf("%s/service/%s/spec", n.nodeSM(), appService)
+// ServiceSpecPath /sm/app/foo.bar/service/proxy.dev/spec
+func (n *nodeManager) ServiceSpecPath(appService string) string {
+	return path.Join(n.ServicePath(appService), "spec")
 }
 
-// /sm/app/foo.bar/service/proxy.dev/shard/s1
-func (n *nodeManager) nodeServiceShard(appService, shardId string) string {
-	return fmt.Sprintf("%s/service/%s/shard/%s", n.nodeSM(), appService, shardId)
+// ShardPath /sm/app/foo.bar/service/proxy.dev/shard/s1
+func (n *nodeManager) ShardPath(appService, shardId string) string {
+	if shardId == "" {
+		panic("shardId should not empty")
+	}
+	return path.Join(n.ServicePath(appService), "shard", shardId)
 }
 
-// /sm/app/proxy.dev/shardhb/
-func (n *nodeManager) nodeServiceShardHb(appService string) string {
-	return fmt.Sprintf("%s/shardhb/", apputil.EtcdPathAppPrefix(appService))
+// ShardDir /sm/app/foo.bar/service/proxy.dev/shard/
+func (n *nodeManager) ShardDir(appService string) string {
+	return path.Join(n.ServicePath(appService), "shard") + "/"
 }
 
-// /sm/app/proxy.dev/containerhb/
-func (n *nodeManager) nodeServiceContainerHb(appService string) string {
-	return fmt.Sprintf("%s/containerhb/", apputil.EtcdPathAppPrefix(appService))
+// WorkerGroupPath /sm/app/foo.bar/service/proxy.dev/workerpool
+func (n *nodeManager) WorkerGroupPath(appService string) string {
+	return path.Join(n.ServicePath(appService), "workerpool")
 }
 
-// nodeServiceGuard /sm/app/proxy.dev/lease/guard
-func (n *nodeManager) nodeServiceGuard(appService string) string {
-	return fmt.Sprintf("%s/lease/guard", apputil.EtcdPathAppPrefix(appService))
+// WorkerPath /sm/app/foo.bar/service/proxy.dev/workerpool/workerGroup/worker
+func (n *nodeManager) WorkerPath(appService, workerGroup, worker string) string {
+	return path.Join(n.WorkerGroupPath(appService), workerGroup, worker)
 }
 
-// nodeServiceBridge /sm/app/proxy.dev/bridge
-func (n *nodeManager) nodeServiceBridge(appService string) string {
-	return fmt.Sprintf("%s/lease/bridge", apputil.EtcdPathAppPrefix(appService))
+// ExternalServiceDir /sm/app/proxy.dev/
+func (n *nodeManager) ExternalServiceDir(service string) string {
+	return apputil.ServicePath(service) + "/"
 }
 
-// nodeServiceWorkerGroup /sm/app/foo.bar/service/proxy.dev/workerpool
-func (n *nodeManager) nodeServiceWorkerGroup(appService string) string {
-	return fmt.Sprintf("%s/service/%s/workerpool", n.nodeSM(), appService)
+// ExternalShardHbDir /sm/app/proxy.dev/shardhb/
+func (n *nodeManager) ExternalShardHbDir(appService string) string {
+	return path.Join(apputil.ServicePath(appService), "shardhb") + "/"
 }
 
-// nodeServiceWorker /sm/app/foo.bar/service/proxy.dev/workerpool/workerGroup/worker
-func (n *nodeManager) nodeServiceWorker(appService, workerGroup, worker string) string {
-	return fmt.Sprintf("%s/%s/%s", n.nodeServiceWorkerGroup(appService), workerGroup, worker)
+// ExternalContainerHbDir /sm/app/proxy.dev/containerhb/
+func (n *nodeManager) ExternalContainerHbDir(appService string) string {
+	return path.Join(apputil.ServicePath(appService), "containerhb") + "/"
+}
+
+// ExternalLeaseGuardPath /sm/app/proxy.dev/lease/guard
+func (n *nodeManager) ExternalLeaseGuardPath(appService string) string {
+	return apputil.LeaseGuardPath(appService)
+}
+
+// ExternalLeaseBridgePath /sm/app/proxy.dev/bridge
+func (n *nodeManager) ExternalLeaseBridgePath(appService string) string {
+	return apputil.LeaseBridgePath(appService)
 }
 
 // parseWorkerGroupAndContainer /sm/app/foo.bar/service/foo.bar/workerpool/g1/127.0.0.1:8801

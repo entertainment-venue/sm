@@ -90,16 +90,16 @@ func (ss *smShardApi) GinAddSpec(c *gin.Context) {
 	)
 
 	// 业务节点的service放在sm的pfx下面
-	nodes = append(nodes, ss.container.nodeManager.nodeServiceSpec(req.Service))
+	nodes = append(nodes, ss.container.nodeManager.ServiceSpecPath(req.Service))
 	values = append(values, req.String())
 
 	// 创建guard lease节点
-	nodes = append(nodes, ss.container.nodeManager.nodeServiceGuard(req.Service))
+	nodes = append(nodes, ss.container.nodeManager.ExternalLeaseGuardPath(req.Service))
 	lease := apputil.Lease{}
 	values = append(values, lease.String())
 
 	// 创建containerhb节点
-	nodes = append(nodes, ss.container.nodeManager.nodeServiceContainerHb(req.Service))
+	nodes = append(nodes, ss.container.nodeManager.ExternalContainerHbDir(req.Service))
 	values = append(values, "")
 
 	// 需要将service注册到sm的spec中
@@ -109,7 +109,7 @@ func (ss *smShardApi) GinAddSpec(c *gin.Context) {
 		Task:       t.String(),
 		UpdateTime: time.Now().Unix(),
 	}
-	nodes = append(nodes, ss.container.nodeManager.nodeServiceShard(ss.container.Service(), req.Service))
+	nodes = append(nodes, ss.container.nodeManager.ShardPath(ss.container.Service(), req.Service))
 	values = append(values, v.String())
 	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
 		if err != etcdutil.ErrEtcdNodeExist {
@@ -167,9 +167,9 @@ func (ss *smShardApi) GinDelSpec(c *gin.Context) {
 
 	// 清除etcd数据
 	var nodes []string
-	nodes = append(nodes, ss.container.nodeManager.nodeService(service))
-	nodes = append(nodes, ss.container.nodeManager.nodeServiceSpec(service))
-	nodes = append(nodes, ss.container.nodeManager.nodeServiceShard(ss.container.Service(), service))
+	nodes = append(nodes, ss.container.nodeManager.ExternalServiceDir(service))
+	nodes = append(nodes, ss.container.nodeManager.ServiceSpecPath(service))
+	nodes = append(nodes, ss.container.nodeManager.ShardPath(ss.container.Service(), service))
 	if err := ss.container.Client.DelKVs(context.Background(), nodes); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -189,7 +189,7 @@ func (ss *smShardApi) GinDelSpec(c *gin.Context) {
 // @success 200
 // @Router /sm/server/get-spec [get]
 func (ss *smShardApi) GinGetSpec(c *gin.Context) {
-	pfx := ss.container.nodeManager.nodeServiceShard(ss.container.Service(), "")
+	pfx := ss.container.nodeManager.ShardDir(ss.container.Service())
 	kvs, err := ss.container.Client.GetKVs(context.Background(), pfx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -255,11 +255,11 @@ func (ss *smShardApi) GinAddShard(c *gin.Context) {
 	}
 
 	// 检查是否存在该service
-	resp, err := ss.container.Client.GetKV(context.Background(), ss.container.nodeManager.nodeServiceSpec(req.Service), nil)
+	resp, err := ss.container.Client.GetKV(context.Background(), ss.container.nodeManager.ServiceSpecPath(req.Service), nil)
 	if err != nil {
 		ss.lg.Error("GetKV error",
 			zap.Error(err),
-			zap.String("service node", ss.container.nodeManager.nodeServiceSpec(req.Service)),
+			zap.String("service node", ss.container.nodeManager.ServiceSpecPath(req.Service)),
 		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -284,7 +284,7 @@ func (ss *smShardApi) GinAddShard(c *gin.Context) {
 	// 添加: 等待负责该app的shard做探测即可
 	// 更新: shard是不允许更新的，这种更新的相当于shard工作内容的调整
 	var (
-		nodes  = []string{ss.container.nodeManager.nodeServiceShard(req.Service, req.ShardId)}
+		nodes  = []string{ss.container.nodeManager.ShardPath(req.Service, req.ShardId)}
 		values = []string{spec.String()}
 	)
 	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
@@ -329,7 +329,7 @@ func (ss *smShardApi) GinDelShard(c *gin.Context) {
 	ss.lg.Info("del shard request", zap.Reflect("req", req))
 
 	// 删除shard节点
-	pfx := ss.container.nodeManager.nodeServiceShard(req.Service, req.ShardId)
+	pfx := ss.container.nodeManager.ShardPath(req.Service, req.ShardId)
 	delResp, err := ss.container.Client.Delete(context.TODO(), pfx)
 	if err != nil {
 		ss.lg.Error("Delete err",
@@ -376,7 +376,7 @@ func (ss *smShardApi) GinGetShard(c *gin.Context) {
 		return
 	}
 
-	pfx := ss.container.nodeManager.nodeServiceShard(service, "")
+	pfx := ss.container.nodeManager.ShardDir(service)
 	kvs, err := ss.container.Client.GetKVs(context.TODO(), pfx)
 	if err != nil {
 		ss.lg.Error(
@@ -431,10 +431,10 @@ func (ss *smShardApi) GinAddWorker(c *gin.Context) {
 	)
 
 	// 检查是否存在该service
-	resp, err := ss.container.Client.GetKV(context.Background(), ss.container.nodeManager.nodeServiceSpec(req.Service), nil)
+	resp, err := ss.container.Client.GetKV(context.Background(), ss.container.nodeManager.ServiceSpecPath(req.Service), nil)
 	if err != nil {
 		ss.lg.Error("GetKV error",
-			zap.String("service node", ss.container.nodeManager.nodeServiceSpec(req.Service)),
+			zap.String("service node", ss.container.nodeManager.ServiceSpecPath(req.Service)),
 			zap.Error(err),
 		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -447,7 +447,7 @@ func (ss *smShardApi) GinAddWorker(c *gin.Context) {
 	}
 
 	var (
-		nodes  = []string{ss.container.nodeManager.nodeServiceWorker(req.Service, req.WorkerGroup, req.Worker)}
+		nodes  = []string{ss.container.nodeManager.WorkerPath(req.Service, req.WorkerGroup, req.Worker)}
 		values = []string{""}
 	)
 	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
@@ -483,7 +483,7 @@ func (ss *smShardApi) GinDelWorker(c *gin.Context) {
 	)
 
 	// 删除worker节点
-	pfx := ss.container.nodeManager.nodeServiceWorker(req.Service, req.WorkerGroup, req.Worker)
+	pfx := ss.container.nodeManager.WorkerPath(req.Service, req.WorkerGroup, req.Worker)
 	delResp, err := ss.container.Client.Delete(context.TODO(), pfx)
 	if err != nil {
 		ss.lg.Error("Delete err",
@@ -525,7 +525,7 @@ func (ss *smShardApi) GinGetWorker(c *gin.Context) {
 		return
 	}
 	result := map[string][]string{}
-	pfx := ss.container.nodeManager.nodeServiceWorkerGroup(service)
+	pfx := ss.container.nodeManager.WorkerGroupPath(service)
 	resp, err := ss.container.Client.Get(context.TODO(), pfx, clientv3.WithPrefix())
 	if err != nil {
 		ss.lg.Error(
@@ -581,7 +581,7 @@ func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
 	// 1.获取service的配置信息
 	// /sm/app/foo.bar/service/worker-test.dev/spec
 	// {"service":"worker-test.dev","createTime":1655707418,"maxShardCount":0,"maxRecoveryTime":0}
-	pfx := ss.container.nodeManager.nodeServiceSpec(service)
+	pfx := ss.container.nodeManager.ServiceSpecPath(service)
 	resp, err := ss.container.Client.GetKV(context.Background(), pfx, nil)
 	if err != nil {
 		ss.lg.Error("GetKV error",
@@ -619,7 +619,7 @@ func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
 	// 2.获取分片信息
 	// /sm/app/foo.bar/service/worker-test.dev/shard/task-A
 	// {"id":"","service":"worker-test.dev","task":"":"","group":"","WorkerGroup":"g2","lease":null}
-	pfx = ss.container.nodeManager.nodeServiceShard(service, "")
+	pfx = ss.container.nodeManager.ShardDir(service)
 	resp1, err := ss.container.Client.GetKVs(context.Background(), pfx)
 	if err != nil {
 		ss.lg.Error("GetKVs error",
@@ -649,7 +649,7 @@ func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
 
 	// 3.获取workerGroup信息
 	// /sm/app/foo.bar/service/worker-test.dev/workerpool/g1/127.0.0.1:9100
-	pfx = ss.container.nodeManager.nodeServiceWorkerGroup(service)
+	pfx = ss.container.nodeManager.WorkerGroupPath(service)
 	resp2, err := ss.container.Client.Get(context.TODO(), pfx, clientv3.WithPrefix())
 	if err != nil {
 		ss.lg.Error(
@@ -672,7 +672,7 @@ func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
 	// 4.获取container上的shard分配信息
 	// /sm/app/foo.bar/containerhb/127.0.0.1:8801/694d818416078d06
 	// {"shards":[{"spec":{"id":"worker-test.dev","service":"foo.bar","task":"{\"governedService\":\"worker-test.dev\"}","updateTime":1655707418,"manualContainerId":"","group":"","workerGroup":"","lease":{"id":7587863351494413604,"expire":1655794762}},"disp":true,"drop":false}]}
-	pfx = ss.container.nodeManager.nodeServiceContainerHb(service)
+	pfx = ss.container.nodeManager.ExternalContainerHbDir(service)
 	resp3, err := ss.container.Client.Get(context.TODO(), pfx, clientv3.WithPrefix())
 	if err != nil {
 		ss.lg.Error(

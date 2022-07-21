@@ -287,7 +287,7 @@ func (ctr *Container) Run() error {
 	}
 
 	// 在server知晓本地shard属性的前提下，开启处理本地shard的goroutine
-	ctr.keeper.watchLease()
+	ctr.keeper.WatchLease()
 
 	// 通过heartbeat上报数据
 	ctr.stopper.Wrap(
@@ -526,7 +526,7 @@ func (ctr *Container) heartbeat(ctx context.Context) error {
 
 	// https://tangxusc.github.io/blog/2019/05/etcd-lock%E8%AF%A6%E8%A7%A3/
 	// 利用etcd内置lock，防止container冲突，这个问题在container应该比较少见，做到heartbeat即可，smserver就可以做
-	lockPfx := EtcdPathAppContainerIdHb(ctr.Service(), ctr.Id())
+	lockPfx := ContainerPath(ctr.Service(), ctr.Id())
 	mutex := concurrency.NewMutex(ctr.Session, lockPfx)
 	if err := mutex.Lock(ctr.Client.Ctx()); err != nil {
 		return errors.Wrap(err, "")
