@@ -48,6 +48,10 @@ type clientOptions struct {
 	logPath string
 	// 日志输出console格式
 	logConsole bool
+	// 日志是否标准输出
+	stdout bool
+	// 默认false，分片应用明确决定对lease敏感，才开启
+	dropExpiredShard bool
 }
 
 var defaultClientOptions = &clientOptions{
@@ -112,6 +116,18 @@ func ClientWithLogConsole(v bool) ClientOption {
 	}
 }
 
+func ClientWithDropExpiredShard(v bool) ClientOption {
+	return func(co *clientOptions) {
+		co.dropExpiredShard = v
+	}
+}
+
+func ClientWithStdout(v bool) ClientOption {
+	return func(o *clientOptions) {
+		o.stdout = v
+	}
+}
+
 func NewClient(opts ...ClientOption) (*Client, error) {
 	ops := defaultClientOptions
 	for _, opt := range opts {
@@ -133,7 +149,7 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 		return nil, errors.New("impl empty")
 	}
 
-	lg, err := logutil.NewLogger(logutil.WithPath(fmt.Sprintf("%s/%s", ops.logPath, "sm.log")), logutil.WithEncodingConsole(ops.logConsole))
+	lg, err := logutil.NewLogger(logutil.WithPath(fmt.Sprintf("%s/%s", ops.logPath, "sm.log")), logutil.WithEncodingConsole(ops.logConsole), logutil.WithStdout(ops.stdout))
 	if err != nil {
 		return nil, errors.Wrap(err, "new zap logger failed")
 	}
@@ -209,7 +225,9 @@ func (c *Client) newServer() error {
 		apputil.WithEtcdPrefix(c.opts.etcdPrefix),
 		apputil.WithLogger(c.lg),
 		apputil.WithShardImplementation(c.opts.v),
-		apputil.WithShardDir(c.opts.shardDir))
+		apputil.WithShardDir(c.opts.shardDir),
+		apputil.WithDropExpiredShard(c.opts.dropExpiredShard))
+
 	if err != nil {
 		return errors.Wrap(err, "new container failed")
 	}
