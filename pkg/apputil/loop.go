@@ -25,17 +25,32 @@ import (
 )
 
 func TickerLoop(ctx context.Context, lg *zap.Logger, duration time.Duration, exitMsg string, fn func(ctx context.Context) error) {
+	tickerLoop(ctx, lg, duration, exitMsg, fn, false)
+}
+
+func SequenceTickerLoop(ctx context.Context, lg *zap.Logger, duration time.Duration, exitMsg string, fn func(ctx context.Context) error) {
+	tickerLoop(ctx, lg, duration, exitMsg, fn, true)
+}
+
+func tickerLoop(ctx context.Context, lg *zap.Logger, duration time.Duration, exitMsg string, fn func(ctx context.Context) error, sequence bool) {
 	ticker := time.NewTicker(duration)
 	defer ticker.Stop()
 	for {
-		// 参考PD的lease.go修正ticker的机制
-		// 1 先运行一次loop，算是降低下接入应用的RD在心智压力，让程序更可以预估，防止duration需要等待好久的场景
-		// 2 利用goroutine隔离不同的fn，尽可能防止单次goroutine STW或者block，但etcd其实健康的情况，没有心跳，但也有goroutine泄漏的风险
-		go func() {
+		if sequence {
+			// 想要周期又不想要因为fn执行慢，导致多个goroutine并行执行，例如：周期检查rb
 			if err := fn(ctx); err != nil {
 				lg.Error("TickerLoop err", zap.Error(err))
 			}
-		}()
+		} else {
+			// 参考PD的lease.go修正ticker的机制
+			// 1 先运行一次loop，算是降低下接入应用的RD在心智压力，让程序更可以预估，防止duration需要等待好久的场景
+			// 2 利用goroutine隔离不同的fn，尽可能防止单次goroutine STW或者block，但etcd其实健康的情况，没有心跳，但也有goroutine泄漏的风险
+			go func() {
+				if err := fn(ctx); err != nil {
+					lg.Error("TickerLoop err", zap.Error(err))
+				}
+			}()
+		}
 
 		select {
 		case <-ticker.C:
