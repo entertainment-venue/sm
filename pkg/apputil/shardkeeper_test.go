@@ -1,26 +1,102 @@
 package apputil
 
 import (
+	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/entertainment-venue/sm/pkg/apputil/storage"
+	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 	"github.com/zd3tl/evtrigger"
-	bolt "go.etcd.io/bbolt"
+	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
+const (
+	defaultTestPlaceHolder = "defaultTestPlaceHolder"
+)
+
 var (
-	_ evtrigger.Trigger = new(MockedTrigger)
-	_ ShardInterface    = new(MockedShardInterface)
+	_ evtrigger.Trigger    = new(MockedTrigger)
+	_ ShardInterface       = new(MockedShardInterface)
+	_ storage.Storage      = new(MockedStorage)
+	_ etcdutil.EtcdWrapper = new(MockedEtcdWrapper)
 )
 
 func TestShardKeeper(t *testing.T) {
 	suite.Run(t, new(ShardKeeperTestSuite))
+}
+
+type MockedEtcdWrapper struct {
+	mock.Mock
+}
+
+func (m MockedEtcdWrapper) GetClient() *etcdutil.EtcdClient {
+	panic("implement me")
+}
+
+func (m MockedEtcdWrapper) GetKV(_ context.Context, node string, opts []clientv3.OpOption) (*clientv3.GetResponse, error) {
+	panic("implement me")
+}
+
+func (m MockedEtcdWrapper) GetKVs(ctx context.Context, prefix string) (map[string]string, error) {
+	panic("implement me")
+}
+
+func (m MockedEtcdWrapper) UpdateKV(ctx context.Context, key string, value string) error {
+	panic("implement me")
+}
+
+func (m MockedEtcdWrapper) DelKV(ctx context.Context, prefix string) error {
+	panic("implement me")
+}
+
+func (m MockedEtcdWrapper) DelKVs(ctx context.Context, prefixes []string) error {
+	panic("implement me")
+}
+
+func (m MockedEtcdWrapper) CreateAndGet(ctx context.Context, nodes []string, values []string, leaseID clientv3.LeaseID) error {
+	args := m.Called(ctx, nodes, values, leaseID)
+	return args.Error(0)
+}
+
+func (m MockedEtcdWrapper) CompareAndSwap(_ context.Context, node string, curValue string, newValue string, leaseID clientv3.LeaseID) (string, error) {
+	panic("implement me")
+}
+
+func (m MockedEtcdWrapper) Inc(_ context.Context, pfx string) (string, error) {
+	panic("implement me")
+}
+
+func (m MockedEtcdWrapper) NewSession(ctx context.Context, client *clientv3.Client, opts ...concurrency.SessionOption) (*concurrency.Session, error) {
+	panic("implement me")
+}
+
+func (m MockedEtcdWrapper) Ctx() context.Context {
+	panic("implement me")
+}
+
+func (m MockedEtcdWrapper) Get(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error) {
+	panic("implement me")
+}
+
+func (m MockedEtcdWrapper) Put(ctx context.Context, key, val string, opts ...clientv3.OpOption) (*clientv3.PutResponse, error) {
+	panic("implement me")
+}
+
+func (m MockedEtcdWrapper) Delete(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.DeleteResponse, error) {
+	panic("implement me")
+}
+
+func (m MockedEtcdWrapper) Watch(ctx context.Context, key string, opts ...clientv3.OpOption) clientv3.WatchChan {
+	panic("implement me")
 }
 
 type MockedTrigger struct {
@@ -48,7 +124,7 @@ type MockedShardInterface struct {
 	mock.Mock
 }
 
-func (m *MockedShardInterface) Add(id string, spec *ShardSpec) error {
+func (m *MockedShardInterface) Add(id string, spec *storage.ShardSpec) error {
 	args := m.Called(id, spec)
 	return args.Error(0)
 }
@@ -58,211 +134,368 @@ func (m *MockedShardInterface) Drop(id string) error {
 	return args.Error(0)
 }
 
+type MockedStorage struct {
+	mock.Mock
+}
+
+func (m MockedStorage) Close() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m MockedStorage) Add(shard *storage.ShardSpec) error {
+	args := m.Called(shard)
+	return args.Error(0)
+}
+
+func (m MockedStorage) Drop(ids []string) error {
+	args := m.Called(ids)
+	return args.Error(0)
+}
+
+func (m MockedStorage) ForEach(visitor func(k []byte, v []byte) error) error {
+	panic("implement me")
+}
+
+func (m MockedStorage) MigrateLease(from, to clientv3.LeaseID) error {
+	args := m.Called(from, to)
+	return args.Error(0)
+}
+
+func (m MockedStorage) DropByLease(leaseID clientv3.LeaseID, exclude bool) error {
+	args := m.Called(leaseID, exclude)
+	return args.Error(0)
+}
+
+func (m MockedStorage) CompleteDispatch(id string, del bool) error {
+	panic("implement me")
+}
+
+func (m MockedStorage) Reset() error {
+	panic("implement me")
+}
+
+func (m MockedStorage) Update(k, v []byte) error {
+	panic("implement me")
+}
+
+func (m MockedStorage) Delete(k []byte) error {
+	panic("implement me")
+}
+
+func (m MockedStorage) Get(k []byte) ([]byte, error) {
+	panic("implement me")
+}
+
+func (m MockedStorage) Clear() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
 type ShardKeeperTestSuite struct {
 	suite.Suite
 
-	shardKeeper *shardKeeper
-	curShard    *ShardKeeperDbValue
+	shardKeeper  *shardKeeper
+	shardDbValue *storage.ShardKeeperDbValue
 }
 
 func (suite *ShardKeeperTestSuite) SetupTest() {
 	lg, _ := zap.NewDevelopment()
+	service := "foo"
+	defaultLease := storage.Lease{ID: 100, Expire: 100}
 
 	suite.shardKeeper = &shardKeeper{
-		service: "foo",
-		lg:      lg,
-
-		bridgeLease: noLease,
-		guardLease:  noLease,
+		service:     service,
+		lg:          lg,
+		bridgeLease: storage.NoLease,
+		guardLease:  &defaultLease,
 	}
 
-	db, _ := bolt.Open("4unittest.db", 0600, nil)
-	db.Update(
-		func(tx *bolt.Tx) error {
-			tx.DeleteBucket([]byte(suite.shardKeeper.service))
-			tx.CreateBucket([]byte(suite.shardKeeper.service))
-			return nil
-		},
-	)
-
-	suite.shardKeeper.db = db
-	suite.curShard = &ShardKeeperDbValue{
-		Spec: &ShardSpec{
-			Id: "bar",
-			Lease: &Lease{
-				ID:     100,
-				Expire: 100,
-			},
-		},
+	suite.shardDbValue = &storage.ShardKeeperDbValue{
+		Spec: &storage.ShardSpec{Id: "bar", Lease: &defaultLease},
 		Disp: true,
 		Drop: false,
 	}
-
-	// 写入初始数据
-	suite.shardKeeper.db.Update(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			b.Put([]byte(suite.curShard.Spec.Id), []byte(suite.curShard.String()))
-			return nil
-		},
-	)
 }
 
-func (suite *ShardKeeperTestSuite) TestDropByLease_UnmarshalError() {
-	// 写入非法value数据
-	suite.shardKeeper.db.Update(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			b.Put([]byte(mock.Anything), []byte(mock.Anything))
-			return nil
-		},
-	)
-	err := suite.shardKeeper.dropBridgeLease(
-		&Lease{
-			ID:     1,
-			Expire: 1,
-		},
-	)
+func (suite *ShardKeeperTestSuite) TestHandleRbEvent_typeError() {
+	err := suite.shardKeeper.handleRbEvent("", "")
 	assert.NotNil(suite.T(), err)
-	suite.shardKeeper.db.Close()
 }
 
-func (suite *ShardKeeperTestSuite) TestDropByLease_IgnoreEqualCase() {
-	err := suite.shardKeeper.dropBridgeLease(
-		&Lease{
-			ID:     1,
-			Expire: 1,
-		},
-	)
-	assert.Nil(suite.T(), err)
-	suite.shardKeeper.db.View(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			v := b.Get([]byte(suite.curShard.Spec.Id))
-			var dbValue ShardKeeperDbValue
-			json.Unmarshal(v, &dbValue)
-			assert.True(suite.T(), dbValue.Disp)
-			assert.False(suite.T(), dbValue.Drop)
-			return nil
-		},
-	)
-	suite.shardKeeper.db.Close()
+func (suite *ShardKeeperTestSuite) TestHandleRbEvent_parseShardLeaseError() {
+	ev := clientv3.Event{
+		Type: mvccpb.PUT,
+		Kv:   &mvccpb.KeyValue{Value: []byte("")},
+	}
+	err := suite.shardKeeper.handleRbEvent("", &ev)
+	assert.NotNil(suite.T(), err)
 }
 
-func (suite *ShardKeeperTestSuite) TestAdd_create() {
-	fakeShardId := mock.Anything
-	err := suite.shardKeeper.Add(fakeShardId, &ShardSpec{
-		Id: fakeShardId,
-		Lease: &Lease{
-			ID:     0,
-			Expire: 101,
-		},
-	})
-	assert.Nil(suite.T(), err)
-	suite.shardKeeper.db.View(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			v := b.Get([]byte(fakeShardId))
-			var dbValue ShardKeeperDbValue
-			json.Unmarshal(v, &dbValue)
-			assert.False(suite.T(), dbValue.Disp)
-			assert.False(suite.T(), dbValue.Drop)
-			assert.Equal(suite.T(), fakeShardId, dbValue.Spec.Id)
-			assert.Equal(suite.T(), clientv3.LeaseID(0), dbValue.Spec.Lease.ID)
-			assert.Equal(suite.T(), int64(0), dbValue.Spec.Lease.Expire)
-			return nil
-		},
-	)
-	suite.shardKeeper.db.Close()
+func (suite *ShardKeeperTestSuite) TestParseLease_leaseError() {
+	ev := clientv3.Event{
+		Type: mvccpb.PUT,
+		Kv:   &mvccpb.KeyValue{Value: []byte("")},
+	}
+	_, err := suite.shardKeeper.parseShardLease(&ev)
+	assert.NotNil(suite.T(), err)
 }
 
-func (suite *ShardKeeperTestSuite) TestAdd_update() {
-	fakeShardId := suite.curShard.Spec.Id
-	err := suite.shardKeeper.Add(fakeShardId, &ShardSpec{Id: fakeShardId})
+func (suite *ShardKeeperTestSuite) TestParseLease_leaseOk() {
+	sl := ShardLease{}
+	ev := clientv3.Event{
+		Type: mvccpb.PUT,
+		Kv:   &mvccpb.KeyValue{Value: []byte(sl.String())},
+	}
+	actual, err := suite.shardKeeper.parseShardLease(&ev)
 	assert.Nil(suite.T(), err)
-	suite.shardKeeper.db.View(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			v := b.Get([]byte(fakeShardId))
-			var dbValue ShardKeeperDbValue
-			json.Unmarshal(v, &dbValue)
+	assert.True(suite.T(), reflect.DeepEqual(*actual, sl))
+}
 
-			// shard已经存在，不允许更新
-			assert.True(suite.T(), dbValue.Disp)
-
-			assert.False(suite.T(), dbValue.Drop)
-			assert.Equal(suite.T(), fakeShardId, dbValue.Spec.Id)
-			return nil
+func (suite *ShardKeeperTestSuite) TestHandleSessionKeyEvent_create() {
+	ev := clientv3.Event{
+		Type: mvccpb.PUT,
+		Kv: &mvccpb.KeyValue{
+			Value:          []byte(""),
+			CreateRevision: 1,
+			ModRevision:    1,
 		},
-	)
-	suite.shardKeeper.db.Close()
+	}
+	err := suite.shardKeeper.handleSessionKeyEvent(&ev)
+	assert.Nil(suite.T(), err)
+}
+
+func (suite *ShardKeeperTestSuite) TestHandleSessionKeyEvent_delete() {
+	sl := ShardLease{}
+	ev := clientv3.Event{
+		Type: mvccpb.DELETE,
+		PrevKv: &mvccpb.KeyValue{
+			Value: []byte(sl.String()),
+		},
+	}
+
+	mockedStorage := new(MockedStorage)
+	mockedStorage.On("DropByLease", sl.Lease.ID, false).Return(nil)
+	suite.shardKeeper.storage = mockedStorage
+
+	err := suite.shardKeeper.handleSessionKeyEvent(&ev)
+	mockedStorage.AssertExpectations(suite.T())
+	assert.Nil(suite.T(), err)
+}
+
+func (suite *ShardKeeperTestSuite) TestAcquireBridgeLease_modify() {
+	// 	acquireBridgeLease do not accept modify event, cause bridge no update logic
+	ev := clientv3.Event{
+		Type: mvccpb.PUT,
+		Kv: &mvccpb.KeyValue{
+			Value:          []byte(""),
+			CreateRevision: 1,
+			ModRevision:    2,
+		},
+	}
+	err := suite.shardKeeper.acquireBridgeLease(&ev, nil)
+	assert.NotNil(suite.T(), err)
+}
+
+func (suite *ShardKeeperTestSuite) TestAcquireBridgeLease_delete() {
+	// delete bridge event, require no shard has the bridge now
+	ev := clientv3.Event{
+		Type: mvccpb.DELETE,
+		Kv: &mvccpb.KeyValue{
+			Value:          []byte(""),
+			CreateRevision: 1,
+			ModRevision:    2,
+		},
+	}
+
+	sl := ShardLease{}
+
+	mockedStorage := new(MockedStorage)
+	mockedStorage.On("DropByLease", sl.Lease.ID, false).Return(nil)
+	suite.shardKeeper.storage = mockedStorage
+
+	err := suite.shardKeeper.acquireBridgeLease(&ev, &sl)
+	mockedStorage.AssertExpectations(suite.T())
+	assert.Nil(suite.T(), err)
+}
+
+func (suite *ShardKeeperTestSuite) TestAcquireBridgeLease_guardLeaseError() {
+	// create event, need drop some shard, then migrate current guard to bridge
+	ev := clientv3.Event{
+		Type: mvccpb.PUT,
+		Kv: &mvccpb.KeyValue{
+			Value: []byte(""),
+		},
+	}
+
+	sl := ShardLease{
+		// not equal current global value
+		GuardLeaseID: suite.shardDbValue.Spec.Lease.ID + 1,
+		Assignment: &Assignment{
+			Drops: []string{},
+		},
+	}
+
+	mockedStorage := new(MockedStorage)
+	mockedStorage.On("Drop", mock.Anything).Return(nil)
+	suite.shardKeeper.storage = mockedStorage
+
+	err := suite.shardKeeper.acquireBridgeLease(&ev, &sl)
+	mockedStorage.AssertExpectations(suite.T())
+	assert.NotNil(suite.T(), err)
+}
+
+func (suite *ShardKeeperTestSuite) TestAcquireBridgeLease_ok() {
+	// create event, need drop some shard, then migrate current guard to bridge
+	ev := clientv3.Event{
+		Type: mvccpb.PUT,
+		Kv: &mvccpb.KeyValue{
+			Value: []byte(""),
+		},
+	}
+
+	sl := ShardLease{
+		// not equal current global value
+		GuardLeaseID: suite.shardDbValue.Spec.Lease.ID,
+		Assignment: &Assignment{
+			Drops: []string{},
+		},
+	}
+
+	mockedStorage := new(MockedStorage)
+	mockedStorage.On("Drop", mock.Anything).Return(nil)
+	mockedStorage.On("MigrateLease", sl.GuardLeaseID, sl.ID).Return(nil)
+	suite.shardKeeper.storage = mockedStorage
+
+	err := suite.shardKeeper.acquireBridgeLease(&ev, &sl)
+	mockedStorage.AssertExpectations(suite.T())
+	assert.Nil(suite.T(), err)
+}
+
+func (suite *ShardKeeperTestSuite) TestAcquireGuardLease_create() {
+	ev := clientv3.Event{
+		Type: mvccpb.PUT,
+		Kv: &mvccpb.KeyValue{
+			Value: []byte(""),
+		},
+	}
+
+	err := suite.shardKeeper.acquireGuardLease(&ev, nil)
+	assert.NotNil(suite.T(), err)
+}
+
+func (suite *ShardKeeperTestSuite) TestAcquireGuardLease_bridgeLeaseNoLease() {
+	ev := clientv3.Event{
+		Type: mvccpb.PUT,
+		Kv: &mvccpb.KeyValue{
+			Value: []byte(""),
+
+			// update event
+			CreateRevision: 1,
+			ModRevision:    2,
+		},
+	}
+
+	err := suite.shardKeeper.acquireGuardLease(&ev, nil)
+	assert.NotNil(suite.T(), err)
+}
+
+func (suite *ShardKeeperTestSuite) TestAcquireGuardLease_bridgeLeaseError() {
+	ev := clientv3.Event{
+		Type: mvccpb.PUT,
+		Kv: &mvccpb.KeyValue{
+			Value: []byte(""),
+
+			// update event
+			CreateRevision: 1,
+			ModRevision:    2,
+		},
+	}
+
+	suite.shardKeeper.bridgeLease = &storage.Lease{ID: 101}
+	sl := ShardLease{
+		// not equal current global value
+		BridgeLeaseID: 102,
+	}
+
+	err := suite.shardKeeper.acquireGuardLease(&ev, &sl)
+	assert.NotNil(suite.T(), err)
+}
+
+func (suite *ShardKeeperTestSuite) TestAcquireGuardLease_ok() {
+	ev := clientv3.Event{
+		Type: mvccpb.PUT,
+		Kv: &mvccpb.KeyValue{
+			Value: []byte(""),
+
+			// update event
+			CreateRevision: 1,
+			ModRevision:    2,
+		},
+	}
+
+	suite.shardKeeper.bridgeLease = &storage.Lease{ID: 101}
+	sl := ShardLease{
+		// not equal current global value
+		BridgeLeaseID: 101,
+	}
+
+	mockedStorage := new(MockedStorage)
+	mockedStorage.On("MigrateLease", suite.shardKeeper.bridgeLease.ID, sl.ID).Return(nil)
+	mockedStorage.On("DropByLease", sl.ID, true).Return(nil)
+	suite.shardKeeper.storage = mockedStorage
+
+	mockedEtcdWrapper := new(MockedEtcdWrapper)
+	mockedEtcdWrapper.On("CreateAndGet", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	suite.shardKeeper.client = mockedEtcdWrapper
+
+	err := suite.shardKeeper.acquireGuardLease(&ev, &sl)
+
+	mockedStorage.AssertExpectations(suite.T())
+	assert.Nil(suite.T(), err)
 }
 
 func (suite *ShardKeeperTestSuite) TestAdd_leaseNotEqual() {
-	fakeShardId := suite.curShard.Spec.Id
-	err := suite.shardKeeper.Add(fakeShardId, &ShardSpec{
-		Id: fakeShardId,
-		Lease: &Lease{
-			ID:     0,
-			Expire: 101,
-		},
-	})
-	assert.Nil(suite.T(), err)
-	suite.shardKeeper.db.View(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			v := b.Get([]byte(fakeShardId))
-			var dbValue ShardKeeperDbValue
-			json.Unmarshal(v, &dbValue)
-
-			// shard已经存在，不允许更新
-			assert.True(suite.T(), dbValue.Disp)
-
-			assert.False(suite.T(), dbValue.Drop)
-			assert.Equal(suite.T(), fakeShardId, dbValue.Spec.Id)
-			return nil
-		},
-	)
-	suite.shardKeeper.db.Close()
-}
-
-func (suite *ShardKeeperTestSuite) TestDrop_NotExist() {
 	fakeShardId := mock.Anything
-	err := suite.shardKeeper.Drop(fakeShardId)
-	assert.Equal(suite.T(), err, ErrNotExist)
-	suite.shardKeeper.db.Close()
+	fakeSpec := &storage.ShardSpec{
+		Id:    fakeShardId,
+		Lease: &storage.Lease{ID: 101},
+	}
+	err := suite.shardKeeper.Add(fakeShardId, fakeSpec)
+	assert.NotNil(suite.T(), err)
 }
 
-func (suite *ShardKeeperTestSuite) TestDrop_success() {
-	fakeShardId := suite.curShard.Spec.Id
-	err := suite.shardKeeper.Drop(fakeShardId)
+func (suite *ShardKeeperTestSuite) TestAdd_addOnce() {
+	fakeShardId := defaultTestPlaceHolder
+	fakeSpec := &storage.ShardSpec{
+		Id:    fakeShardId,
+		Lease: &storage.Lease{ID: suite.shardDbValue.Spec.Lease.ID},
+	}
+
+	mockedStorage := new(MockedStorage)
+	mockedStorage.On("Add", fakeSpec).Return(nil)
+	suite.shardKeeper.storage = mockedStorage
+	err := suite.shardKeeper.Add(fakeShardId, fakeSpec)
+	mockedStorage.AssertExpectations(suite.T())
 	assert.Nil(suite.T(), err)
-
-	suite.shardKeeper.db.View(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			v := b.Get([]byte(fakeShardId))
-			var dbValue ShardKeeperDbValue
-			json.Unmarshal(v, &dbValue)
-			assert.False(suite.T(), dbValue.Disp)
-			assert.True(suite.T(), dbValue.Drop)
-			assert.Equal(suite.T(), fakeShardId, dbValue.Spec.Id)
-			return nil
-		},
-	)
-	suite.shardKeeper.db.Close()
 }
 
-func (suite *ShardKeeperTestSuite) TestSync_NotInitializedAndDrop() {
-	suite.curShard.Drop = true
+func (suite *ShardKeeperTestSuite) TestDrop_notExist() {
+	fakeShardId := defaultTestPlaceHolder
+
+	mockedStorage := new(MockedStorage)
+	mockedStorage.On("Drop", []string{fakeShardId}).Return(nil)
+	suite.shardKeeper.storage = mockedStorage
+	err := suite.shardKeeper.Drop(fakeShardId)
+	mockedStorage.AssertExpectations(suite.T())
+	assert.Nil(suite.T(), err)
+}
+
+func (suite *ShardKeeperTestSuite) TestSync_notInitializedAndDrop() {
+	suite.shardDbValue.Drop = true
 
 	var err error
-	err = suite.shardKeeper.db.Update(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			return b.Put([]byte(suite.curShard.Spec.Id), []byte(suite.curShard.String()))
-		},
-	)
+	err = suite.shardKeeper.storage.Update([]byte(suite.shardDbValue.Spec.Id), []byte(suite.shardDbValue.String()))
 	assert.Nil(suite.T(), err)
 
 	mockedTrigger := new(MockedTrigger)
@@ -274,73 +507,55 @@ func (suite *ShardKeeperTestSuite) TestSync_NotInitializedAndDrop() {
 	mockedTrigger.AssertExpectations(suite.T())
 	assert.Nil(suite.T(), err)
 	assert.True(suite.T(), suite.shardKeeper.initialized)
-	suite.shardKeeper.db.Close()
+	suite.shardKeeper.storage.Clear()
+	suite.shardKeeper.storage.Close()
 }
 
-func (suite *ShardKeeperTestSuite) TestSync_JsonUnmarshalError() {
+func (suite *ShardKeeperTestSuite) TestSync_jsonUnmarshalError() {
 	var err error
-	err = suite.shardKeeper.db.Update(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			return b.Put([]byte(suite.curShard.Spec.Id), []byte("hello world"))
-		},
-	)
+	err = suite.shardKeeper.storage.Update([]byte(suite.shardDbValue.Spec.Id), []byte("error format string"))
 	assert.Nil(suite.T(), err)
 
+	// 在存在非法value的情况下，没有错误返回，除非删除不掉
 	err = suite.shardKeeper.sync()
 	assert.Nil(suite.T(), err)
-	err = suite.shardKeeper.forEachRead(
-		func(k, v []byte) error {
-			if string(k) == suite.curShard.Spec.Id {
-				suite.T().Fatal("json unmarshal error,not delete value")
-			}
-			return nil
-		})
-	assert.Nil(suite.T(), err)
-	suite.shardKeeper.db.Close()
 }
 
 func (suite *ShardKeeperTestSuite) TestSync_LeaseNotEqualGuardLease() {
 	var err error
-	suite.curShard.Spec.Lease = &Lease{
+	suite.shardDbValue.Spec.Lease = &storage.Lease{
 		ID: 12345678,
 	}
-	suite.shardKeeper.guardLease = &Lease{
+	suite.shardKeeper.guardLease = &storage.Lease{
 		ID: 87654321,
 	}
-	err = suite.shardKeeper.db.Update(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			return b.Put([]byte(suite.curShard.Spec.Id), []byte(suite.curShard.String()))
-		},
-	)
+	err = suite.shardKeeper.storage.Update([]byte(suite.shardDbValue.Spec.Id), []byte(suite.shardDbValue.String()))
 	assert.Nil(suite.T(), err)
 
-	suite.shardKeeper.dispatchTrigger, _ = evtrigger.NewTrigger(
-		evtrigger.WithWorkerSize(1),
-	)
+	suite.shardKeeper.dispatchTrigger, _ = evtrigger.NewTrigger(evtrigger.WithWorkerSize(1))
 	suite.shardKeeper.dispatchTrigger.Register(dropTrigger, suite.shardKeeper.dispatch)
 	mockedShardInterface := new(MockedShardInterface)
-	mockedShardInterface.On("Drop", suite.curShard.Spec.Id).Return(nil)
+	mockedShardInterface.On("Drop", suite.shardDbValue.Spec.Id).Return(nil)
 	suite.shardKeeper.shardImpl = mockedShardInterface
 	err = suite.shardKeeper.sync()
 	assert.Nil(suite.T(), err)
 	time.Sleep(1 * time.Second)
-	err = suite.shardKeeper.forEachRead(
+	err = suite.shardKeeper.storage.ForEach(
 		func(k, v []byte) error {
-			if string(k) == suite.curShard.Spec.Id {
+			if string(k) == suite.shardDbValue.Spec.Id {
 				suite.T().Fatal("lease not equal guardLease,not delete value")
 			}
 			return nil
 		})
 	assert.Nil(suite.T(), err)
-	suite.shardKeeper.db.Close()
+	suite.shardKeeper.storage.Clear()
+	suite.shardKeeper.storage.Close()
 }
 
 func (suite *ShardKeeperTestSuite) TestDispatch_AddWithNilError() {
 	fakeShardId := "bar"
-	fakeDV := &ShardKeeperDbValue{
-		Spec: &ShardSpec{
+	fakeDV := &storage.ShardKeeperDbValue{
+		Spec: &storage.ShardSpec{
 			Id: fakeShardId,
 		},
 	}
@@ -352,24 +567,20 @@ func (suite *ShardKeeperTestSuite) TestDispatch_AddWithNilError() {
 	err := suite.shardKeeper.dispatch(addTrigger, fakeDV)
 	mockedShardInterface.AssertExpectations(suite.T())
 	assert.Nil(suite.T(), err)
-	suite.shardKeeper.db.View(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			v := b.Get([]byte(fakeShardId))
-			var dbValue ShardKeeperDbValue
-			json.Unmarshal(v, &dbValue)
-			assert.True(suite.T(), dbValue.Disp)
-			assert.False(suite.T(), dbValue.Drop)
-			return nil
-		},
-	)
-	suite.shardKeeper.db.Close()
+
+	v, _ := suite.shardKeeper.storage.Get([]byte(fakeShardId))
+	var dbValue storage.ShardKeeperDbValue
+	json.Unmarshal(v, &dbValue)
+	assert.True(suite.T(), dbValue.Disp)
+	assert.False(suite.T(), dbValue.Drop)
+	suite.shardKeeper.storage.Clear()
+	suite.shardKeeper.storage.Close()
 }
 
 func (suite *ShardKeeperTestSuite) TestDispatch_DropWithNilError() {
-	fakeShardId := suite.curShard.Spec.Id
-	fakeDV := &ShardKeeperDbValue{
-		Spec: &ShardSpec{
+	fakeShardId := suite.shardDbValue.Spec.Id
+	fakeDV := &storage.ShardKeeperDbValue{
+		Spec: &storage.ShardSpec{
 			Id: fakeShardId,
 		},
 	}
@@ -381,13 +592,8 @@ func (suite *ShardKeeperTestSuite) TestDispatch_DropWithNilError() {
 	err := suite.shardKeeper.dispatch(dropTrigger, fakeDV)
 	mockedShardInterface.AssertExpectations(suite.T())
 	assert.Nil(suite.T(), err)
-	suite.shardKeeper.db.View(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			v := b.Get([]byte(fakeShardId))
-			assert.Nil(suite.T(), v)
-			return nil
-		},
-	)
-	suite.shardKeeper.db.Close()
+	v, _ := suite.shardKeeper.storage.Get([]byte(fakeShardId))
+	assert.Nil(suite.T(), v)
+	suite.shardKeeper.storage.Clear()
+	suite.shardKeeper.storage.Close()
 }

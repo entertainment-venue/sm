@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -40,50 +41,8 @@ var (
 	ErrNotExist = errors.New("not exist")
 )
 
-type ShardSpec struct {
-	// Id 方法传递的时候可以内容可以自识别，否则，添加分片相关的方法的生命一般是下面的样子：
-	// newShard(id string, spec *apputil.ShardSpec)
-	Id string `json:"id"`
-
-	// Service 标记自己所在服务，不需要去etcd路径中解析，增加spec的描述性质
-	Service string `json:"service"`
-
-	// Task service管理的分片任务内容
-	Task string `json:"task"`
-
-	UpdateTime int64 `json:"updateTime"`
-
-	// 通过api可以给shard主动分配到某个container
-	ManualContainerId string `json:"manualContainerId"`
-
-	// Group 同一个service需要区分不同种类的shard，
-	// 这些shard之间不相关的balance到现有container上
-	Group string `json:"group"`
-
-	// WorkerGroup shard只能分配到属于WorkerGroup的container上
-	WorkerGroup string `json:"workerGroup"`
-
-	// Lease Add时带上guard lease，存储时可能存bridge和guard
-	Lease *Lease `json:"lease"`
-}
-
-func (ss *ShardSpec) String() string {
-	b, _ := json.Marshal(ss)
-	return string(b)
-}
-
-func (ss *ShardSpec) Validate() error {
-	if ss.Service == "" {
-		return errors.New("Empty service")
-	}
-	if ss.UpdateTime <= 0 {
-		return errors.New("Err updateTime")
-	}
-	return nil
-}
-
 type ShardInterface interface {
-	Add(id string, spec *ShardSpec) error
+	Add(id string, spec *storage.ShardSpec) error
 	Drop(id string) error
 }
 
@@ -131,7 +90,7 @@ type containerOptions struct {
 
 	// client 允许外部传入
 	client *clientv3.Client
-	// shardDir shard.db的存储路径，默认是当前目录
+	// shardDir shardDbValue.db的存储路径，默认是当前目录
 	shardDir string
 
 	// dropExpiredShard 默认false，分片应用明确决定对lease敏感，才开启
@@ -328,8 +287,8 @@ func (ctr *Container) Run() error {
 
 		ssg := router.Group("/sm/admin")
 		{
-			ssg.POST("/add-shard", ctr.AddShard)
-			ssg.POST("/drop-shard", ctr.DropShard)
+			ssg.POST("/add-shardDbValue", ctr.AddShard)
+			ssg.POST("/drop-shardDbValue", ctr.DropShard)
 		}
 
 		// https://learnku.com/docs/gin-gonic/2019/examples-graceful-restart-or-stop/6173
@@ -401,7 +360,7 @@ func (ctr *Container) close() {
 		}
 		return err
 	}
-	if err := ctr.keeper.forEachRead(dropFn); err != nil {
+	if err := ctr.keeper.storage.ForEach(dropFn); err != nil {
 		ctr.opts.lg.Error(
 			"Drop error",
 			zap.String("service", ctr.Service()),
@@ -457,7 +416,7 @@ type ContainerHeartbeat struct {
 
 	// Shards 直接带上id和lease，smserver可以基于lease做有效shard的过滤
 	// TODO 支持key-range，前提是server端改造rb算法
-	Shards []*ShardKeeperDbValue `json:"shards"`
+	Shards []*storage.ShardKeeperDbValue `json:"shards"`
 }
 
 func (l *ContainerHeartbeat) String() string {
@@ -500,14 +459,14 @@ func (ctr *Container) heartbeat(ctx context.Context) error {
 	ld.NetIOCountersStat = &netIOCounters[0]
 
 	// 本地分片信息带到hb中
-	var shards []*ShardKeeperDbValue
-	if err := ctr.keeper.forEachRead(
+	var shards []*storage.ShardKeeperDbValue
+	if err := ctr.keeper.storage.ForEach(
 		func(k, v []byte) error {
-			var dv ShardKeeperDbValue
+			var dv storage.ShardKeeperDbValue
 			if err := json.Unmarshal(v, &dv); err != nil {
 				return errors.Wrap(err, string(v))
 			}
-			if dv.Spec.Lease.EqualTo(noLease) {
+			if dv.Spec.Lease.EqualTo(storage.NoLease) {
 				return nil
 			}
 
@@ -542,8 +501,8 @@ func (ctr *Container) heartbeat(ctx context.Context) error {
 
 // ShardMessage sm服务下发的分片
 type ShardMessage struct {
-	Id   string     `json:"id"`
-	Spec *ShardSpec `json:"spec"`
+	Id   string             `json:"id"`
+	Spec *storage.ShardSpec `json:"spec"`
 }
 
 func (ctr *Container) AddShard(c *gin.Context) {
@@ -568,7 +527,7 @@ func (ctr *Container) AddShard(c *gin.Context) {
 	// container校验
 	if req.Spec.ManualContainerId != "" && req.Spec.ManualContainerId != ctr.Id() {
 		ctr.opts.lg.Error(
-			"unexpected container for shard",
+			"unexpected container for shardDbValue",
 			zap.Reflect("req", req),
 			zap.String("service", ctr.Service()),
 			zap.String("actual", ctr.Id()),
@@ -590,7 +549,7 @@ func (ctr *Container) AddShard(c *gin.Context) {
 	}
 
 	ctr.opts.lg.Info(
-		"add shard success",
+		"add shardDbValue success",
 		zap.Reflect("req", req),
 	)
 
@@ -619,7 +578,7 @@ func (ctr *Container) DropShard(c *gin.Context) {
 	}
 
 	ctr.opts.lg.Info(
-		"drop shard success",
+		"drop shardDbValue success",
 		zap.Reflect("req", req),
 	)
 	c.JSON(http.StatusOK, gin.H{})
