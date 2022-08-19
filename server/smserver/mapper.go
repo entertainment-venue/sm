@@ -292,27 +292,12 @@ func (mpr *mapper) Refresh(containerId string, event *clientv3.Event) error {
 
 	// container
 	mpr.containerState.alive[containerId] = newTemporary(ctrHb.Timestamp)
-
-	// bug: shardkeeper重新启动，放弃所有当前的shard，保持container心跳时shards为null，导致sm的mapper没有清理掉内存shard，在rb时误判
-	if len(ctrHb.Shards) == 0 {
-		var dropShardIds []string
-		for shardId, shard := range mpr.shardState.alive {
-			if shard.curContainerId == containerId {
-				delete(mpr.shardState.alive, shardId)
-				dropShardIds = append(dropShardIds, shardId)
-			}
-		}
-		mpr.lg.Info(
-			"state shard refreshed, all be removed",
-			zap.String("service", mpr.appSpec.Service),
-			zap.String("containerID", containerId),
-			zap.Strings("dropShardIds", dropShardIds),
-		)
-	}
+	tmpHbShardsMap := make(map[string]string)
 
 	// shard 带有不合法lease的shard，不能认为存活，要触发rb，重新走drop和add
 	// shardkeeper 的作用是尽可能传递合法shard
 	for _, shard := range ctrHb.Shards {
+		tmpHbShardsMap[shard.Spec.Id] = ""
 		if shard.Spec.Lease.ID == mpr.shard.guardLeaseID || shard.Spec.Lease.ID == mpr.shard.bridgeLeaseID {
 			t := newTemporary(ctrHb.Timestamp)
 			t.curContainerId = containerId
@@ -335,6 +320,26 @@ func (mpr *mapper) Refresh(containerId string, event *clientv3.Event) error {
 				zap.Int64("guardLeaseID", int64(mpr.shard.guardLeaseID)),
 			)
 		}
+	}
+
+	// bug: shardkeeper重新启动，放弃所有当前的shard，保持container心跳时shards为null，导致sm的mapper没有清理掉内存shard，在rb时误判
+	// 所以这里需要做差集，将心跳中不存在的shard从mapper中及时清理掉
+	var dropShardIds []string
+	for shardId, shard := range mpr.shardState.alive {
+		if shard.curContainerId == containerId {
+			if _, ok := tmpHbShardsMap[shardId]; !ok {
+				delete(mpr.shardState.alive, shardId)
+				dropShardIds = append(dropShardIds, shardId)
+			}
+		}
+	}
+	if len(dropShardIds) != 0 {
+		mpr.lg.Info(
+			"state shard refreshed, already be removed",
+			zap.String("service", mpr.appSpec.Service),
+			zap.String("containerID", containerId),
+			zap.Strings("dropShardIds", dropShardIds),
+		)
 	}
 
 	mpr.lg.Debug(
