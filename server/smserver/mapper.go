@@ -293,6 +293,23 @@ func (mpr *mapper) Refresh(containerId string, event *clientv3.Event) error {
 	// container
 	mpr.containerState.alive[containerId] = newTemporary(ctrHb.Timestamp)
 
+	// bug: shardkeeper重新启动，放弃所有当前的shard，保持container心跳时shards为null，导致sm的mapper没有清理掉内存shard，在rb时误判
+	if len(ctrHb.Shards) == 0 {
+		var dropShardIds []string
+		for shardId, shard := range mpr.shardState.alive {
+			if shard.curContainerId == containerId {
+				delete(mpr.shardState.alive, shardId)
+				dropShardIds = append(dropShardIds, shardId)
+			}
+		}
+		mpr.lg.Info(
+			"state shard refreshed, all be removed",
+			zap.String("service", mpr.appSpec.Service),
+			zap.String("containerID", containerId),
+			zap.Strings("dropShardIds", dropShardIds),
+		)
+	}
+
 	// shard 带有不合法lease的shard，不能认为存活，要触发rb，重新走drop和add
 	// shardkeeper 的作用是尽可能传递合法shard
 	for _, shard := range ctrHb.Shards {

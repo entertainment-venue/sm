@@ -170,7 +170,7 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 
 	ss.stopper.Wrap(
 		func(ctx context.Context) {
-			apputil.TickerLoop(
+			apputil.SequenceTickerLoop(
 				ctx,
 				ss.lg,
 				defaultLoopInterval,
