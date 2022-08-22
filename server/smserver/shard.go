@@ -175,7 +175,7 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 			ss.lg.Error(
 				"rb to renew lease failed",
 				zap.String("service", ss.service),
-				zap.Int64("lease", int64(ss.guardLeaseID)),
+				zap.Int64("guardLease", int64(ss.guardLeaseID)),
 				zap.Error(err),
 			)
 		}
