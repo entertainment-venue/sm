@@ -133,6 +133,11 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 	ss.appSpec = &appSpec
 
 	ss.operator = newOperator(ss.lg, shardSpec.Service)
+	// TODO 参数传递的有些冗余，需要重新梳理
+	ss.mpr, err = newMapper(container, &appSpec, ss)
+	if err != nil {
+		return nil, errors.Wrap(err, "")
+	}
 
 	// 提供当前的guard lease
 	leasePfx := ss.container.nodeManager.ExternalLeaseGuardPath(ss.service)
@@ -153,20 +158,29 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 	var dv apputil.Lease
 	json.Unmarshal(gresp.Kvs[0].Value, &dv)
 	ss.guardLeaseID = dv.ID
-	if dv.IsExpired() {
-		ss.lg.Info(
-			"current guard lease expired, still start leaseKeepAlive",
-			zap.String("service", ss.service),
-			zap.Int64("guardLease", int64(ss.guardLeaseID)),
-		)
-	}
-	ss.leaseKeepAlive(ss.guardLeaseID, defaultGuardLeaseTimeout*time.Second)
 
-	// TODO 参数传递的有些冗余，需要重新梳理
-	ss.mpr, err = newMapper(container, &appSpec, ss)
+	// 判断lease是否过期,如果lease过期,需要触发一次rb来更新lease
+	lease := clientv3.NewLease(ss.container.Client.GetClient().Client)
+	liveResp, err := lease.TimeToLive(context.TODO(), ss.guardLeaseID)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
+	if liveResp.TTL == -1 {
+		ss.lg.Info(
+			"current guard lease expired, will rb to renew lease",
+			zap.String("service", ss.service),
+			zap.Int64("guardLease", int64(ss.guardLeaseID)),
+		)
+		if err = ss.rb(moveActionList{}); err != nil {
+			ss.lg.Error(
+				"rb to renew lease failed",
+				zap.String("service", ss.service),
+				zap.Int64("lease", int64(ss.guardLeaseID)),
+				zap.Error(err),
+			)
+		}
+	}
+	ss.leaseKeepAlive(ss.guardLeaseID, defaultGuardLeaseTimeout*time.Second)
 
 	ss.stopper.Wrap(
 		func(ctx context.Context) {
