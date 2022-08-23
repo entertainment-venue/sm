@@ -350,8 +350,13 @@ func (sk *shardKeeper) processRbEvent(_ string, value interface{}) error {
 					return nil
 				}
 				if ev.IsModify() {
-					// 这个feat开始加入一些panic，或者assert的元素在程序中给你，方便程序行为的矫正
-					panic(fmt.Sprintf("unexpected modify event for lease [%s] at [%s]", string(v), string(k)))
+					sk.lg.Info(
+						"lease session receive modify event, ignore",
+						zap.String("service", sk.service),
+						zap.ByteString("key", ev.Kv.Key),
+						zap.ByteString("value", ev.Kv.Value),
+					)
+					return nil
 				}
 			case mvccpb.DELETE:
 				var lease Lease
