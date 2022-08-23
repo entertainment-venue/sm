@@ -617,9 +617,9 @@ func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *ShardLease) 
 	// 存储和lease的关联节点
 	sessionPath := LeaseSessionPath(sk.service, sk.containerId)
 	leaseIDStr := strconv.FormatInt(int64(sk.guardLease.ID), 10)
-	if err := sk.client.CreateAndGet(context.TODO(), []string{sessionPath}, []string{sk.guardLease.String()}, sk.guardLease.ID); err != nil {
+	if _, err := sk.client.Put(context.TODO(), sessionPath, sk.guardLease.String(), clientv3.WithLease(sk.guardLease.ID)); err != nil {
 		sk.lg.Error(
-			"CreateAndGet error",
+			"Put error",
 			zap.String("session-path", sessionPath),
 			zap.String("guard-lease-id", leaseIDStr),
 			zap.Error(err),
