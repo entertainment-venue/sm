@@ -350,8 +350,13 @@ func (sk *shardKeeper) processRbEvent(_ string, value interface{}) error {
 					return nil
 				}
 				if ev.IsModify() {
-					// 这个feat开始加入一些panic，或者assert的元素在程序中给你，方便程序行为的矫正
-					panic(fmt.Sprintf("unexpected modify event for lease [%s] at [%s]", string(v), string(k)))
+					sk.lg.Info(
+						"lease session receive modify event, ignore",
+						zap.String("service", sk.service),
+						zap.ByteString("key", ev.Kv.Key),
+						zap.ByteString("value", ev.Kv.Value),
+					)
+					return nil
 				}
 			case mvccpb.DELETE:
 				var lease Lease
@@ -617,9 +622,9 @@ func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *ShardLease) 
 	// 存储和lease的关联节点
 	sessionPath := LeaseSessionPath(sk.service, sk.containerId)
 	leaseIDStr := strconv.FormatInt(int64(sk.guardLease.ID), 10)
-	if err := sk.client.CreateAndGet(context.TODO(), []string{sessionPath}, []string{sk.guardLease.String()}, sk.guardLease.ID); err != nil {
+	if _, err := sk.client.Put(context.TODO(), sessionPath, sk.guardLease.String(), clientv3.WithLease(sk.guardLease.ID)); err != nil {
 		sk.lg.Error(
-			"CreateAndGet error",
+			"Put error",
 			zap.String("session-path", sessionPath),
 			zap.String("guard-lease-id", leaseIDStr),
 			zap.Error(err),
