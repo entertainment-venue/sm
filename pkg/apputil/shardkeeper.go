@@ -22,11 +22,6 @@ const (
 	// rebalanceTrigger shardKeeper.rbTrigger 使用
 	rebalanceTrigger = "rebalanceTrigger"
 
-	// addTrigger shardKeeper.dispatchTrigger 使用
-	addTrigger = "addTrigger"
-	// dropTrigger shardKeeper.dispatchTrigger 使用
-	dropTrigger = "dropTrigger"
-
 	// defaultSyncInterval boltdb同步到app的周期
 	defaultSyncInterval = 300 * time.Millisecond
 )
@@ -170,12 +165,6 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 		evtrigger.WithWorkerSize(1),
 	)
 	sk.rbTrigger.Register(rebalanceTrigger, sk.processRbEvent)
-	sk.dispatchTrigger, _ = evtrigger.NewTrigger(
-		evtrigger.WithLogger(lg),
-		evtrigger.WithWorkerSize(1),
-	)
-	sk.dispatchTrigger.Register(addTrigger, sk.dispatch)
-	sk.dispatchTrigger.Register(dropTrigger, sk.dispatch)
 
 	// 标记本地shard的Disp为false，等待参与rb，或者通过guard lease对比直接参与
 	if err := sk.db.Update(
@@ -771,6 +760,37 @@ func (sk *shardKeeper) sync() error {
 						return b.Delete(k)
 					}
 
+					dropFn := func() error {
+						opErr := sk.shardImpl.Drop(dv.Spec.Id)
+						if opErr == nil || opErr == ErrNotExist {
+							// 清理掉shard
+							return b.Delete([]byte(dv.Spec.Id))
+						}
+						sk.lg.Error(
+							"drop shard failed",
+							zap.String("service", sk.service),
+							zap.String("shardId", dv.Spec.Id),
+							zap.Error(opErr),
+						)
+						return opErr
+					}
+
+					addFn := func() error {
+						opErr := sk.shardImpl.Add(dv.Spec.Id, dv.Spec)
+						if opErr == nil || opErr == ErrExist {
+							// 下发成功后更新boltdb
+							dv.Disp = true
+							return b.Put([]byte(dv.Spec.Id), []byte(dv.String()))
+						}
+						sk.lg.Error(
+							"add shard failed",
+							zap.String("service", sk.service),
+							zap.String("shardId", dv.Spec.Id),
+							zap.Error(opErr),
+						)
+						return opErr
+					}
+
 					// shard的lease一定和guardLease是相等的才可以下发
 					/*
 						这种要求shardkeeper下发shard的情况，有两个通道：
@@ -784,12 +804,7 @@ func (sk *shardKeeper) sync() error {
 							zap.Reflect("dv", dv),
 							zap.Reflect("guardLease", sk.guardLease),
 						)
-						return sk.dispatchTrigger.Put(
-							&evtrigger.TriggerEvent{
-								Key:   dropTrigger,
-								Value: &ShardKeeperDbValue{Spec: &ShardSpec{Id: dv.Spec.Id}},
-							},
-						)
+						return dropFn()
 					}
 
 					if dv.Disp && sk.initialized {
@@ -802,13 +817,7 @@ func (sk *shardKeeper) sync() error {
 							zap.String("service", sk.service),
 							zap.Reflect("shard", dv),
 						)
-
-						return sk.dispatchTrigger.Put(
-							&evtrigger.TriggerEvent{
-								Key:   dropTrigger,
-								Value: &ShardKeeperDbValue{Spec: &ShardSpec{Id: dv.Spec.Id}},
-							},
-						)
+						return dropFn()
 					}
 
 					sk.lg.Info(
@@ -816,8 +825,7 @@ func (sk *shardKeeper) sync() error {
 						zap.String("service", sk.service),
 						zap.Reflect("shard", dv),
 					)
-
-					return sk.dispatchTrigger.Put(&evtrigger.TriggerEvent{Key: addTrigger, Value: &dv})
+					return addFn()
 				},
 			)
 		},
@@ -831,67 +839,6 @@ func (sk *shardKeeper) sync() error {
 		sk.initialized = true
 	}
 	return nil
-}
-
-func (sk *shardKeeper) dispatch(typ string, value interface{}) error {
-	tv := value.(*ShardKeeperDbValue)
-	shardId := tv.Spec.Id
-
-	var opErr error
-	switch typ {
-	case addTrigger:
-		// 有lock的前提下，下发boltdb中的分片给调用方，这里存在异常情况：
-		// 1 lock失效，并已经下发给调用方，此处逻辑以boltdb中的shard为准，lock失效会触发shardKeeper的Close，
-		opErr = sk.shardImpl.Add(shardId, tv.Spec)
-		if opErr == nil || opErr == ErrExist {
-			// 下发成功后更新boltdb
-			tv.Disp = true
-			err := sk.db.Update(func(tx *bolt.Tx) error {
-				b := tx.Bucket([]byte(sk.service))
-				return b.Put([]byte(shardId), []byte(tv.String()))
-			})
-			if err != nil {
-				return errors.Wrapf(err, "shardId: %s", shardId)
-			}
-			sk.lg.Info(
-				"app shard added",
-				zap.String("typ", typ),
-				zap.Reflect("tv", tv),
-			)
-			return nil
-		}
-	case dropTrigger:
-		opErr = sk.shardImpl.Drop(shardId)
-		if opErr == nil || opErr == ErrNotExist {
-			// 清理掉shard
-			err := sk.db.Update(
-				func(tx *bolt.Tx) error {
-					b := tx.Bucket([]byte(sk.service))
-					return b.Delete([]byte(shardId))
-				},
-			)
-			if err != nil {
-				return err
-			}
-			sk.lg.Info(
-				"app shard dropped",
-				zap.String("typ", typ),
-				zap.Reflect("tv", tv),
-			)
-			return nil
-		}
-	default:
-		panic(fmt.Sprintf("unknown typ %s", typ))
-	}
-
-	sk.lg.Error(
-		"op error, wait next round",
-		zap.String("typ", typ),
-		zap.Reflect("tv", tv),
-		zap.Error(opErr),
-	)
-
-	return errors.Wrap(opErr, "")
 }
 
 func (sk *shardKeeper) Close() {
