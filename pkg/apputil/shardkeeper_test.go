@@ -316,10 +316,6 @@ func (suite *ShardKeeperTestSuite) TestSync_LeaseNotEqualGuardLease() {
 	)
 	assert.Nil(suite.T(), err)
 
-	suite.shardKeeper.dispatchTrigger, _ = evtrigger.NewTrigger(
-		evtrigger.WithWorkerSize(1),
-	)
-	suite.shardKeeper.dispatchTrigger.Register(dropTrigger, suite.shardKeeper.dispatch)
 	mockedShardInterface := new(MockedShardInterface)
 	mockedShardInterface.On("Drop", suite.curShard.Spec.Id).Return(nil)
 	suite.shardKeeper.shardImpl = mockedShardInterface
@@ -334,60 +330,5 @@ func (suite *ShardKeeperTestSuite) TestSync_LeaseNotEqualGuardLease() {
 			return nil
 		})
 	assert.Nil(suite.T(), err)
-	suite.shardKeeper.db.Close()
-}
-
-func (suite *ShardKeeperTestSuite) TestDispatch_AddWithNilError() {
-	fakeShardId := "bar"
-	fakeDV := &ShardKeeperDbValue{
-		Spec: &ShardSpec{
-			Id: fakeShardId,
-		},
-	}
-
-	mockedShardInterface := new(MockedShardInterface)
-	mockedShardInterface.On("Add", fakeShardId, fakeDV.Spec).Return(nil)
-	suite.shardKeeper.shardImpl = mockedShardInterface
-
-	err := suite.shardKeeper.dispatch(addTrigger, fakeDV)
-	mockedShardInterface.AssertExpectations(suite.T())
-	assert.Nil(suite.T(), err)
-	suite.shardKeeper.db.View(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			v := b.Get([]byte(fakeShardId))
-			var dbValue ShardKeeperDbValue
-			json.Unmarshal(v, &dbValue)
-			assert.True(suite.T(), dbValue.Disp)
-			assert.False(suite.T(), dbValue.Drop)
-			return nil
-		},
-	)
-	suite.shardKeeper.db.Close()
-}
-
-func (suite *ShardKeeperTestSuite) TestDispatch_DropWithNilError() {
-	fakeShardId := suite.curShard.Spec.Id
-	fakeDV := &ShardKeeperDbValue{
-		Spec: &ShardSpec{
-			Id: fakeShardId,
-		},
-	}
-
-	mockedShardInterface := new(MockedShardInterface)
-	mockedShardInterface.On("Drop", fakeShardId).Return(nil)
-	suite.shardKeeper.shardImpl = mockedShardInterface
-
-	err := suite.shardKeeper.dispatch(dropTrigger, fakeDV)
-	mockedShardInterface.AssertExpectations(suite.T())
-	assert.Nil(suite.T(), err)
-	suite.shardKeeper.db.View(
-		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(suite.shardKeeper.service))
-			v := b.Get([]byte(fakeShardId))
-			assert.Nil(suite.T(), v)
-			return nil
-		},
-	)
 	suite.shardKeeper.db.Close()
 }
