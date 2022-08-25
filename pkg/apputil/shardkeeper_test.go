@@ -2,7 +2,6 @@ package apputil
 
 import (
 	"context"
-	"encoding/json"
 	"reflect"
 	"testing"
 	"time"
@@ -491,26 +490,6 @@ func (suite *ShardKeeperTestSuite) TestDrop_notExist() {
 	assert.Nil(suite.T(), err)
 }
 
-func (suite *ShardKeeperTestSuite) TestSync_notInitializedAndDrop() {
-	suite.shardDbValue.Drop = true
-
-	var err error
-	err = suite.shardKeeper.storage.Update([]byte(suite.shardDbValue.Spec.Id), []byte(suite.shardDbValue.String()))
-	assert.Nil(suite.T(), err)
-
-	mockedTrigger := new(MockedTrigger)
-	mockedTrigger.On("Put", mock.Anything).Return(nil)
-	suite.shardKeeper.dispatchTrigger = mockedTrigger
-
-	err = suite.shardKeeper.sync()
-
-	mockedTrigger.AssertExpectations(suite.T())
-	assert.Nil(suite.T(), err)
-	assert.True(suite.T(), suite.shardKeeper.initialized)
-	suite.shardKeeper.storage.Clear()
-	suite.shardKeeper.storage.Close()
-}
-
 func (suite *ShardKeeperTestSuite) TestSync_jsonUnmarshalError() {
 	var err error
 	err = suite.shardKeeper.storage.Update([]byte(suite.shardDbValue.Spec.Id), []byte("error format string"))
@@ -532,8 +511,6 @@ func (suite *ShardKeeperTestSuite) TestSync_LeaseNotEqualGuardLease() {
 	err = suite.shardKeeper.storage.Update([]byte(suite.shardDbValue.Spec.Id), []byte(suite.shardDbValue.String()))
 	assert.Nil(suite.T(), err)
 
-	suite.shardKeeper.dispatchTrigger, _ = evtrigger.NewTrigger(evtrigger.WithWorkerSize(1))
-	suite.shardKeeper.dispatchTrigger.Register(dropTrigger, suite.shardKeeper.dispatch)
 	mockedShardInterface := new(MockedShardInterface)
 	mockedShardInterface.On("Drop", suite.shardDbValue.Spec.Id).Return(nil)
 	suite.shardKeeper.shardImpl = mockedShardInterface
@@ -548,52 +525,6 @@ func (suite *ShardKeeperTestSuite) TestSync_LeaseNotEqualGuardLease() {
 			return nil
 		})
 	assert.Nil(suite.T(), err)
-	suite.shardKeeper.storage.Clear()
-	suite.shardKeeper.storage.Close()
-}
-
-func (suite *ShardKeeperTestSuite) TestDispatch_AddWithNilError() {
-	fakeShardId := "bar"
-	fakeDV := &storage.ShardKeeperDbValue{
-		Spec: &storage.ShardSpec{
-			Id: fakeShardId,
-		},
-	}
-
-	mockedShardInterface := new(MockedShardInterface)
-	mockedShardInterface.On("Add", fakeShardId, fakeDV.Spec).Return(nil)
-	suite.shardKeeper.shardImpl = mockedShardInterface
-
-	err := suite.shardKeeper.dispatch(addTrigger, fakeDV)
-	mockedShardInterface.AssertExpectations(suite.T())
-	assert.Nil(suite.T(), err)
-
-	v, _ := suite.shardKeeper.storage.Get([]byte(fakeShardId))
-	var dbValue storage.ShardKeeperDbValue
-	json.Unmarshal(v, &dbValue)
-	assert.True(suite.T(), dbValue.Disp)
-	assert.False(suite.T(), dbValue.Drop)
-	suite.shardKeeper.storage.Clear()
-	suite.shardKeeper.storage.Close()
-}
-
-func (suite *ShardKeeperTestSuite) TestDispatch_DropWithNilError() {
-	fakeShardId := suite.shardDbValue.Spec.Id
-	fakeDV := &storage.ShardKeeperDbValue{
-		Spec: &storage.ShardSpec{
-			Id: fakeShardId,
-		},
-	}
-
-	mockedShardInterface := new(MockedShardInterface)
-	mockedShardInterface.On("Drop", fakeShardId).Return(nil)
-	suite.shardKeeper.shardImpl = mockedShardInterface
-
-	err := suite.shardKeeper.dispatch(dropTrigger, fakeDV)
-	mockedShardInterface.AssertExpectations(suite.T())
-	assert.Nil(suite.T(), err)
-	v, _ := suite.shardKeeper.storage.Get([]byte(fakeShardId))
-	assert.Nil(suite.T(), v)
 	suite.shardKeeper.storage.Clear()
 	suite.shardKeeper.storage.Close()
 }

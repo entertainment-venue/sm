@@ -104,7 +104,7 @@ func StartSM(opts ...ServerOption) error {
 	if ops.appMixer == nil {
 		ops.appMixer = &defaultAppMixer{port: srvCfg.Port}
 	}
-	lg, zapError := logutil.NewLogger(logutil.WithStdout(true))
+	lg, zapError := logutil.NewLogger(logutil.WithStdout(false))
 	if zapError != nil {
 		fmt.Printf("error creating zap logger %v", zapError)
 		os.Exit(1)

@@ -254,6 +254,51 @@ func (suite *MapperTestSuite) TestRefresh_containerUpdateTime() {
 	}
 }
 
+func (suite *MapperTestSuite) TestRefresh_nilShardsProblem() {
+	suite.createFakeContainer()
+
+	hb := apputil.ContainerHeartbeat{
+		Heartbeat: apputil.Heartbeat{
+			Timestamp: time.Now().Unix() + 1,
+		},
+		Shards: nil,
+	}
+
+	event := clientv3.Event{
+		Kv: &mvccpb.KeyValue{
+			Key:   []byte(""),
+			Value: []byte(hb.String()),
+		},
+	}
+
+	err := suite.mpr.Refresh(fakeContainerId, &event)
+	assert.Nil(suite.T(), err)
+	assert.Empty(suite.T(), suite.mpr.shardState.alive)
+}
+
+func (suite *MapperTestSuite) TestRefresh_reduceShardsProblem() {
+	suite.createFakeContainer()
+
+	hb := apputil.ContainerHeartbeat{
+		Heartbeat: apputil.Heartbeat{
+			Timestamp: time.Now().Unix() + 1,
+		},
+		Shards: []*apputil.ShardKeeperDbValue{{Spec: &apputil.ShardSpec{Id: "foo", Lease: &apputil.Lease{}}}},
+	}
+
+	event := clientv3.Event{
+		Kv: &mvccpb.KeyValue{
+			Key:   []byte(""),
+			Value: []byte(hb.String()),
+		},
+	}
+
+	err := suite.mpr.Refresh(fakeContainerId, &event)
+	assert.Nil(suite.T(), err)
+	assert.Equal(suite.T(), (*temporary)(nil), suite.mpr.shardState.alive["bar"])
+	assert.NotEqual(suite.T(), (*temporary)(nil), suite.mpr.shardState.alive["foo"])
+}
+
 func (suite *MapperTestSuite) TestWait_containerNotFound() {
 	fakeContainerId := mock.Anything
 	err := suite.mpr.Wait(fakeContainerId)

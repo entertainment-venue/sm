@@ -21,11 +21,6 @@ const (
 	// rebalanceTrigger shardKeeper.rbTrigger 使用
 	rebalanceTrigger = "rebalanceTrigger"
 
-	// addTrigger shardKeeper.dispatchTrigger 使用
-	addTrigger = "addTrigger"
-	// dropTrigger shardKeeper.dispatchTrigger 使用
-	dropTrigger = "dropTrigger"
-
 	// defaultSyncInterval boltdb同步到app的周期
 	defaultSyncInterval = 300 * time.Millisecond
 )
@@ -68,10 +63,6 @@ type shardKeeper struct {
 	// rbTrigger rb事件log，按顺序单goroutine处理lease节点的event
 	rbTrigger evtrigger.Trigger
 
-	// dispatchTrigger shardDbValue move事件log，按顺序单goroutine提交给app
-	// rbTrigger 的机制保证boltdb中存储的shard在不同节点上没有交集
-	dispatchTrigger evtrigger.Trigger
-
 	// initialized 第一次sync，需要无差别下发shard
 	initialized bool
 
@@ -110,9 +101,6 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 
 	sk.rbTrigger, _ = evtrigger.NewTrigger(evtrigger.WithLogger(lg), evtrigger.WithWorkerSize(1))
 	sk.rbTrigger.Register(rebalanceTrigger, sk.handleRbEvent)
-	sk.dispatchTrigger, _ = evtrigger.NewTrigger(evtrigger.WithLogger(lg), evtrigger.WithWorkerSize(1))
-	sk.dispatchTrigger.Register(addTrigger, sk.dispatch)
-	sk.dispatchTrigger.Register(dropTrigger, sk.dispatch)
 
 	// 标记本地shard的Disp为false，等待参与rb，或者通过guard lease对比直接参与
 	if err := sk.storage.Reset(); err != nil {
@@ -294,8 +282,13 @@ func (sk *shardKeeper) handleSessionKeyEvent(ev *clientv3.Event) error {
 			return nil
 		}
 		if ev.IsModify() {
-			// 这个feat开始加入一些panic，或者assert的元素在程序中给你，方便程序行为的矫正
-			panic(fmt.Sprintf("unexpected modify event for lease [%s] at [%s]", string(v), string(k)))
+			sk.lg.Info(
+				"lease session receive modify event, ignore",
+				zap.String("service", sk.service),
+				zap.ByteString("key", ev.Kv.Key),
+				zap.ByteString("value", ev.Kv.Value),
+			)
+			return nil
 		}
 	case mvccpb.DELETE:
 		k := ev.PrevKv.Key
@@ -436,9 +429,9 @@ func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *ShardLease) 
 	// 存储和lease的关联节点
 	sessionPath := LeaseSessionPath(sk.service, sk.containerId)
 	leaseIDStr := strconv.FormatInt(int64(sk.guardLease.ID), 10)
-	if err := sk.client.CreateAndGet(context.TODO(), []string{sessionPath}, []string{sk.guardLease.String()}, sk.guardLease.ID); err != nil {
+	if _, err := sk.client.Put(context.TODO(), sessionPath, sk.guardLease.String(), clientv3.WithLease(sk.guardLease.ID)); err != nil {
 		sk.lg.Error(
-			"CreateAndGet error",
+			"Put error",
 			zap.String("session-path", sessionPath),
 			zap.String("guard-lease-id", leaseIDStr),
 			zap.Error(err),
@@ -469,7 +462,44 @@ func (sk *shardKeeper) Drop(id string) error {
 
 // sync 没有关注lease，boltdb中存在的就需要提交给app
 func (sk *shardKeeper) sync() error {
-	var dropShardIDs []string
+	var (
+		dropShardIDs      []string
+		shardIDAndDbValue = make(map[string]*storage.ShardKeeperDbValue)
+	)
+
+	dropFn := func(dv storage.ShardKeeperDbValue) error {
+		err := sk.shardImpl.Drop(dv.Spec.Id)
+		if err == nil || err == ErrNotExist {
+			// 清理掉shard
+			dropShardIDs = append(dropShardIDs, dv.Spec.Id)
+			return nil
+		}
+		sk.lg.Error(
+			"drop shard failed",
+			zap.String("service", sk.service),
+			zap.String("shardId", dv.Spec.Id),
+			zap.Error(err),
+		)
+		return err
+	}
+
+	addFn := func(dv storage.ShardKeeperDbValue) error {
+		err := sk.shardImpl.Add(dv.Spec.Id, dv.Spec)
+		if err == nil || err == ErrExist {
+			// 下发成功后更新boltdb
+			dv.Disp = true
+			shardIDAndDbValue[dv.Spec.Id] = &dv
+			return nil
+		}
+		sk.lg.Error(
+			"add shard failed",
+			zap.String("service", sk.service),
+			zap.String("shardId", dv.Spec.Id),
+			zap.Error(err),
+		)
+		return err
+	}
+
 	sk.storage.ForEach(func(k, v []byte) error {
 		var dv storage.ShardKeeperDbValue
 		if err := json.Unmarshal(v, &dv); err != nil {
@@ -495,12 +525,7 @@ func (sk *shardKeeper) sync() error {
 				zap.Reflect("dv", dv),
 				zap.Reflect("guardLease", sk.guardLease),
 			)
-			return sk.dispatchTrigger.Put(
-				&evtrigger.TriggerEvent{
-					Key:   dropTrigger,
-					Value: &storage.ShardKeeperDbValue{Spec: &storage.ShardSpec{Id: dv.Spec.Id}},
-				},
-			)
+			return dropFn(dv)
 		}
 
 		if dv.Disp && sk.initialized {
@@ -509,30 +534,30 @@ func (sk *shardKeeper) sync() error {
 
 		if dv.Drop {
 			sk.lg.Info(
-				"drop shardDbValue from app",
+				"drop shard from app",
 				zap.String("service", sk.service),
-				zap.Reflect("shardDbValue", dv),
+				zap.Reflect("shard", dv),
 			)
-
-			return sk.dispatchTrigger.Put(
-				&evtrigger.TriggerEvent{
-					Key:   dropTrigger,
-					Value: &storage.ShardKeeperDbValue{Spec: &storage.ShardSpec{Id: dv.Spec.Id}},
-				},
-			)
+			return dropFn(dv)
 		}
 
 		sk.lg.Info(
-			"add shardDbValue to app",
+			"add shard to app",
 			zap.String("service", sk.service),
-			zap.Reflect("shardDbValue", dv),
+			zap.Reflect("shard", dv),
 		)
-
-		return sk.dispatchTrigger.Put(&evtrigger.TriggerEvent{Key: addTrigger, Value: &dv})
+		return addFn(dv)
 	})
+
 	if len(dropShardIDs) > 0 {
 		if err := sk.storage.Drop(dropShardIDs); err != nil {
 			return err
+		}
+	}
+
+	if len(shardIDAndDbValue) > 0 {
+		for shardID, dv := range shardIDAndDbValue {
+			sk.storage.Update([]byte(shardID), []byte(dv.String()))
 		}
 	}
 
@@ -543,55 +568,6 @@ func (sk *shardKeeper) sync() error {
 	return nil
 }
 
-func (sk *shardKeeper) dispatch(typ string, value interface{}) error {
-	tv := value.(*storage.ShardKeeperDbValue)
-	shardId := tv.Spec.Id
-
-	var opErr error
-	switch typ {
-	case addTrigger:
-		// 有lock的前提下，下发boltdb中的分片给调用方，这里存在异常情况：
-		// 1 lock失效，并已经下发给调用方，此处逻辑以boltdb中的shard为准，lock失效会触发shardKeeper的Close，
-		opErr = sk.shardImpl.Add(shardId, tv.Spec)
-		if opErr == nil || opErr == ErrExist {
-			if err := sk.storage.CompleteDispatch(shardId, false); err != nil {
-				return err
-			}
-			sk.lg.Info(
-				"app shardDbValue added",
-				zap.String("typ", typ),
-				zap.Reflect("tv", tv),
-			)
-			return nil
-		}
-	case dropTrigger:
-		opErr = sk.shardImpl.Drop(shardId)
-		if opErr == nil || opErr == ErrNotExist {
-			// 清理掉shard
-			if err := sk.storage.CompleteDispatch(shardId, true); err != nil {
-				return err
-			}
-			sk.lg.Info(
-				"app shardDbValue dropped",
-				zap.String("typ", typ),
-				zap.Reflect("tv", tv),
-			)
-			return nil
-		}
-	default:
-		panic(fmt.Sprintf("unknown typ %s", typ))
-	}
-
-	sk.lg.Error(
-		"op error, wait next round",
-		zap.String("typ", typ),
-		zap.Reflect("tv", tv),
-		zap.Error(opErr),
-	)
-
-	return errors.Wrap(opErr, "")
-}
-
 func (sk *shardKeeper) Close() {
 	if sk.stopper != nil {
 		sk.stopper.Close()
@@ -599,9 +575,6 @@ func (sk *shardKeeper) Close() {
 
 	if sk.rbTrigger != nil {
 		sk.rbTrigger.Close()
-	}
-	if sk.dispatchTrigger != nil {
-		sk.dispatchTrigger.Close()
 	}
 
 	if sk.storage != nil {
