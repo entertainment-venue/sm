@@ -244,6 +244,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 				zap.Int64("guardLease", int64(ss.guardLeaseID)),
 				zap.Error(err),
 			)
+			return errors.Wrap(err, "")
 		}
 	}
 
