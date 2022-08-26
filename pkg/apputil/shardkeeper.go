@@ -246,7 +246,7 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 
 	// 启动同步goroutine，对shard做move动作
 	sk.stopper.Wrap(func(ctx context.Context) {
-		TickerLoop(
+		SequenceTickerLoop(
 			ctx,
 			sk.lg,
 			defaultSyncInterval,
@@ -568,9 +568,10 @@ func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *ShardLease) 
 					if value.Spec.Lease.EqualTo(sk.bridgeLease) {
 						sk.lg.Info(
 							"can migrate from bridge to guard",
-							zap.Reflect("bridge", sk.bridgeLease),
-							zap.Int64("guard", int64(lease.ID)),
+							zap.String("service", sk.service),
 							zap.String("shardId", value.Spec.Id),
+							zap.Int64("bridge", int64(sk.bridgeLease.ID)),
+							zap.Int64("guard", int64(lease.ID)),
 						)
 						value.Spec.Lease = &lease.Lease
 
