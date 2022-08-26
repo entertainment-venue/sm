@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -576,7 +577,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	}
 
 	// guard lease需要定时续约，把Expire延长，防止app清除掉shard
-	ss.leaseKeepAlive(ss.guardLeaseID, defaultGuardLeaseTimeout*time.Second)
+	ss.leaseKeepAlive(ss.guardLeaseID, etcdutil.DefaultRequestTimeout)
 
 	// 7 等待bridge到guard迁移，以及bridge expired，足够网络健康状态下的所有节点的shard迁移
 	ss.lg.Info(
