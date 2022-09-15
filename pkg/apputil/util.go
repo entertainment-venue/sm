@@ -1,12 +1,14 @@
 package apputil
 
-import "time"
+import (
+	"time"
+)
 
 func SleepCanClose(sleepTime time.Duration, closeCh chan struct{}) {
-	ticker := time.NewTicker(sleepTime)
-	defer ticker.Stop()
+	timer := time.NewTimer(sleepTime)
+	defer timer.Stop()
 	select {
-	case <-ticker.C:
+	case <-timer.C:
 		return
 	case <-closeCh:
 		return
