@@ -800,11 +800,12 @@ func (sk *shardKeeper) sync() error {
 						2. watch lease，发现需要drop（不会走到问题逻辑）
 						1这种情况，sm在guardlease的更新和http请求下发之间停10s，等待client同步，然后下发，如果10s这个问题client都没同步到最新的guardlease，drop即可
 					*/
-					if !dv.Spec.Lease.EqualTo(sk.guardLease) {
+					if !dv.Spec.Lease.EqualTo(sk.guardLease) && !dv.Spec.Lease.EqualTo(sk.bridgeLease) {
 						sk.lg.Warn(
 							"unexpected lease, will be dropped",
 							zap.Reflect("dv", dv),
-							zap.Reflect("guardLease", sk.guardLease),
+							zap.Int64("guard-lease", int64(sk.guardLease.ID)),
+							zap.Int64("bridge-lease", int64(sk.bridgeLease.ID)),
 						)
 						return dropFn()
 					}
