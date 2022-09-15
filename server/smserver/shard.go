@@ -95,6 +95,8 @@ type smShard struct {
 
 	// leaseStopper 维护guard lease的keepalive
 	leaseStopper *apputil.GoroutineStopper
+	closeCh      chan struct{}
+	once         sync.Once
 }
 
 func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard, error) {
@@ -104,6 +106,7 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 		stopper:      &apputil.GoroutineStopper{},
 		lg:           container.lg,
 		leaseStopper: &apputil.GoroutineStopper{},
+		closeCh:      make(chan struct{}),
 	}
 
 	// 解析任务中需要负责的service
@@ -196,6 +199,9 @@ func (ss *smShard) Spec() *apputil.ShardSpec {
 }
 
 func (ss *smShard) Close() error {
+	ss.once.Do(func() {
+		close(ss.closeCh)
+	})
 	ss.mpr.Close()
 
 	ss.stopper.Close()
@@ -548,7 +554,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	// The Assigner writes and distributes assignment
 	// A2, creates the bridge lease, delays for Slicelets to acquire the bridge lease for reading, and only then does it
 	// recall and rewrite the guard lease.
-	time.Sleep(defaultGuardLeaseTimeout * time.Second)
+	apputil.SleepCanClose(defaultGuardLeaseTimeout*time.Second, ss.closeCh)
 	ss.lg.Info(
 		"old guard expired",
 		zap.Int64("oldGuardLease", int64(ss.guardLeaseID)),
@@ -587,7 +593,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 		zap.Reflect("currentBridgeLease", bridgeLease),
 		zap.Reflect("newGuardLease", guardLease),
 	)
-	time.Sleep(defaultGuardLeaseTimeout * time.Second)
+	apputil.SleepCanClose(defaultGuardLeaseTimeout*time.Second, ss.closeCh)
 	ss.lg.Info(
 		"bridge expired",
 		zap.String("guardPfx", guardPfx),
@@ -641,7 +647,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	}
 
 	// 4 debug，日志排查困难
-	time.Sleep(3 * time.Second)
+	apputil.SleepCanClose(3*time.Second, ss.closeCh)
 
 	return nil
 }
