@@ -198,9 +198,9 @@ func (ss *smShard) Spec() *apputil.ShardSpec {
 func (ss *smShard) Close() error {
 	ss.mpr.Close()
 
+	ss.stopper.Close()
 	ss.leaseStopper.Close()
 
-	ss.stopper.Close()
 	ss.lg.Info(
 		"smShard closed",
 		zap.String("service", ss.service),
