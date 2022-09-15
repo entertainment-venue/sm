@@ -3,7 +3,7 @@ module github.com/entertainment-venue/sm/server
 go 1.17
 
 require (
-	github.com/entertainment-venue/sm/pkg v0.0.0-20220826032643-5f477d4fd4b8
+	github.com/entertainment-venue/sm/pkg v0.0.0-20220915114013-ec7ce14c2fa4
 	github.com/gin-gonic/gin v1.7.7
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.7.0
