@@ -663,6 +663,7 @@ func (sk *shardKeeper) Add(id string, spec *ShardSpec) error {
 			"shard guard lease mismatch with local guard lease",
 			zap.String("service", sk.service),
 			zap.String("shard-id", id),
+			zap.Int64("local-guard-lease", int64(sk.guardLease.ID)),
 			zap.Int64("shard-guard-lease", int64(spec.Lease.ID)),
 		)
 		return errors.New("lease mismatch")
