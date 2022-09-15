@@ -96,7 +96,6 @@ type smShard struct {
 	// leaseStopper 维护guard lease的keepalive
 	leaseStopper *apputil.GoroutineStopper
 	closeCh      chan struct{}
-	once         sync.Once
 }
 
 func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard, error) {
@@ -199,9 +198,7 @@ func (ss *smShard) Spec() *apputil.ShardSpec {
 }
 
 func (ss *smShard) Close() error {
-	ss.once.Do(func() {
-		close(ss.closeCh)
-	})
+	close(ss.closeCh)
 	ss.mpr.Close()
 
 	ss.stopper.Close()
