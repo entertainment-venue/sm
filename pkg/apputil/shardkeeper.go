@@ -168,7 +168,7 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 
 	// 启动同步goroutine，对shard做move动作
 	sk.stopper.Wrap(func(ctx context.Context) {
-		TickerLoop(
+		SequenceTickerLoop(
 			ctx,
 			sk.lg,
 			defaultSyncInterval,
@@ -447,9 +447,9 @@ func (sk *shardKeeper) Add(id string, spec *storage.ShardSpec) error {
 		sk.lg.Warn(
 			"shardDbValue guard lease not equal with guard lease",
 			zap.String("service", sk.service),
-			zap.String("shardDbValue-id", id),
-			zap.Int64("guard-lease", int64(sk.guardLease.ID)),
-			zap.Int64("lease-id", int64(spec.Lease.ID)),
+			zap.String("shard-id", id),
+			zap.Int64("local-guard-lease", int64(sk.guardLease.ID)),
+			zap.Int64("shard-guard-lease", int64(spec.Lease.ID)),
 		)
 		return errors.New("lease mismatch")
 	}
@@ -519,7 +519,7 @@ func (sk *shardKeeper) sync() error {
 			2. watch lease，发现需要drop（不会走到问题逻辑）
 			1这种情况，sm在guardlease的更新和http请求下发之间停10s，等待client同步，然后下发，如果10s这个问题client都没同步到最新的guardlease，drop即可
 		*/
-		if !dv.Spec.Lease.EqualTo(sk.guardLease) {
+		if !dv.Spec.Lease.EqualTo(sk.guardLease) && !dv.Spec.Lease.EqualTo(sk.bridgeLease) {
 			sk.lg.Warn(
 				"unexpected lease, will be dropped",
 				zap.Reflect("dv", dv),

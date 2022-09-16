@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -94,6 +95,7 @@ type smShard struct {
 
 	// leaseStopper 维护guard lease的keepalive
 	leaseStopper *apputil.GoroutineStopper
+	closeCh      chan struct{}
 }
 
 func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard, error) {
@@ -103,6 +105,7 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 		stopper:      &apputil.GoroutineStopper{},
 		lg:           container.lg,
 		leaseStopper: &apputil.GoroutineStopper{},
+		closeCh:      make(chan struct{}),
 	}
 
 	// 解析任务中需要负责的service
@@ -158,28 +161,6 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 	var dv apputil.Lease
 	json.Unmarshal(gresp.Kvs[0].Value, &dv)
 	ss.guardLeaseID = dv.ID
-
-	// 判断lease是否过期,如果lease过期,需要触发一次rb来更新lease
-	lease := clientv3.NewLease(ss.container.Client.GetClient().Client)
-	liveResp, err := lease.TimeToLive(context.TODO(), ss.guardLeaseID)
-	if err != nil {
-		return nil, errors.Wrap(err, "")
-	}
-	if liveResp.TTL == -1 {
-		ss.lg.Info(
-			"current guard lease expired, will rb to renew lease",
-			zap.String("service", ss.service),
-			zap.Int64("guardLease", int64(ss.guardLeaseID)),
-		)
-		if err = ss.rb(moveActionList{}); err != nil {
-			ss.lg.Error(
-				"rb to renew lease failed",
-				zap.String("service", ss.service),
-				zap.Int64("guardLease", int64(ss.guardLeaseID)),
-				zap.Error(err),
-			)
-		}
-	}
 	ss.leaseKeepAlive(ss.guardLeaseID, defaultGuardLeaseTimeout*time.Second)
 
 	ss.stopper.Wrap(
@@ -217,11 +198,12 @@ func (ss *smShard) Spec() *apputil.ShardSpec {
 }
 
 func (ss *smShard) Close() error {
+	close(ss.closeCh)
 	ss.mpr.Close()
 
+	ss.stopper.Close()
 	ss.leaseStopper.Close()
 
-	ss.stopper.Close()
 	ss.lg.Info(
 		"smShard closed",
 		zap.String("service", ss.service),
@@ -245,6 +227,29 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 	defer func() {
 		ss.balancing = false
 	}()
+
+	// 判断lease是否过期,如果lease过期,需要触发一次rb来更新lease
+	lease := clientv3.NewLease(ss.container.Client.GetClient().Client)
+	liveResp, erre := lease.TimeToLive(context.TODO(), ss.guardLeaseID)
+	if erre != nil {
+		return errors.Wrap(erre, "")
+	}
+	if liveResp.TTL == -1 {
+		ss.lg.Info(
+			"current guard lease expired, will rb to renew lease",
+			zap.String("service", ss.service),
+			zap.Int64("guardLease", int64(ss.guardLeaseID)),
+		)
+		if err := ss.rb(moveActionList{}); err != nil {
+			ss.lg.Error(
+				"rb to renew lease failed",
+				zap.String("service", ss.service),
+				zap.Int64("guardLease", int64(ss.guardLeaseID)),
+				zap.Error(err),
+			)
+			return errors.Wrap(err, "")
+		}
+	}
 
 	// 获取guard lease
 	if err := ss.validateGuardLease(); err != nil {
@@ -546,7 +551,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	// The Assigner writes and distributes assignment
 	// A2, creates the bridge lease, delays for Slicelets to acquire the bridge lease for reading, and only then does it
 	// recall and rewrite the guard lease.
-	time.Sleep(defaultGuardLeaseTimeout * time.Second)
+	apputil.SleepCanClose(defaultGuardLeaseTimeout*time.Second, ss.closeCh)
 	ss.lg.Info(
 		"old guard expired",
 		zap.Int64("oldGuardLease", int64(ss.guardLeaseID)),
@@ -576,7 +581,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	}
 
 	// guard lease需要定时续约，把Expire延长，防止app清除掉shard
-	ss.leaseKeepAlive(ss.guardLeaseID, defaultGuardLeaseTimeout*time.Second)
+	ss.leaseKeepAlive(ss.guardLeaseID, etcdutil.DefaultRequestTimeout)
 
 	// 7 等待bridge到guard迁移，以及bridge expired，足够网络健康状态下的所有节点的shard迁移
 	ss.lg.Info(
@@ -585,7 +590,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 		zap.Reflect("currentBridgeLease", bridgeLease),
 		zap.Reflect("newGuardLease", guardLease),
 	)
-	time.Sleep(defaultGuardLeaseTimeout * time.Second)
+	apputil.SleepCanClose(defaultGuardLeaseTimeout*time.Second, ss.closeCh)
 	ss.lg.Info(
 		"bridge expired",
 		zap.String("guardPfx", guardPfx),
@@ -639,7 +644,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	}
 
 	// 4 debug，日志排查困难
-	time.Sleep(3 * time.Second)
+	apputil.SleepCanClose(3*time.Second, ss.closeCh)
 
 	return nil
 }
