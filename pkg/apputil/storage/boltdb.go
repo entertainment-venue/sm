@@ -15,8 +15,9 @@ var _ Storage = &boltdb{}
 
 type boltdb struct {
 	service string
-	db      *bolt.DB
 	lg      *zap.Logger
+
+	db *bolt.DB
 }
 
 func NewBoltdb(dir string, service string, lg *zap.Logger) (*boltdb, error) {

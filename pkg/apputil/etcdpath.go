@@ -34,6 +34,15 @@ func ServicePath(service string) string {
 	return path.Join(smPrefix, "app", service)
 }
 
+func ShardPath(service, shardId string) string {
+	// s的命名方式参考开源项目；pd
+	return path.Join(ServicePath(service), "s", shardId)
+}
+
+func ShardDir(service string) string {
+	return path.Join(ServicePath(service), "s") + "/"
+}
+
 func ContainerPath(service, id string) string {
 	return path.Join(ServicePath(service), "containerhb", id)
 }

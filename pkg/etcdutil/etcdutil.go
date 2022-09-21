@@ -16,6 +16,7 @@ package etcdutil
 
 import (
 	"context"
+	"io"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -46,6 +47,8 @@ var (
 // EtcdWrapper 4 unit test
 // etcd的方法已经是通过interface开放出来，这里进行二次封装
 type EtcdWrapper interface {
+	io.Closer
+
 	GetClient() *EtcdClient
 	GetKV(_ context.Context, node string, opts []clientv3.OpOption) (*clientv3.GetResponse, error)
 	GetKVs(ctx context.Context, prefix string) (map[string]string, error)

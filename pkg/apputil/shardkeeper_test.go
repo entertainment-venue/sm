@@ -37,6 +37,10 @@ type MockedEtcdWrapper struct {
 	mock.Mock
 }
 
+func (m MockedEtcdWrapper) Close() error {
+	panic("implement me")
+}
+
 func (m MockedEtcdWrapper) GetClient() *etcdutil.EtcdClient {
 	panic("implement me")
 }
