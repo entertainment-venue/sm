@@ -94,7 +94,12 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 	}
 
 	var err error
-	sk.storage, err = storage.NewBoltdb(c.opts.shardDir, sk.service, sk.lg)
+	switch c.opts.storageType {
+	case storage.Etcd:
+		sk.storage, err = storage.NewEtcddb(c.opts.shardDir, sk.client, sk.lg)
+	default:
+		sk.storage, err = storage.NewBoltdb(c.opts.shardDir, sk.service, sk.lg)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +117,7 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 		return nil, err
 	}
 
-	leasePfx := LeasePath(sk.service)
+	leasePfx := etcdutil.LeasePath(sk.service)
 	gresp, err := sk.client.Get(context.Background(), leasePfx, clientv3.WithPrefix())
 	if err != nil {
 		return nil, errors.Wrap(err, "")
@@ -184,7 +189,7 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 
 // WatchLease 监听lease节点，及时参与到rb中
 func (sk *shardKeeper) WatchLease() {
-	leasePfx := LeasePath(sk.service)
+	leasePfx := etcdutil.LeasePath(sk.service)
 	sk.stopper.Wrap(
 		func(ctx context.Context) {
 			WatchLoop(
@@ -224,7 +229,7 @@ func (sk *shardKeeper) handleRbEvent(_ string, value interface{}) error {
 	)
 
 	switch key {
-	case LeaseBridgePath(sk.service):
+	case etcdutil.LeaseBridgePath(sk.service):
 		if err := sk.acquireBridgeLease(ev, lease); err != nil {
 			sk.lg.Error(
 				"acquireBridgeLease error",
@@ -234,7 +239,7 @@ func (sk *shardKeeper) handleRbEvent(_ string, value interface{}) error {
 			)
 			return nil
 		}
-	case LeaseGuardPath(sk.service):
+	case etcdutil.LeaseGuardPath(sk.service):
 		if err := sk.acquireGuardLease(ev, lease); err != nil {
 			sk.lg.Error(
 				"acquireGuardLease error",
@@ -245,7 +250,7 @@ func (sk *shardKeeper) handleRbEvent(_ string, value interface{}) error {
 			return nil
 		}
 	default:
-		if !strings.HasPrefix(key, LeaseSessionDir(sk.service)) {
+		if !strings.HasPrefix(key, etcdutil.LeaseSessionDir(sk.service)) {
 			return errors.Errorf("unexpected key [%s]", key)
 		}
 		return sk.handleSessionKeyEvent(ev)
@@ -297,7 +302,7 @@ func (sk *shardKeeper) handleSessionKeyEvent(ev *clientv3.Event) error {
 		if err := json.Unmarshal(v, &lease); err != nil {
 			panic(fmt.Sprintf("key [%s] receive delete event, Unmarshal error [%s] with value [%s]", string(k), err.Error(), string(v)))
 		}
-		if err := sk.storage.DropByLease(lease.ID, false); err != nil {
+		if err := sk.storage.DropByLease(false, lease.ID); err != nil {
 			return err
 		}
 	default:
@@ -316,7 +321,7 @@ func (sk *shardKeeper) acquireBridgeLease(ev *clientv3.Event, lease *ShardLease)
 	}
 
 	if ev.Type == mvccpb.DELETE {
-		if err := sk.storage.DropByLease(lease.ID, false); err != nil {
+		if err := sk.storage.DropByLease(false, lease.ID); err != nil {
 			return err
 		}
 		sk.lg.Info(
@@ -416,7 +421,7 @@ func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *ShardLease) 
 		return err
 	}
 
-	if err := sk.storage.DropByLease(lease.ID, true); err != nil {
+	if err := sk.storage.DropByLease(true, lease.ID); err != nil {
 		return err
 	}
 
@@ -427,7 +432,7 @@ func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *ShardLease) 
 	)
 
 	// 存储和lease的关联节点
-	sessionPath := LeaseSessionPath(sk.service, sk.containerId)
+	sessionPath := etcdutil.LeaseSessionPath(sk.service, sk.containerId)
 	leaseIDStr := strconv.FormatInt(int64(sk.guardLease.ID), 10)
 	if _, err := sk.client.Put(context.TODO(), sessionPath, sk.guardLease.String(), clientv3.WithLease(sk.guardLease.ID)); err != nil {
 		sk.lg.Error(
@@ -463,11 +468,11 @@ func (sk *shardKeeper) Drop(id string) error {
 // sync 没有关注lease，boltdb中存在的就需要提交给app
 func (sk *shardKeeper) sync() error {
 	var (
-		dropShardIDs      []string
-		shardIDAndDbValue = make(map[string]*storage.ShardKeeperDbValue)
+		dropShardIDs   []string
+		updateDbValues = make(map[string]*storage.ShardKeeperDbValue)
 	)
 
-	dropFn := func(dv storage.ShardKeeperDbValue) error {
+	dropFn := func(dv *storage.ShardKeeperDbValue) error {
 		err := sk.shardImpl.Drop(dv.Spec.Id)
 		if err == nil || err == ErrNotExist {
 			// 清理掉shard
@@ -483,12 +488,12 @@ func (sk *shardKeeper) sync() error {
 		return err
 	}
 
-	addFn := func(dv storage.ShardKeeperDbValue) error {
+	addFn := func(dv *storage.ShardKeeperDbValue) error {
 		err := sk.shardImpl.Add(dv.Spec.Id, dv.Spec)
 		if err == nil || err == ErrExist {
 			// 下发成功后更新boltdb
 			dv.Disp = true
-			shardIDAndDbValue[dv.Spec.Id] = &dv
+			updateDbValues[dv.Spec.Id] = dv
 			return nil
 		}
 		sk.lg.Error(
@@ -500,18 +505,7 @@ func (sk *shardKeeper) sync() error {
 		return err
 	}
 
-	sk.storage.ForEach(func(k, v []byte) error {
-		var dv storage.ShardKeeperDbValue
-		if err := json.Unmarshal(v, &dv); err != nil {
-			sk.lg.Error(
-				"Unmarshal error, will be dropped",
-				zap.String("v", string(v)),
-				zap.Error(err),
-			)
-			dropShardIDs = append(dropShardIDs, string(k))
-			return nil
-		}
-
+	sk.storage.ForEach(func(shardID string, dv *storage.ShardKeeperDbValue) error {
 		// shard的lease一定和guardLease是相等的才可以下发
 		/*
 			这种要求shardkeeper下发shard的情况，有两个通道：
@@ -549,15 +543,16 @@ func (sk *shardKeeper) sync() error {
 		return addFn(dv)
 	})
 
-	if len(dropShardIDs) > 0 {
-		if err := sk.storage.Drop(dropShardIDs); err != nil {
+	for _, shardID := range dropShardIDs {
+		if err := sk.storage.Remove(shardID); err != nil {
 			return err
 		}
 	}
 
-	if len(shardIDAndDbValue) > 0 {
-		for shardID, dv := range shardIDAndDbValue {
-			sk.storage.Update([]byte(shardID), []byte(dv.String()))
+	for shardID, dv := range updateDbValues {
+		dv.Disp = true
+		if err := sk.storage.Put(shardID, dv); err != nil {
+			return err
 		}
 	}
 

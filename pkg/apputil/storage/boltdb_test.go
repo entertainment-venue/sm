@@ -124,7 +124,7 @@ func (suite *BoltdbTestSuite) TestDropByLease_trueExclude() {
 	)
 
 	// drop fail
-	err = suite.db.DropByLease(1, true)
+	err = suite.db.DropByLease(true, 1)
 	assert.Nil(suite.T(), err)
 	// check drop fail
 	v, _ = suite.db.Get([]byte(suite.shardId))
@@ -133,7 +133,7 @@ func (suite *BoltdbTestSuite) TestDropByLease_trueExclude() {
 	assert.False(suite.T(), dbValue.Disp)
 
 	// drop succ
-	err = suite.db.DropByLease(2, true)
+	err = suite.db.DropByLease(true, 2)
 	assert.Nil(suite.T(), err)
 	// soft delete
 	v, _ = suite.db.Get([]byte(suite.shardId))
@@ -155,7 +155,7 @@ func (suite *BoltdbTestSuite) TestDropByLease_falseExclude() {
 	// test exclude = false
 
 	// drop fail
-	err = suite.db.DropByLease(2, false)
+	err = suite.db.DropByLease(false, 2)
 	assert.Nil(suite.T(), err)
 	// check drop fail
 	v, _ = suite.db.Get([]byte(suite.shardId))
@@ -164,51 +164,13 @@ func (suite *BoltdbTestSuite) TestDropByLease_falseExclude() {
 	assert.False(suite.T(), dbValue.Disp)
 
 	// drop succ
-	err = suite.db.DropByLease(1, false)
+	err = suite.db.DropByLease(false, 1)
 	assert.Nil(suite.T(), err)
 	// check soft delete
 	v, _ = suite.db.Get([]byte(suite.shardId))
 	json.Unmarshal(v, &dbValue)
 	assert.True(suite.T(), dbValue.Drop)
 	assert.False(suite.T(), dbValue.Disp)
-
-	suite.db.Clear()
-	suite.db.Close()
-}
-
-func (suite *BoltdbTestSuite) TestCompleteDispatch_del() {
-	var err error
-
-	// delete not exist key
-	err = suite.db.CompleteDispatch(mock.Anything, true)
-	assert.Nil(suite.T(), err)
-	// delete exist
-	err = suite.db.CompleteDispatch(suite.shardId, true)
-	assert.Nil(suite.T(), err)
-
-	suite.db.Clear()
-	suite.db.Close()
-}
-
-func (suite *BoltdbTestSuite) TestCompleteDispatch_notDel() {
-	var (
-		err     error
-		v       []byte
-		dbValue ShardKeeperDbValue
-	)
-
-	// id not exist
-	err = suite.db.CompleteDispatch(mock.Anything, false)
-	assert.NotNil(suite.T(), err)
-
-	// complete succ
-	err = suite.db.CompleteDispatch(suite.shardId, false)
-	assert.Nil(suite.T(), err)
-
-	v, _ = suite.db.Get([]byte(suite.shardId))
-	json.Unmarshal(v, &dbValue)
-	assert.True(suite.T(), dbValue.Disp)
-	assert.False(suite.T(), dbValue.Drop)
 
 	suite.db.Clear()
 	suite.db.Close()

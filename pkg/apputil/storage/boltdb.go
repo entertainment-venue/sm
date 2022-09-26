@@ -2,7 +2,6 @@ package storage
 
 import (
 	"encoding/json"
-	"math"
 	"path/filepath"
 
 	"github.com/pkg/errors"
@@ -11,7 +10,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var _ Storage = &boltdb{}
+var _ Storage = new(boltdb)
 
 type boltdb struct {
 	service string
@@ -37,49 +36,49 @@ func NewBoltdb(dir string, service string, lg *zap.Logger) (*boltdb, error) {
 	return &boltdb{service: service, db: db, lg: lg}, nil
 }
 
-func (bt *boltdb) Close() error {
-	if bt.db != nil {
-		return bt.db.Close()
+func (db *boltdb) Close() error {
+	if db.db != nil {
+		return db.db.Close()
 	}
 	return nil
 }
 
-func (bt *boltdb) Add(shard *ShardSpec) error {
+func (db *boltdb) Add(shard *ShardSpec) error {
 	value := &ShardKeeperDbValue{
 		Spec: shard,
 		Disp: false,
 		Drop: false,
 	}
 
-	return bt.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bt.service))
+	return db.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(db.service))
 
 		k := []byte(shard.Id)
 		v := b.Get(k)
 		if v != nil {
 			// id已经存在，不需要写入boltdb
-			bt.lg.Info(
+			db.lg.Info(
 				"shard already exist",
-				zap.String("service", bt.service),
+				zap.String("service", db.service),
 				zap.String("id", shard.Id),
 			)
 			return nil
 		}
 
-		bt.lg.Info(
+		db.lg.Info(
 			"shard added to boltdb",
-			zap.String("service", bt.service),
+			zap.String("service", db.service),
 			zap.String("id", shard.Id),
 		)
 		return errors.Wrap(b.Put(k, []byte(value.String())), "")
 	})
 }
 
-func (bt *boltdb) Drop(ids []string) error {
+func (db *boltdb) Drop(ids []string) error {
 	if len(ids) == 0 {
-		bt.lg.Warn(
+		db.lg.Warn(
 			"empty ids",
-			zap.String("service", bt.service),
+			zap.String("service", db.service),
 		)
 		return nil
 	}
@@ -88,15 +87,15 @@ func (bt *boltdb) Drop(ids []string) error {
 		shardIDMap[id] = struct{}{}
 	}
 
-	return bt.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bt.service))
+	return db.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(db.service))
 		for shardID := range shardIDMap {
 			key := []byte(shardID)
 			raw := b.Get(key)
 			if raw == nil {
-				bt.lg.Warn(
+				db.lg.Warn(
 					"shard not exist when try to drop",
-					zap.String("service", bt.service),
+					zap.String("service", db.service),
 					zap.String("shard-id", shardID),
 				)
 				continue
@@ -108,9 +107,9 @@ func (bt *boltdb) Drop(ids []string) error {
 				if err := b.Delete(key); err != nil {
 					return errors.Wrap(err, "")
 				}
-				bt.lg.Warn(
+				db.lg.Warn(
 					"shard deleted directly because format error",
-					zap.String("service", bt.service),
+					zap.String("service", db.service),
 					zap.String("shard-id", shardID),
 				)
 				continue
@@ -121,7 +120,7 @@ func (bt *boltdb) Drop(ids []string) error {
 				return errors.Wrap(err, "")
 			}
 
-			bt.lg.Info(
+			db.lg.Info(
 				"drop shard success",
 				zap.String("shard-id", shardID),
 				zap.Int64("cur-lease", int64(dv.Spec.Lease.ID)),
@@ -131,94 +130,76 @@ func (bt *boltdb) Drop(ids []string) error {
 	})
 }
 
-func (bt *boltdb) ForEach(visitor func(k []byte, v []byte) error) error {
-	return bt.db.View(
+func (db *boltdb) ForEach(visitor func(shardID string, dv *ShardKeeperDbValue) error) error {
+	var dropShardIDs []string
+	err := db.db.View(
 		func(tx *bolt.Tx) error {
-			b := tx.Bucket([]byte(bt.service))
-			return b.ForEach(visitor)
+			b := tx.Bucket([]byte(db.service))
+			return b.ForEach(func(k, v []byte) error {
+				var dv ShardKeeperDbValue
+				if err := json.Unmarshal(v, &dv); err != nil {
+					dropShardIDs = append(dropShardIDs, dv.Spec.Id)
+					return err
+				}
+				return visitor(dv.Spec.Id, &dv)
+			})
 		},
 	)
+	if len(dropShardIDs) > 0 {
+		if err := db.Drop(dropShardIDs); err != nil {
+			db.lg.Error(
+				"Drop error",
+				zap.String("service", db.service),
+				zap.Strings("shard-id", dropShardIDs),
+			)
+		}
+	}
+	return err
 }
 
-func (bt *boltdb) MigrateLease(from, to clientv3.LeaseID) error {
-	return bt.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bt.service))
+func (db *boltdb) MigrateLease(from, to clientv3.LeaseID) error {
+	return db.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(db.service))
 		return b.ForEach(func(k, v []byte) error {
 			var dv ShardKeeperDbValue
 			if err := json.Unmarshal(v, &dv); err != nil {
 				return errors.Wrap(err, "")
 			}
 
-			// 不需要做移动，逻辑幂等的一部分
-			if dv.Spec.Lease.ID == to {
-				bt.lg.Info(
-					"shard lease already be to",
-					zap.String("service", bt.service),
-					zap.String("shard-id", dv.Spec.Id),
-					zap.Int64("to", int64(to)),
-				)
-				return nil
-			}
-
-			if dv.Spec.Lease.ID == from {
-				bt.lg.Info(
-					"migrate lease",
-					zap.String("service", bt.service),
-					zap.String("shard-id", dv.Spec.Id),
-					zap.Reflect("from", int64(from)),
-					zap.Int64("to", int64(to)),
-				)
-				dv.Spec.Lease = &Lease{ID: to, Expire: math.MaxInt64 - 30}
-			} else {
-				bt.lg.Warn(
-					"drop lease",
-					zap.String("service", bt.service),
-					zap.String("shard-id", dv.Spec.Id),
-					zap.Reflect("lease-id", int64(dv.Spec.Lease.ID)),
-					zap.Reflect("from", int64(from)),
-					zap.Int64("to", int64(to)),
-				)
-				// 异步删除，下发drop指令到app，通过sync goroutine
-				dv.Disp = false
-				dv.Drop = true
-			}
+			dv.SoftMigrate(from, to)
+			db.lg.Info(
+				"SoftMigrate success",
+				zap.String("service", db.service),
+				zap.String("shard-id", dv.Spec.Id),
+				zap.Reflect("from", int64(from)),
+				zap.Int64("to", int64(to)),
+				zap.Bool("disp", dv.Disp),
+				zap.Bool("drop", dv.Drop),
+			)
 			return b.Put(k, []byte(dv.String()))
 		})
 	})
 }
 
-func (bt *boltdb) DropByLease(leaseID clientv3.LeaseID, exclude bool) error {
+func (db *boltdb) DropByLease(exclude bool, leaseID clientv3.LeaseID) error {
 	if exclude && leaseID == clientv3.NoLease {
 		panic("unexpected error")
 	}
-	return bt.db.Update(func(tx *bolt.Tx) error {
+	return db.db.Update(func(tx *bolt.Tx) error {
 		var dropCnt int
-		b := tx.Bucket([]byte(bt.service))
-		err := b.ForEach(func(k, v []byte) error {
+		b := tx.Bucket([]byte(db.service))
+		if err := b.ForEach(func(k, v []byte) error {
 			var dv ShardKeeperDbValue
 			if err := json.Unmarshal(v, &dv); err != nil {
 				return errors.Wrap(err, "")
 			}
 
-			var needDrop bool
-			if exclude {
-				//  除leaseID都删除
-				if leaseID == clientv3.NoLease || leaseID != dv.Spec.Lease.ID {
-					needDrop = true
-				}
-			} else {
-				// 只有leaseID需要被删除
-				if leaseID == dv.Spec.Lease.ID {
-					needDrop = true
-				}
-			}
-
-			if needDrop {
+			if dv.NeedDrop(exclude, leaseID) {
 				dv.Disp = false
 				dv.Drop = true
-				bt.lg.Info(
+				db.lg.Info(
 					"drop shard",
-					zap.String("service", bt.service),
+					zap.String("service", db.service),
 					zap.String("shard-id", dv.Spec.Id),
 					zap.Bool("exclude", exclude),
 					zap.Int64("cur-lease", int64(dv.Spec.Lease.ID)),
@@ -229,43 +210,22 @@ func (bt *boltdb) DropByLease(leaseID clientv3.LeaseID, exclude bool) error {
 				}
 				dropCnt++
 			}
-
 			return nil
-		})
-		if err != nil {
+		}); err != nil {
 			return errors.Wrap(err, "")
 		}
-		bt.lg.Info(
+		db.lg.Info(
 			"drop by lease",
-			zap.String("service", bt.service),
+			zap.String("service", db.service),
 			zap.Int("drop-cnt", dropCnt),
 		)
 		return nil
 	})
 }
 
-func (bt *boltdb) CompleteDispatch(id string, del bool) error {
-	return bt.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bt.service))
-		if del {
-			return errors.Wrap(b.Delete([]byte(id)), "")
-		}
-		v := b.Get([]byte(id))
-		if v == nil {
-			return errors.Errorf("not exist %s del %t", id, del)
-		}
-		var dv ShardKeeperDbValue
-		if err := json.Unmarshal(v, &dv); err != nil {
-			return errors.Wrap(err, "")
-		}
-		dv.Disp = true
-		return errors.Wrap(b.Put([]byte(id), []byte(dv.String())), "")
-	})
-}
-
-func (bt *boltdb) Reset() error {
-	return bt.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bt.service))
+func (db *boltdb) Reset() error {
+	return db.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(db.service))
 		return b.ForEach(func(k, v []byte) error {
 			var dv ShardKeeperDbValue
 			if err := json.Unmarshal(v, &dv); err != nil {
@@ -277,24 +237,42 @@ func (bt *boltdb) Reset() error {
 	})
 }
 
-func (bt *boltdb) Update(k, v []byte) error {
-	return bt.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bt.service))
+func (db *boltdb) Put(shardID string, dv *ShardKeeperDbValue) error {
+	return db.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(db.service))
+		v := b.Get([]byte(shardID))
+		if v == nil {
+			return errors.Errorf("not exist %s", shardID)
+		}
+		return errors.Wrap(b.Put([]byte(shardID), []byte(dv.String())), "")
+	})
+}
+
+func (db *boltdb) Remove(shardID string) error {
+	return db.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(db.service))
+		return errors.Wrap(b.Delete([]byte(shardID)), "")
+	})
+}
+
+func (db *boltdb) Update(k, v []byte) error {
+	return db.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(db.service))
 		return b.Put(k, v)
 	})
 }
 
-func (bt *boltdb) Delete(k []byte) error {
-	return bt.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bt.service))
+func (db *boltdb) Delete(k []byte) error {
+	return db.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(db.service))
 		return b.Delete(k)
 	})
 }
 
-func (bt *boltdb) Get(k []byte) ([]byte, error) {
+func (db *boltdb) Get(k []byte) ([]byte, error) {
 	var r []byte
-	err := bt.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bt.service))
+	err := db.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(db.service))
 		r = b.Get(k)
 		return nil
 	})
@@ -304,8 +282,8 @@ func (bt *boltdb) Get(k []byte) ([]byte, error) {
 	return r, nil
 }
 
-func (bt *boltdb) Clear() error {
-	return bt.db.Update(func(tx *bolt.Tx) error {
-		return tx.DeleteBucket([]byte(bt.service))
+func (db *boltdb) Clear() error {
+	return db.db.Update(func(tx *bolt.Tx) error {
+		return tx.DeleteBucket([]byte(db.service))
 	})
 }

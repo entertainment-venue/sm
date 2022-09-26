@@ -2,10 +2,18 @@ package storage
 
 import (
 	"encoding/json"
+	"math"
 	"time"
 
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
+)
+
+type StorageType int
+
+const (
+	Boltdb StorageType = iota
+	Etcd
 )
 
 var (
@@ -97,9 +105,40 @@ type ShardKeeperDbValue struct {
 	Drop bool `json:"drop"`
 }
 
-func (v *ShardKeeperDbValue) String() string {
-	b, _ := json.Marshal(v)
+func (dv *ShardKeeperDbValue) String() string {
+	b, _ := json.Marshal(dv)
 	return string(b)
+}
+
+func (dv *ShardKeeperDbValue) SoftMigrate(from, to clientv3.LeaseID) {
+	// 不需要做移动，逻辑幂等的一部分
+	if dv.Spec.Lease.ID == to {
+		return
+	}
+
+	if dv.Spec.Lease.ID == from {
+		dv.Spec.Lease = &Lease{ID: to, Expire: math.MaxInt64 - 30}
+	} else {
+		// 异步删除，下发drop指令到app，通过sync goroutine
+		dv.Disp = false
+		dv.Drop = true
+	}
+}
+
+func (dv *ShardKeeperDbValue) NeedDrop(exclude bool, leaseID clientv3.LeaseID) bool {
+	var needDrop bool
+	if exclude {
+		//  除leaseID都删除
+		if leaseID == clientv3.NoLease || leaseID != dv.Spec.Lease.ID {
+			needDrop = true
+		}
+	} else {
+		// 只有leaseID需要被删除
+		if leaseID == dv.Spec.Lease.ID {
+			needDrop = true
+		}
+	}
+	return needDrop
 }
 
 // Storage
@@ -119,7 +158,7 @@ type Storage interface {
 
 	// ForEach
 	// 遍历所有shard
-	ForEach(visitor func(k, v []byte) error) error
+	ForEach(visitor func(shardID string, dv *ShardKeeperDbValue) error) error
 
 	// MigrateLease
 	// 1 从旧的guard lease迁移到bridge lease
@@ -128,28 +167,29 @@ type Storage interface {
 
 	// DropByLease
 	// bridge阶段应对批量删除场景
-	DropByLease(leaseID clientv3.LeaseID, exclude bool) error
-
-	// CompleteDispatch
-	// shard通知给app后，在bolt/etcd中标记下，防止sync goroutine再次下发，有update/delete两个操作放一起，在一个环节使用的方法，提升可读性
-	CompleteDispatch(id string, del bool) error
+	DropByLease(exclude bool, leaseID clientv3.LeaseID) error
 
 	// Reset
 	// 标记所有shard待下发，shardkeeper启动时使用
 	Reset() error
 
+	// Put
+	// 区分于Update，允许包含特定于实现的逻辑
+	Put(shardID string, dv *ShardKeeperDbValue) error
+
+	// Remove
+	// 区分于Delete，语序包含特定于实现的逻辑
+	Remove(shardID string) error
+
 	// Update
 	// for unittest
 	Update(k, v []byte) error
-
 	// Delete
 	// for unittest
 	Delete(k []byte) error
-
 	// Get
 	// for unittest
 	Get(k []byte) ([]byte, error)
-
 	// Clear
 	// for unittest
 	Clear() error

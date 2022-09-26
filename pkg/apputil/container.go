@@ -95,6 +95,9 @@ type containerOptions struct {
 
 	// dropExpiredShard 默认false，分片应用明确决定对lease敏感，才开启
 	dropExpiredShard bool
+
+	// storageType 持久存储的类型，默认是boltdb
+	storageType storage.StorageType
 }
 
 type ContainerOption func(options *containerOptions)
@@ -165,6 +168,12 @@ func WithDropExpiredShard(v bool) ContainerOption {
 	}
 }
 
+func WithStorageType(v storage.StorageType) ContainerOption {
+	return func(co *containerOptions) {
+		co.storageType = v
+	}
+}
+
 func NewContainer(opts ...ContainerOption) (*Container, error) {
 	ops := &containerOptions{}
 	for _, opt := range opts {
@@ -188,7 +197,7 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	}
 
 	// FIXME 直接刚常量有点粗糙，暂时没有更好的方案
-	InitEtcdPrefix(ops.etcdPrefix)
+	etcdutil.SetPfx(ops.etcdPrefix)
 
 	// 允许传入etcd的client
 	var client *etcdutil.EtcdClient
@@ -352,9 +361,8 @@ func (ctr *Container) close() {
 
 	// 保证shard回收的手段，允许调用方启动for不断尝试重新加入存活container中
 	// FIXME session会触发drop动作，不允许失败，但也是潜在风险，一般的sdk使用者，不了解close的机制
-	dropFn := func(k, v []byte) error {
-		shardId := string(k)
-		err := ctr.opts.impl.Drop(shardId)
+	dropFn := func(shardID string, dv *storage.ShardKeeperDbValue) error {
+		err := ctr.opts.impl.Drop(shardID)
 		if err == ErrNotExist {
 			return nil
 		}
@@ -461,11 +469,7 @@ func (ctr *Container) heartbeat(ctx context.Context) error {
 	// 本地分片信息带到hb中
 	var shards []*storage.ShardKeeperDbValue
 	if err := ctr.keeper.storage.ForEach(
-		func(k, v []byte) error {
-			var dv storage.ShardKeeperDbValue
-			if err := json.Unmarshal(v, &dv); err != nil {
-				return errors.Wrap(err, string(v))
-			}
+		func(shardID string, dv *storage.ShardKeeperDbValue) error {
 			if dv.Spec.Lease.EqualTo(storage.NoLease) {
 				return nil
 			}
@@ -475,7 +479,7 @@ func (ctr *Container) heartbeat(ctx context.Context) error {
 			// 2 未下发
 			// 		要删除，app未停止，hb要同步
 			//		要添加，app未开始，将要开始，hb要同步
-			shards = append(shards, &dv)
+			shards = append(shards, dv)
 			return nil
 		},
 	); err != nil {
@@ -485,7 +489,7 @@ func (ctr *Container) heartbeat(ctx context.Context) error {
 
 	// https://tangxusc.github.io/blog/2019/05/etcd-lock%E8%AF%A6%E8%A7%A3/
 	// 利用etcd内置lock，防止container冲突，这个问题在container应该比较少见，做到heartbeat即可，smserver就可以做
-	lockPfx := ContainerPath(ctr.Service(), ctr.Id())
+	lockPfx := etcdutil.ContainerPath(ctr.Service(), ctr.Id())
 	mutex := concurrency.NewMutex(ctr.Session, lockPfx)
 	if err := mutex.Lock(ctr.Client.Ctx()); err != nil {
 		return errors.Wrap(err, "")
