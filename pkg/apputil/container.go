@@ -90,7 +90,7 @@ type containerOptions struct {
 
 	// client 允许外部传入
 	client *clientv3.Client
-	// shardDir shardDbValue.db的存储路径，默认是当前目录
+	// shardDir shard.db的存储路径，默认是当前目录
 	shardDir string
 
 	// dropExpiredShard 默认false，分片应用明确决定对lease敏感，才开启
@@ -296,8 +296,8 @@ func (ctr *Container) Run() error {
 
 		ssg := router.Group("/sm/admin")
 		{
-			ssg.POST("/add-shardDbValue", ctr.AddShard)
-			ssg.POST("/drop-shardDbValue", ctr.DropShard)
+			ssg.POST("/add-shard", ctr.AddShard)
+			ssg.POST("/drop-shard", ctr.DropShard)
 		}
 
 		// https://learnku.com/docs/gin-gonic/2019/examples-graceful-restart-or-stop/6173
@@ -531,7 +531,7 @@ func (ctr *Container) AddShard(c *gin.Context) {
 	// container校验
 	if req.Spec.ManualContainerId != "" && req.Spec.ManualContainerId != ctr.Id() {
 		ctr.opts.lg.Error(
-			"unexpected container for shardDbValue",
+			"unexpected container for shard",
 			zap.Reflect("req", req),
 			zap.String("service", ctr.Service()),
 			zap.String("actual", ctr.Id()),
@@ -553,7 +553,7 @@ func (ctr *Container) AddShard(c *gin.Context) {
 	}
 
 	ctr.opts.lg.Info(
-		"add shardDbValue success",
+		"add shard success",
 		zap.Reflect("req", req),
 	)
 
@@ -582,7 +582,7 @@ func (ctr *Container) DropShard(c *gin.Context) {
 	}
 
 	ctr.opts.lg.Info(
-		"drop shardDbValue success",
+		"drop shard success",
 		zap.Reflect("req", req),
 	)
 	c.JSON(http.StatusOK, gin.H{})

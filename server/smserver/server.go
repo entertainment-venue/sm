@@ -17,7 +17,7 @@ package smserver
 import (
 	"time"
 
-	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	_ "github.com/entertainment-venue/sm/server/docs"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -109,7 +109,7 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 	if ops.lg == nil {
 		return nil, errors.New("logger err")
 	}
-	apputil.InitEtcdPrefix(ops.etcdPrefix)
+	etcdutil.SetPfx(ops.etcdPrefix)
 
 	srv := Server{opts: &ops, donec: make(chan struct{})}
 	if err := srv.run(); err != nil {

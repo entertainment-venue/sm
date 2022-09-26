@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -84,7 +85,7 @@ func newSMContainer(opts *serverOptions) (*smContainer, error) {
 		Service:    opts.service,
 		CreateTime: time.Now().Unix(),
 	}
-	lease := apputil.Lease{}
+	lease := storage.Lease{}
 	if err := sCtr.Client.CreateAndGet(
 		context.TODO(),
 		[]string{
@@ -116,6 +117,8 @@ func newSMContainer(opts *serverOptions) (*smContainer, error) {
 		apputil.WithApiHandler(sCtr.getHttpHandlers()),
 		// api背后的具体实现
 		apputil.WithShardImplementation(&sCtr),
+
+		apputil.WithStorageType(storage.Etcd),
 	)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
@@ -205,7 +208,7 @@ func (c *smContainer) Close() error {
 	return nil
 }
 
-func (c *smContainer) Add(id string, spec *apputil.ShardSpec) error {
+func (c *smContainer) Add(id string, spec *storage.ShardSpec) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -335,7 +338,7 @@ func (c *smContainer) campaign(ctx context.Context) {
 		// 检查所有shard应该都被分配container，当前app的配置信息是预先录入etcd的。此时提取该信息，得到所有shard的id，
 		// https://github.com/entertainment-venue/sm/wiki/leader%E8%AE%BE%E8%AE%A1%E6%80%9D%E8%B7%AF
 		st := shardTask{GovernedService: c.Service()}
-		spec := apputil.ShardSpec{Service: c.Service(), Task: st.String()}
+		spec := storage.ShardSpec{Service: c.Service(), Task: st.String()}
 		var err error
 		c.leaderShard, err = newSMShard(c, &spec)
 		if err != nil {
