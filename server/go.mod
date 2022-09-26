@@ -3,7 +3,7 @@ module github.com/entertainment-venue/sm/server
 go 1.17
 
 require (
-	github.com/entertainment-venue/sm/pkg v0.0.0-20220915125448-ea78d0d4da91
+	github.com/entertainment-venue/sm/pkg v0.0.0-20220818121655-134ac879cad8
 	github.com/gin-gonic/gin v1.7.7
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.7.0
@@ -66,8 +66,4 @@ require (
 	google.golang.org/protobuf v1.26.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b // indirect
-)
-
-replace (
-	github.com/entertainment-venue/sm/pkg => ./pkg
 )
