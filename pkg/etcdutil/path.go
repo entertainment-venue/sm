@@ -20,13 +20,13 @@ func ServicePath(service string) string {
 	return path.Join(pfx, "app", service)
 }
 
-func ShardPath(service, shardId string) string {
+func ShardPath(service, containerId, shardId string) string {
 	// s的命名方式参考开源项目；pd
-	return path.Join(ServicePath(service), "s", shardId)
+	return path.Join(ShardDir(service, containerId), shardId)
 }
 
-func ShardDir(service string) string {
-	return path.Join(ServicePath(service), "s") + "/"
+func ShardDir(service, containerId string) string {
+	return path.Join(ServicePath(service), "s", containerId) + "/"
 }
 
 func ContainerPath(service, id string) string {

@@ -24,12 +24,13 @@ func TestEtcd(t *testing.T) {
 func (suite *EtcdTestSuite) SetupTest() {
 	lg, _ := zap.NewDevelopment()
 	service := "foo"
-	suite.db, _ = NewEtcddb(service, nil, lg)
+	containerId := "127.0.0.1:8801"
+	suite.db, _ = NewEtcddb(service, containerId, nil, lg)
 }
 
 func (suite *EtcdTestSuite) TestAdd() {
 	shard := &ShardSpec{Id: mock.Anything}
-	shardPath := etcdutil.ShardPath(suite.db.service, shard.Id)
+	shardPath := etcdutil.ShardPath(suite.db.service, suite.db.containerId, shard.Id)
 
 	mockedEtcdWrapper := new(etcdutil.MockedEtcdWrapper)
 	mockedEtcdWrapper.On("GetKV", mock.Anything, shardPath, mock.Anything).Return(&clientv3.GetResponse{}, nil)
@@ -51,10 +52,16 @@ func (suite *EtcdTestSuite) TestDrop() {
 
 	suite.db.mu.kvs[mock.Anything] = &ShardKeeperDbValue{Spec: &ShardSpec{}}
 
+	// 测试下过滤逻辑
+	suite.db.mu.kvs["foo"] = &ShardKeeperDbValue{Spec: &ShardSpec{}}
+
 	err = suite.db.Drop([]string{mock.Anything})
 	assert.Nil(suite.T(), err)
 	assert.True(suite.T(), suite.db.mu.kvs[mock.Anything].Drop)
 	assert.False(suite.T(), suite.db.mu.kvs[mock.Anything].Disp)
+
+	assert.False(suite.T(), suite.db.mu.kvs["foo"].Disp)
+	assert.False(suite.T(), suite.db.mu.kvs["foo"].Drop)
 }
 
 func (suite *EtcdTestSuite) TestMigrateLease() {
@@ -131,7 +138,7 @@ func (suite *EtcdTestSuite) TestReset() {
 	kvs[mock.Anything] = dv.String()
 
 	mockedEtcdWrapper := new(etcdutil.MockedEtcdWrapper)
-	mockedEtcdWrapper.On("GetKVs", mock.Anything, etcdutil.ShardDir(suite.db.service)).Return(kvs, nil)
+	mockedEtcdWrapper.On("GetKVs", mock.Anything, etcdutil.ShardDir(suite.db.service, suite.db.containerId)).Return(kvs, nil)
 	suite.db.client = mockedEtcdWrapper
 
 	err := suite.db.Reset()

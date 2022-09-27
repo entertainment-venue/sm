@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"math"
 	"reflect"
 	"sort"
@@ -26,6 +25,7 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -534,6 +534,11 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	if err := ss.container.Client.CreateAndGet(context.TODO(), []string{bridgePfx}, []string{bridgeLease.String()}, bridgeGrantLeaseResp.ID); err != nil {
 		return err
 	}
+	ss.lg.Info(
+		"bridge created",
+		zap.String("service", ss.service),
+		zap.Int64("new-bridge-lease", int64(bridgeLease.ID)),
+	)
 
 	// 4 等待客户端lease确定超时，客户端将old guard lease的shard都停止工作，最长停止10s，也就是在bridge lease下发之后立即
 

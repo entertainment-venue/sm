@@ -14,8 +14,9 @@ import (
 var _ Storage = new(etcddb)
 
 type etcddb struct {
-	service string
-	lg      *zap.Logger
+	service     string
+	containerId string
+	lg          *zap.Logger
 
 	mu struct {
 		sync.Mutex
@@ -27,10 +28,11 @@ type etcddb struct {
 	client etcdutil.EtcdWrapper
 }
 
-func NewEtcddb(service string, client etcdutil.EtcdWrapper, lg *zap.Logger) (*etcddb, error) {
+func NewEtcddb(service string, containerId string, client etcdutil.EtcdWrapper, lg *zap.Logger) (*etcddb, error) {
 	db := &etcddb{
-		service: service,
-		lg:      lg,
+		service:     service,
+		containerId: containerId,
+		lg:          lg,
 
 		client: client,
 	}
@@ -52,7 +54,7 @@ func (db *etcddb) Add(shard *ShardSpec) error {
 		Disp: false,
 		Drop: false,
 	}
-	shardPath := etcdutil.ShardPath(db.service, shard.Id)
+	shardPath := etcdutil.ShardPath(db.service, db.containerId, shard.Id)
 
 	// 下面这段是辅助追查问题
 	gresp, err := db.client.GetKV(context.TODO(), shardPath, nil)
@@ -63,16 +65,16 @@ func (db *etcddb) Add(shard *ShardSpec) error {
 		db.lg.Warn(
 			"etcd already has value",
 			zap.String("service", db.service),
-			zap.String("id", shard.Id),
+			zap.String("shard-path", shardPath),
 			zap.ByteString("value", gresp.Kvs[0].Value),
 		)
 	}
 
 	if err := db.client.UpdateKV(context.TODO(), shardPath, value.String()); err != nil {
 		db.lg.Error(
-			"shard added to etcddb",
+			"UpdateKV err",
 			zap.String("service", db.service),
-			zap.String("id", shard.Id),
+			zap.String("shard-path", shardPath),
 			zap.Error(err),
 		)
 		return err
@@ -80,7 +82,7 @@ func (db *etcddb) Add(shard *ShardSpec) error {
 	db.lg.Info(
 		"add shard success",
 		zap.String("service", db.service),
-		zap.String("id", shard.Id),
+		zap.String("shard-path", shardPath),
 	)
 
 	// 先写etcd，对于应用程序没有干扰，然后写memory，保证一致，这块写失败不太可能
@@ -110,13 +112,15 @@ func (db *etcddb) Drop(ids []string) error {
 
 	// 内存中drop掉，sync方法同步给应用和etcd，保证etcd同步之后，才可以给到应用
 	for shardID, dv := range db.mu.kvs {
-		dv.Disp = false
-		dv.Drop = true
+		if _, ok := shardIDMap[shardID]; ok {
+			dv.Disp = false
+			dv.Drop = true
 
-		db.lg.Info(
-			"drop shard success",
-			zap.String("shard-id", shardID),
-		)
+			db.lg.Info(
+				"drop shard success",
+				zap.String("shard-id", shardID),
+			)
+		}
 	}
 	return nil
 }
@@ -197,7 +201,7 @@ func (db *etcddb) Reset() error {
 	}
 
 	// etcd场景，通过Reset重新加载etcd中的分片
-	dir := etcdutil.ShardDir(db.service)
+	dir := etcdutil.ShardDir(db.service, db.containerId)
 	kvs, err := db.client.GetKVs(context.TODO(), dir)
 	if err != nil {
 		return err
@@ -219,7 +223,7 @@ func (db *etcddb) Reset() error {
 
 // Put 写入etcd后才能，标记缓存
 func (db *etcddb) Put(shardID string, dv *ShardKeeperDbValue) error {
-	if err := db.client.UpdateKV(context.TODO(), etcdutil.ShardPath(db.service, shardID), dv.String()); err != nil {
+	if err := db.client.UpdateKV(context.TODO(), etcdutil.ShardPath(db.service, db.containerId, shardID), dv.String()); err != nil {
 		return err
 	}
 
@@ -231,7 +235,7 @@ func (db *etcddb) Put(shardID string, dv *ShardKeeperDbValue) error {
 
 // Remove 移除etcd后才能，删除缓存
 func (db *etcddb) Remove(shardID string) error {
-	if err := db.client.DelKV(context.TODO(), etcdutil.ShardPath(db.service, shardID)); err != nil {
+	if err := db.client.DelKV(context.TODO(), etcdutil.ShardPath(db.service, db.containerId, shardID)); err != nil {
 		return err
 	}
 
