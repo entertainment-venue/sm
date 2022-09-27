@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -40,50 +41,8 @@ var (
 	ErrNotExist = errors.New("not exist")
 )
 
-type ShardSpec struct {
-	// Id 方法传递的时候可以内容可以自识别，否则，添加分片相关的方法的生命一般是下面的样子：
-	// newShard(id string, spec *apputil.ShardSpec)
-	Id string `json:"id"`
-
-	// Service 标记自己所在服务，不需要去etcd路径中解析，增加spec的描述性质
-	Service string `json:"service"`
-
-	// Task service管理的分片任务内容
-	Task string `json:"task"`
-
-	UpdateTime int64 `json:"updateTime"`
-
-	// 通过api可以给shard主动分配到某个container
-	ManualContainerId string `json:"manualContainerId"`
-
-	// Group 同一个service需要区分不同种类的shard，
-	// 这些shard之间不相关的balance到现有container上
-	Group string `json:"group"`
-
-	// WorkerGroup shard只能分配到属于WorkerGroup的container上
-	WorkerGroup string `json:"workerGroup"`
-
-	// Lease Add时带上guard lease，存储时可能存bridge和guard
-	Lease *Lease `json:"lease"`
-}
-
-func (ss *ShardSpec) String() string {
-	b, _ := json.Marshal(ss)
-	return string(b)
-}
-
-func (ss *ShardSpec) Validate() error {
-	if ss.Service == "" {
-		return errors.New("Empty service")
-	}
-	if ss.UpdateTime <= 0 {
-		return errors.New("Err updateTime")
-	}
-	return nil
-}
-
 type ShardInterface interface {
-	Add(id string, spec *ShardSpec) error
+	Add(id string, spec *storage.ShardSpec) error
 	Drop(id string) error
 }
 
@@ -136,6 +95,9 @@ type containerOptions struct {
 
 	// dropExpiredShard 默认false，分片应用明确决定对lease敏感，才开启
 	dropExpiredShard bool
+
+	// storageType 持久存储的类型，默认是boltdb
+	storageType storage.StorageType
 }
 
 type ContainerOption func(options *containerOptions)
@@ -206,6 +168,12 @@ func WithDropExpiredShard(v bool) ContainerOption {
 	}
 }
 
+func WithStorageType(v storage.StorageType) ContainerOption {
+	return func(co *containerOptions) {
+		co.storageType = v
+	}
+}
+
 func NewContainer(opts ...ContainerOption) (*Container, error) {
 	ops := &containerOptions{}
 	for _, opt := range opts {
@@ -229,7 +197,7 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	}
 
 	// FIXME 直接刚常量有点粗糙，暂时没有更好的方案
-	InitEtcdPrefix(ops.etcdPrefix)
+	etcdutil.SetPfx(ops.etcdPrefix)
 
 	// 允许传入etcd的client
 	var client *etcdutil.EtcdClient
@@ -393,15 +361,14 @@ func (ctr *Container) close() {
 
 	// 保证shard回收的手段，允许调用方启动for不断尝试重新加入存活container中
 	// FIXME session会触发drop动作，不允许失败，但也是潜在风险，一般的sdk使用者，不了解close的机制
-	dropFn := func(k, v []byte) error {
-		shardId := string(k)
-		err := ctr.opts.impl.Drop(shardId)
+	dropFn := func(shardID string, dv *storage.ShardKeeperDbValue) error {
+		err := ctr.opts.impl.Drop(shardID)
 		if err == ErrNotExist {
 			return nil
 		}
 		return err
 	}
-	if err := ctr.keeper.forEachRead(dropFn); err != nil {
+	if err := ctr.keeper.storage.ForEach(dropFn); err != nil {
 		ctr.opts.lg.Error(
 			"Drop error",
 			zap.String("service", ctr.Service()),
@@ -457,7 +424,7 @@ type ContainerHeartbeat struct {
 
 	// Shards 直接带上id和lease，smserver可以基于lease做有效shard的过滤
 	// TODO 支持key-range，前提是server端改造rb算法
-	Shards []*ShardKeeperDbValue `json:"shards"`
+	Shards []*storage.ShardKeeperDbValue `json:"shards"`
 }
 
 func (l *ContainerHeartbeat) String() string {
@@ -500,14 +467,10 @@ func (ctr *Container) heartbeat(ctx context.Context) error {
 	ld.NetIOCountersStat = &netIOCounters[0]
 
 	// 本地分片信息带到hb中
-	var shards []*ShardKeeperDbValue
-	if err := ctr.keeper.forEachRead(
-		func(k, v []byte) error {
-			var dv ShardKeeperDbValue
-			if err := json.Unmarshal(v, &dv); err != nil {
-				return errors.Wrap(err, string(v))
-			}
-			if dv.Spec.Lease.EqualTo(noLease) {
+	var shards []*storage.ShardKeeperDbValue
+	if err := ctr.keeper.storage.ForEach(
+		func(shardID string, dv *storage.ShardKeeperDbValue) error {
+			if dv.Spec.Lease.EqualTo(storage.NoLease) {
 				return nil
 			}
 
@@ -516,7 +479,7 @@ func (ctr *Container) heartbeat(ctx context.Context) error {
 			// 2 未下发
 			// 		要删除，app未停止，hb要同步
 			//		要添加，app未开始，将要开始，hb要同步
-			shards = append(shards, &dv)
+			shards = append(shards, dv)
 			return nil
 		},
 	); err != nil {
@@ -526,7 +489,7 @@ func (ctr *Container) heartbeat(ctx context.Context) error {
 
 	// https://tangxusc.github.io/blog/2019/05/etcd-lock%E8%AF%A6%E8%A7%A3/
 	// 利用etcd内置lock，防止container冲突，这个问题在container应该比较少见，做到heartbeat即可，smserver就可以做
-	lockPfx := ContainerPath(ctr.Service(), ctr.Id())
+	lockPfx := etcdutil.ContainerPath(ctr.Service(), ctr.Id())
 	mutex := concurrency.NewMutex(ctr.Session, lockPfx)
 	if err := mutex.Lock(ctr.Client.Ctx()); err != nil {
 		return errors.Wrap(err, "")
@@ -542,8 +505,8 @@ func (ctr *Container) heartbeat(ctx context.Context) error {
 
 // ShardMessage sm服务下发的分片
 type ShardMessage struct {
-	Id   string     `json:"id"`
-	Spec *ShardSpec `json:"spec"`
+	Id   string             `json:"id"`
+	Spec *storage.ShardSpec `json:"spec"`
 }
 
 func (ctr *Container) AddShard(c *gin.Context) {

@@ -18,7 +18,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/etcdutil"
 )
 
 // nodeManager 管理sm的etcd prefix
@@ -28,7 +28,7 @@ type nodeManager struct {
 
 // SMRootPath /sm/app/foo.bar
 func (n *nodeManager) SMRootPath() string {
-	return apputil.ServicePath(n.smService)
+	return etcdutil.ServicePath(n.smService)
 }
 
 // LeaderPath /sm/app/foo.bar/leader
@@ -71,27 +71,27 @@ func (n *nodeManager) WorkerPath(appService, workerGroup, worker string) string 
 
 // ExternalServiceDir /sm/app/proxy.dev/
 func (n *nodeManager) ExternalServiceDir(service string) string {
-	return apputil.ServicePath(service) + "/"
+	return etcdutil.ServicePath(service) + "/"
 }
 
 // ExternalShardHbDir /sm/app/proxy.dev/shardhb/
 func (n *nodeManager) ExternalShardHbDir(appService string) string {
-	return path.Join(apputil.ServicePath(appService), "shardhb") + "/"
+	return path.Join(etcdutil.ServicePath(appService), "shardhb") + "/"
 }
 
 // ExternalContainerHbDir /sm/app/proxy.dev/containerhb/
 func (n *nodeManager) ExternalContainerHbDir(appService string) string {
-	return path.Join(apputil.ServicePath(appService), "containerhb") + "/"
+	return path.Join(etcdutil.ServicePath(appService), "containerhb") + "/"
 }
 
 // ExternalLeaseGuardPath /sm/app/proxy.dev/lease/guard
 func (n *nodeManager) ExternalLeaseGuardPath(appService string) string {
-	return apputil.LeaseGuardPath(appService)
+	return etcdutil.LeaseGuardPath(appService)
 }
 
 // ExternalLeaseBridgePath /sm/app/proxy.dev/bridge
 func (n *nodeManager) ExternalLeaseBridgePath(appService string) string {
-	return apputil.LeaseBridgePath(appService)
+	return etcdutil.LeaseBridgePath(appService)
 }
 
 // parseWorkerGroupAndContainer /sm/app/foo.bar/service/foo.bar/workerpool/g1/127.0.0.1:8801

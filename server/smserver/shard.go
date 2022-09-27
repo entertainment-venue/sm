@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -49,7 +50,7 @@ type smShardWrapper struct {
 	ss *smShard
 }
 
-func (s *smShardWrapper) NewShard(c *smContainer, spec *apputil.ShardSpec) (Shard, error) {
+func (s *smShardWrapper) NewShard(c *smContainer, spec *storage.ShardSpec) (Shard, error) {
 	return newSMShard(c, spec)
 }
 
@@ -78,7 +79,7 @@ type smShard struct {
 	// appSpec 需要通过配置影响balance算法
 	appSpec *smAppSpec
 	// shardSpec 分片的配置信息
-	shardSpec *apputil.ShardSpec
+	shardSpec *storage.ShardSpec
 
 	// mpr 存储当前存活的container和shard信息，代理etcd访问
 	mpr *mapper
@@ -98,7 +99,7 @@ type smShard struct {
 	closeCh      chan struct{}
 }
 
-func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard, error) {
+func newSMShard(container *smContainer, shardSpec *storage.ShardSpec) (*smShard, error) {
 	ss := &smShard{
 		container:    container,
 		shardSpec:    shardSpec,
@@ -158,7 +159,7 @@ func newSMShard(container *smContainer, shardSpec *apputil.ShardSpec) (*smShard,
 		)
 		return nil, errors.Wrap(err, "")
 	}
-	var dv apputil.Lease
+	var dv storage.Lease
 	json.Unmarshal(gresp.Kvs[0].Value, &dv)
 	ss.guardLeaseID = dv.ID
 	ss.leaseKeepAlive(ss.guardLeaseID, defaultGuardLeaseTimeout*time.Second)
@@ -193,7 +194,7 @@ func (ss *smShard) SetMaxRecoveryTime(maxRecoveryTime int) {
 	}
 }
 
-func (ss *smShard) Spec() *apputil.ShardSpec {
+func (ss *smShard) Spec() *storage.ShardSpec {
 	return ss.shardSpec
 }
 
@@ -291,9 +292,9 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 		return err
 	}
 	// 提供给 moveAction，做内容下发，防止sdk再次获取，sdk不会有sm空间的访问权限
-	shardIdAndShardSpec := make(map[string]*apputil.ShardSpec)
+	shardIdAndShardSpec := make(map[string]*storage.ShardSpec)
 	for id, value := range etcdShardIdAndAny {
-		var ssc apputil.ShardSpec
+		var ssc storage.ShardSpec
 		if err := json.Unmarshal([]byte(value), &ssc); err != nil {
 			return errors.Wrap(err, "")
 		}
@@ -533,6 +534,11 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	if err := ss.container.Client.CreateAndGet(context.TODO(), []string{bridgePfx}, []string{bridgeLease.String()}, bridgeGrantLeaseResp.ID); err != nil {
 		return err
 	}
+	ss.lg.Info(
+		"bridge created",
+		zap.String("service", ss.service),
+		zap.Int64("new-bridge-lease", int64(bridgeLease.ID)),
+	)
 
 	// 4 等待客户端lease确定超时，客户端将old guard lease的shard都停止工作，最长停止10s，也就是在bridge lease下发之后立即
 
@@ -569,7 +575,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	ss.guardLeaseID = guardLeaseResp.ID
 	// 6 设置guard lease，lease的过期不会影响到guard lease节点，所以Expire设置的有误差
 	guardPfx := ss.container.nodeManager.ExternalLeaseGuardPath(ss.service)
-	guardLease := apputil.Lease{
+	guardLease := storage.Lease{
 		ID: guardLeaseResp.ID,
 
 		// guard lease改为使用clientv3内部的KeepAlive，这块改为上限，让旧的客户端lease功能失效，依赖session的close作为shard drop的依据。
@@ -610,7 +616,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 		if !ok {
 			// 不是存活shard，可以移动
 			action.DropEndpoint = ""
-			action.Spec.Lease = &apputil.Lease{
+			action.Spec.Lease = &storage.Lease{
 				ID: guardLease.ID,
 
 				// 旧shardkeeper，在bridge过期的之后，会干掉lease比bridge还早的shard，这些shard灭有切换到new guard上。
@@ -714,7 +720,7 @@ func (ss *smShard) validateGuardLease() error {
 		err := errors.Errorf("guard not found %s", guardPfx)
 		return errors.Wrap(err, "")
 	}
-	var lease apputil.Lease
+	var lease storage.Lease
 	if err := json.Unmarshal(resp.Kvs[0].Value, &lease); err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -744,7 +750,7 @@ func (ss *smShard) extractShardMoves(
 	fixShardIdAndManualContainerId ArmorMap,
 	hbContainerIdAndAny ArmorMap,
 	hbShardIdAndContainerId ArmorMap,
-	shardIdAndShardSpec map[string]*apputil.ShardSpec) moveActionList {
+	shardIdAndShardSpec map[string]*storage.ShardSpec) moveActionList {
 	// 保证shard在hb中上报的container和存活container一致
 	containerIdAndHbShardIds := hbShardIdAndContainerId.SwapKV()
 	for containerId := range containerIdAndHbShardIds {

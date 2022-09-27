@@ -1,29 +1,33 @@
 package apputil
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/entertainment-venue/sm/pkg/etcdutil"
+)
 
 func Test_EtcdPath(t *testing.T) {
-	if ServicePath("foo") != "/sm/app/foo" {
+	if etcdutil.ServicePath("foo") != "/sm/app/foo" {
 		t.Errorf("path error")
 		t.SkipNow()
 	}
 
-	if ContainerPath("foo", "bar") != "/sm/app/foo/containerhb/bar" {
+	if etcdutil.ContainerPath("foo", "bar") != "/sm/app/foo/containerhb/bar" {
 		t.Errorf("path error")
 		t.SkipNow()
 	}
 
-	if LeasePath("foo") != "/sm/app/foo/lease" {
+	if etcdutil.LeasePath("foo") != "/sm/app/foo/lease" {
 		t.Errorf("path error")
 		t.SkipNow()
 	}
 
-	if LeaseBridgePath("foo") != "/sm/app/foo/lease/bridge" {
+	if etcdutil.LeaseBridgePath("foo") != "/sm/app/foo/lease/bridge" {
 		t.Errorf("path error")
 		t.SkipNow()
 	}
 
-	if LeaseGuardPath("foo") != "/sm/app/foo/lease/guard" {
+	if etcdutil.LeaseGuardPath("foo") != "/sm/app/foo/lease/guard" {
 		t.Errorf("path error")
 		t.SkipNow()
 	}

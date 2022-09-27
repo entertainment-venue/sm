@@ -18,3 +18,4 @@ vendor/
 *.log
 *.db
 .DS_Store
+server/pkg/

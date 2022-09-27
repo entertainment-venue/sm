@@ -1,37 +1,32 @@
-// Copyright 2021 The entertainment-venue Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+package etcdutil
 
-package apputil
-
-import (
-	"path"
-)
+import "path"
 
 var (
-	// smPrefix 需要可配置
-	smPrefix = "/sm"
+	pfx string
 )
 
-func InitEtcdPrefix(prefix string) {
-	if prefix == "" {
-		panic("prefix should not be empty")
+func init() {
+	pfx = "/sm"
+}
+
+func SetPfx(v string) {
+	if v != "" {
+		pfx = v
 	}
-	smPrefix = prefix
 }
 
 func ServicePath(service string) string {
-	return path.Join(smPrefix, "app", service)
+	return path.Join(pfx, "app", service)
+}
+
+func ShardPath(service, containerId, shardId string) string {
+	// s的命名方式参考开源项目；pd
+	return path.Join(ShardDir(service, containerId), shardId)
+}
+
+func ShardDir(service, containerId string) string {
+	return path.Join(ServicePath(service), "s", containerId) + "/"
 }
 
 func ContainerPath(service, id string) string {

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -95,7 +96,7 @@ func (ss *smShardApi) GinAddSpec(c *gin.Context) {
 
 	// 创建guard lease节点
 	nodes = append(nodes, ss.container.nodeManager.ExternalLeaseGuardPath(req.Service))
-	lease := apputil.Lease{}
+	lease := storage.Lease{}
 	values = append(values, lease.String())
 
 	// 创建containerhb节点
@@ -104,7 +105,7 @@ func (ss *smShardApi) GinAddSpec(c *gin.Context) {
 
 	// 需要将service注册到sm的spec中
 	t := shardTask{GovernedService: req.Service}
-	v := apputil.ShardSpec{
+	v := storage.ShardSpec{
 		Service:    ss.container.Service(),
 		Task:       t.String(),
 		UpdateTime: time.Now().Unix(),
@@ -271,7 +272,7 @@ func (ss *smShardApi) GinAddShard(c *gin.Context) {
 		return
 	}
 
-	spec := apputil.ShardSpec{
+	spec := storage.ShardSpec{
 		Service:           req.Service,
 		Task:              req.Task,
 		UpdateTime:        time.Now().Unix(),
@@ -555,7 +556,7 @@ func (ss *smShardApi) GinGetWorker(c *gin.Context) {
 
 type serviceDetail struct {
 	Spec              *smAppSpec                    `json:"spec"`
-	ShardSpec         map[string]*apputil.ShardSpec `json:"shardSpec"`
+	ShardSpec         map[string]*storage.ShardSpec `json:"shardSpec"`
 	WorkerGroup       map[string][]string           `json:"workerGroup"`
 	Allocate          map[string][]string           `json:"allocate"`
 	AliveContainers   []string                      `json:"aliveContainers"`
@@ -576,7 +577,7 @@ func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "service must not empty"})
 		return
 	}
-	result := serviceDetail{Spec: &smAppSpec{}, ShardSpec: make(map[string]*apputil.ShardSpec), WorkerGroup: make(map[string][]string), Allocate: make(map[string][]string)}
+	result := serviceDetail{Spec: &smAppSpec{}, ShardSpec: make(map[string]*storage.ShardSpec), WorkerGroup: make(map[string][]string), Allocate: make(map[string][]string)}
 
 	// 1.获取service的配置信息
 	// /sm/app/foo.bar/service/worker-test.dev/spec
@@ -630,7 +631,7 @@ func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
 		return
 	}
 	for shardId, shardSpec := range resp1 {
-		sp := &apputil.ShardSpec{}
+		sp := &storage.ShardSpec{}
 		if shardSpec == "" {
 			continue
 		}
