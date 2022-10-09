@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"github.com/entertainment-venue/sm/pkg/logutil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -52,12 +53,15 @@ type clientOptions struct {
 	stdout bool
 	// 默认false，分片应用明确决定对lease敏感，才开启
 	dropExpiredShard bool
+	// 持久存储的类型，默认是boltdb
+	storageType storage.StorageType
 }
 
 var defaultClientOptions = &clientOptions{
-	etcdPrefix: "/sm",
-	logPath:    "./log",
-	logConsole: false,
+	etcdPrefix:  "/sm",
+	logPath:     "./log",
+	logConsole:  false,
+	storageType: storage.Boltdb,
 }
 
 type ClientOption func(options *clientOptions)
@@ -125,6 +129,12 @@ func ClientWithDropExpiredShard(v bool) ClientOption {
 func ClientWithStdout(v bool) ClientOption {
 	return func(o *clientOptions) {
 		o.stdout = v
+	}
+}
+
+func WithStorageType(v storage.StorageType) ClientOption {
+	return func(co *clientOptions) {
+		co.storageType = v
 	}
 }
 
@@ -226,7 +236,8 @@ func (c *Client) newServer() error {
 		apputil.WithLogger(c.lg),
 		apputil.WithShardImplementation(c.opts.v),
 		apputil.WithShardDir(c.opts.shardDir),
-		apputil.WithDropExpiredShard(c.opts.dropExpiredShard))
+		apputil.WithDropExpiredShard(c.opts.dropExpiredShard),
+		apputil.WithStorageType(c.opts.storageType))
 
 	if err != nil {
 		return errors.Wrap(err, "new container failed")
