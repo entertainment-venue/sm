@@ -95,10 +95,10 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 
 	var err error
 	switch c.opts.storageType {
-	case storage.Etcd:
-		sk.storage, err = storage.NewEtcddb(sk.service, sk.containerId, sk.client, sk.lg)
-	default:
+	case storage.Boltdb:
 		sk.storage, err = storage.NewBoltdb(c.opts.shardDir, sk.service, sk.lg)
+	default:
+		sk.storage, err = storage.NewEtcddb(sk.service, sk.containerId, sk.client, sk.lg)
 	}
 	if err != nil {
 		return nil, err
