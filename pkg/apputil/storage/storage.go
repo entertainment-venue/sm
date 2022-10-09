@@ -110,19 +110,21 @@ func (dv *ShardKeeperDbValue) String() string {
 	return string(b)
 }
 
-func (dv *ShardKeeperDbValue) SoftMigrate(from, to clientv3.LeaseID) {
+func (dv *ShardKeeperDbValue) SoftMigrate(from, to clientv3.LeaseID) bool {
 	// 不需要做移动，逻辑幂等的一部分
 	if dv.Spec.Lease.ID == to {
-		return
+		return false
 	}
 
 	if dv.Spec.Lease.ID == from {
 		dv.Spec.Lease = &Lease{ID: to, Expire: math.MaxInt64 - 30}
+		return true
 	} else {
 		// 异步删除，下发drop指令到app，通过sync goroutine
 		dv.Disp = false
 		dv.Drop = true
 	}
+	return false
 }
 
 func (dv *ShardKeeperDbValue) NeedDrop(exclude bool, leaseID clientv3.LeaseID) bool {

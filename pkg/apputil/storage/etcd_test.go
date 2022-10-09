@@ -74,6 +74,10 @@ func (suite *EtcdTestSuite) TestMigrateLease() {
 	}
 
 	// ok
+	shardPath := etcdutil.ShardPath(suite.db.service, suite.db.containerId, mock.Anything)
+	mockedEtcdWrapper := new(etcdutil.MockedEtcdWrapper)
+	mockedEtcdWrapper.On("UpdateKV", mock.Anything, shardPath, mock.Anything).Return(nil)
+	suite.db.client = mockedEtcdWrapper
 	err := suite.db.MigrateLease(100, 101)
 	assert.Nil(suite.T(), err)
 	assert.Equal(suite.T(), suite.db.mu.kvs[mock.Anything].Spec.Lease.ID, clientv3.LeaseID(101))

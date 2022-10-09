@@ -146,8 +146,12 @@ func (db *etcddb) MigrateLease(from, to clientv3.LeaseID) error {
 		panic("unexpected error")
 	}
 
-	for _, dv := range db.mu.kvs {
-		dv.SoftMigrate(from, to)
+	for shardID, dv := range db.mu.kvs {
+		if dv.SoftMigrate(from, to) {
+			if err := db.client.UpdateKV(context.TODO(), etcdutil.ShardPath(db.service, db.containerId, shardID), dv.String()); err != nil {
+				return err
+			}
+		}
 		db.lg.Info(
 			"SoftMigrate success",
 			zap.String("service", db.service),
