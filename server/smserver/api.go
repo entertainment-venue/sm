@@ -200,6 +200,7 @@ func (ss *smShardApi) GinGetSpec(c *gin.Context) {
 	for s, _ := range kvs {
 		services = append(services, s)
 	}
+	services = append(services, ss.container.Service())
 	ss.lg.Info("get all service success")
 	c.JSON(http.StatusOK, gin.H{"services": services})
 }
