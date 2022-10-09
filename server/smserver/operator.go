@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -35,7 +36,7 @@ type moveAction struct {
 	AddEndpoint  string `json:"addEndpoint"`
 
 	// Spec 存储分片具体信息
-	Spec *apputil.ShardSpec `json:"spec"`
+	Spec *storage.ShardSpec `json:"spec"`
 }
 
 func (action *moveAction) String() string {
@@ -142,7 +143,7 @@ func (o *operator) dropOrAdd(ma *moveAction) error {
 	return nil
 }
 
-func (o *operator) send(id string, spec *apputil.ShardSpec, endpoint string, action string) error {
+func (o *operator) send(id string, spec *storage.ShardSpec, endpoint string, action string) error {
 	msg := apputil.ShardMessage{Id: id, Spec: spec}
 	b, err := json.Marshal(msg)
 	if err != nil {

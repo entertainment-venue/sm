@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"github.com/gin-gonic/gin"
 )
 
@@ -33,7 +33,7 @@ type testShard struct {
 	ids  map[string]string
 }
 
-func (s *testShard) Add(id string, spec *apputil.ShardSpec) error {
+func (s *testShard) Add(id string, spec *storage.ShardSpec) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	s.ids[id] = ""
