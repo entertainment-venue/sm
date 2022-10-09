@@ -61,7 +61,7 @@ var defaultClientOptions = &clientOptions{
 	etcdPrefix:  "/sm",
 	logPath:     "./log",
 	logConsole:  false,
-	storageType: storage.Boltdb,
+	storageType: storage.Etcd,
 }
 
 type ClientOption func(options *clientOptions)
