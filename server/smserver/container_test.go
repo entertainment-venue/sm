@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -18,7 +19,7 @@ type MockedShardWrapper struct {
 	mock.Mock
 }
 
-func (m *MockedShardWrapper) NewShard(c *smContainer, spec *apputil.ShardSpec) (Shard, error) {
+func (m *MockedShardWrapper) NewShard(c *smContainer, spec *storage.ShardSpec) (Shard, error) {
 	args := m.Called(c, spec)
 	return args.Get(0).(Shard), args.Error(1)
 }
@@ -40,9 +41,9 @@ func (m *MockedShard) Close() error {
 	return args.Error(0)
 }
 
-func (m *MockedShard) Spec() *apputil.ShardSpec {
+func (m *MockedShard) Spec() *storage.ShardSpec {
 	args := m.Called()
-	return args.Get(0).(*apputil.ShardSpec)
+	return args.Get(0).(*storage.ShardSpec)
 }
 
 func (m *MockedShard) Load() string {
@@ -65,7 +66,7 @@ func (suite *ContainerTestSuite) SetupTest() {
 		shards:    make(map[string]Shard),
 	}
 	suite.container.shards["s1"] = &smShard{
-		shardSpec: &apputil.ShardSpec{Id: "s1"},
+		shardSpec: &storage.ShardSpec{Id: "s1"},
 	}
 	suite.container.SetService(mock.Anything)
 }
@@ -82,18 +83,18 @@ func (suite *ContainerTestSuite) TestAdd_closing() {
 	// errClosing test
 	var err error
 	suite.container.closing = true
-	err = suite.container.Add("s2", &apputil.ShardSpec{})
+	err = suite.container.Add("s2", &storage.ShardSpec{})
 	assert.Equal(suite.T(), err, apputil.ErrClosing)
 
 	// errExist test
 	suite.container.closing = false
-	err = suite.container.Add("s1", &apputil.ShardSpec{})
+	err = suite.container.Add("s1", &storage.ShardSpec{})
 	assert.Equal(suite.T(), err, apputil.ErrExist)
 }
 
 func (suite *ContainerTestSuite) TestAdd_create() {
 	// mock
-	fakeSpec := &apputil.ShardSpec{}
+	fakeSpec := &storage.ShardSpec{}
 	fakeShard := &smShard{shardSpec: fakeSpec}
 	mockedShardWrapper := new(MockedShardWrapper)
 	mockedShardWrapper.On("NewShard", suite.container, fakeSpec).Return(fakeShard, nil)
@@ -109,9 +110,9 @@ func (suite *ContainerTestSuite) TestAdd_create() {
 }
 
 func (suite *ContainerTestSuite) TestAdd_update() {
-	paramSpec := &apputil.ShardSpec{}
+	paramSpec := &storage.ShardSpec{}
 
-	fakeSpec := &apputil.ShardSpec{Task: "foo"}
+	fakeSpec := &storage.ShardSpec{Task: "foo"}
 
 	// mock
 	mockedShard := new(MockedShard)

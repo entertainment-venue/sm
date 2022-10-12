@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"go.uber.org/zap"
 )
 
@@ -101,7 +101,7 @@ func Test_operator_send(t *testing.T) {
 	o := operator{lg: ttLogger}
 	o.httpClient = newHttpClient()
 
-	if err := o.send("1", &apputil.ShardSpec{}, "127.0.0.1:8889", "add"); err != nil {
+	if err := o.send("1", &storage.ShardSpec{}, "127.0.0.1:8889", "add"); err != nil {
 		t.Errorf("err: %+v", err)
 		t.SkipNow()
 	}

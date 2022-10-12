@@ -85,6 +85,10 @@ type MockedEtcdWrapper struct {
 	mock.Mock
 }
 
+func (m *MockedEtcdWrapper) Close() error {
+	panic("implement me")
+}
+
 func (m *MockedEtcdWrapper) DelKVs(ctx context.Context, prefixes []string) error {
 	panic("implement me")
 }

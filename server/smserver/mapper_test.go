@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -50,17 +51,17 @@ func (suite *MapperStateTestSuite) TestForEach() {
 
 var (
 	fakeContainerId = mock.Anything
-	fakeShards      = []*apputil.ShardKeeperDbValue{
+	fakeShards      = []*storage.ShardKeeperDbValue{
 		{
-			Spec: &apputil.ShardSpec{
+			Spec: &storage.ShardSpec{
 				Id:    "foo",
-				Lease: &apputil.Lease{ID: 1},
+				Lease: &storage.Lease{ID: 1},
 			},
 		},
 		{
-			Spec: &apputil.ShardSpec{
+			Spec: &storage.ShardSpec{
 				Id:    "bar",
-				Lease: &apputil.Lease{ID: 1},
+				Lease: &storage.Lease{ID: 1},
 			},
 		},
 	}
@@ -283,7 +284,7 @@ func (suite *MapperTestSuite) TestRefresh_reduceShardsProblem() {
 		Heartbeat: apputil.Heartbeat{
 			Timestamp: time.Now().Unix() + 1,
 		},
-		Shards: []*apputil.ShardKeeperDbValue{{Spec: &apputil.ShardSpec{Id: "foo", Lease: &apputil.Lease{}}}},
+		Shards: []*storage.ShardKeeperDbValue{{Spec: &storage.ShardSpec{Id: "foo", Lease: &storage.Lease{}}}},
 	}
 
 	event := clientv3.Event{
