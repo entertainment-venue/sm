@@ -352,11 +352,10 @@ func (c *smContainer) campaign(ctx context.Context) {
 
 		// block until出现需要放弃leader职权的事件
 		c.lg.Info("leader completed op", zap.String("service", c.Service()))
-		select {
-		case <-ctx.Done():
-			c.lg.Info("leader exit", zap.String("service", c.Service()))
-			c.leaderShard = nil
-			return
-		}
+
+		<-ctx.Done()
+		c.lg.Info("leader exit", zap.String("service", c.Service()))
+		c.leaderShard = nil
+		return
 	}
 }

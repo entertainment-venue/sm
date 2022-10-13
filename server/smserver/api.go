@@ -197,8 +197,8 @@ func (ss *smShardApi) GinGetSpec(c *gin.Context) {
 		return
 	}
 	var services []string
-	for s, _ := range kvs {
-		services = append(services, s)
+	for k := range kvs {
+		services = append(services, k)
 	}
 	services = append(services, ss.container.Service())
 	ss.lg.Info("get all service success")
@@ -390,8 +390,8 @@ func (ss *smShardApi) GinGetShard(c *gin.Context) {
 		return
 	}
 	var shards []string
-	for s, _ := range kvs {
-		shards = append(shards, s)
+	for k := range kvs {
+		shards = append(shards, k)
 	}
 	ss.lg.Info(
 		"get shards success",
@@ -541,11 +541,7 @@ func (ss *smShardApi) GinGetWorker(c *gin.Context) {
 	for _, kv := range resp.Kvs {
 		// /sm/app/foo.bar/service/foo.bar/workerpool/g1/127.0.0.1:8801
 		wGroup, container := ss.container.nodeManager.parseWorkerGroupAndContainer(string(kv.Key))
-		if _, ok := result[wGroup]; ok {
-			result[wGroup] = append(result[wGroup], container)
-		} else {
-			result[wGroup] = []string{container}
-		}
+		result[wGroup] = append(result[wGroup], container)
 	}
 	ss.lg.Info(
 		"get worker success",
@@ -664,11 +660,7 @@ func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
 	}
 	for _, kv := range resp2.Kvs {
 		wGroup, container := ss.container.nodeManager.parseWorkerGroupAndContainer(string(kv.Key))
-		if _, ok := result.WorkerGroup[wGroup]; ok {
-			result.WorkerGroup[wGroup] = append(result.WorkerGroup[wGroup], container)
-		} else {
-			result.WorkerGroup[wGroup] = []string{container}
-		}
+		result.WorkerGroup[wGroup] = append(result.WorkerGroup[wGroup], container)
 	}
 
 	// 4.获取container上的shard分配信息
@@ -706,18 +698,14 @@ func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
 		if info.Shards != nil {
 			for _, shard := range info.Shards {
 				if shard.Disp {
-					if _, ok := result.Allocate[container]; ok {
-						result.Allocate[container] = append(result.Allocate[container], shard.Spec.Id)
-					} else {
-						result.Allocate[container] = []string{shard.Spec.Id}
-					}
+					result.Allocate[container] = append(result.Allocate[container], shard.Spec.Id)
 					allocateShard[shard.Spec.Id] = ""
 				}
 			}
 		}
 	}
 	// 判断哪些shards是没有被分配的
-	for shard, _ := range result.ShardSpec {
+	for shard := range result.ShardSpec {
 		if _, ok := allocateShard[shard]; !ok {
 			result.NotAllocateShards = append(result.NotAllocateShards, shard)
 		}

@@ -46,9 +46,7 @@ const (
 )
 
 // smShardWrapper 实现 ShardWrapper，4 unit test
-type smShardWrapper struct {
-	ss *smShard
-}
+type smShardWrapper struct{}
 
 func (s *smShardWrapper) NewShard(c *smContainer, spec *storage.ShardSpec) (Shard, error) {
 	return newSMShard(c, spec)
