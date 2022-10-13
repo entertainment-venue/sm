@@ -38,11 +38,13 @@ func (m *MockedEtcdWrapper) UpdateKV(ctx context.Context, key string, value stri
 }
 
 func (m *MockedEtcdWrapper) DelKV(ctx context.Context, prefix string) error {
-	panic("implement me")
+	args := m.Called(ctx, prefix)
+	return args.Error(0)
 }
 
 func (m *MockedEtcdWrapper) DelKVs(ctx context.Context, prefixes []string) error {
-	panic("implement me")
+	args := m.Called(ctx, prefixes)
+	return args.Error(0)
 }
 
 func (m *MockedEtcdWrapper) CreateAndGet(ctx context.Context, nodes []string, values []string, leaseID clientv3.LeaseID) error {
@@ -50,12 +52,14 @@ func (m *MockedEtcdWrapper) CreateAndGet(ctx context.Context, nodes []string, va
 	return args.Error(0)
 }
 
-func (m *MockedEtcdWrapper) CompareAndSwap(_ context.Context, node string, curValue string, newValue string, leaseID clientv3.LeaseID) (string, error) {
-	panic("implement me")
+func (m *MockedEtcdWrapper) CompareAndSwap(ctx context.Context, node string, curValue string, newValue string, leaseID clientv3.LeaseID) (string, error) {
+	args := m.Called(ctx, node, curValue, newValue, leaseID)
+	return args.String(0), args.Error(1)
 }
 
-func (m *MockedEtcdWrapper) Inc(_ context.Context, pfx string) (string, error) {
-	panic("implement me")
+func (m *MockedEtcdWrapper) Inc(ctx context.Context, pfx string) (string, error) {
+	args := m.Called(ctx, pfx)
+	return args.String(0), args.Error(1)
 }
 
 func (m *MockedEtcdWrapper) NewSession(ctx context.Context, client *clientv3.Client, opts ...concurrency.SessionOption) (*concurrency.Session, error) {
@@ -67,7 +71,8 @@ func (m *MockedEtcdWrapper) Ctx() context.Context {
 }
 
 func (m *MockedEtcdWrapper) Get(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error) {
-	panic("implement me")
+	args := m.Called(ctx, key, opts)
+	return args.Get(0).(*clientv3.GetResponse), args.Error(1)
 }
 
 func (m *MockedEtcdWrapper) Put(ctx context.Context, key, val string, opts ...clientv3.OpOption) (*clientv3.PutResponse, error) {
@@ -76,7 +81,8 @@ func (m *MockedEtcdWrapper) Put(ctx context.Context, key, val string, opts ...cl
 }
 
 func (m *MockedEtcdWrapper) Delete(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.DeleteResponse, error) {
-	panic("implement me")
+	args := m.Called(ctx, key, opts)
+	return args.Get(0).(*clientv3.DeleteResponse), args.Error(1)
 }
 
 func (m *MockedEtcdWrapper) Watch(ctx context.Context, key string, opts ...clientv3.OpOption) clientv3.WatchChan {
