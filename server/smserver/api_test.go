@@ -2,7 +2,6 @@ package smserver
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +15,6 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -77,83 +75,6 @@ func (suite *ApiTestSuite) TestGinAddSpec_sameService() {
 	assert.Equal(suite.T(), w.Code, http.StatusBadRequest)
 }
 
-var (
-	_ etcdutil.EtcdWrapper = new(MockedEtcdWrapper)
-)
-
-type MockedEtcdWrapper struct {
-	mock.Mock
-}
-
-func (m *MockedEtcdWrapper) Close() error {
-	panic("implement me")
-}
-
-func (m *MockedEtcdWrapper) DelKVs(ctx context.Context, prefixes []string) error {
-	panic("implement me")
-}
-
-func (m *MockedEtcdWrapper) NewSession(ctx context.Context, client *clientv3.Client, opts ...concurrency.SessionOption) (*concurrency.Session, error) {
-	panic("implement me")
-}
-
-func (m *MockedEtcdWrapper) GetClient() *etcdutil.EtcdClient {
-	panic("implement me")
-}
-
-func (m *MockedEtcdWrapper) Inc(_ context.Context, pfx string) (string, error) {
-	panic("implement me")
-}
-
-func (m *MockedEtcdWrapper) Get(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error) {
-	panic("implement me")
-}
-
-func (m *MockedEtcdWrapper) Watch(ctx context.Context, key string, opts ...clientv3.OpOption) clientv3.WatchChan {
-	panic("implement me")
-}
-
-func (m *MockedEtcdWrapper) GetKV(_ context.Context, node string, opts []clientv3.OpOption) (*clientv3.GetResponse, error) {
-	panic("implement me")
-}
-
-func (m *MockedEtcdWrapper) GetKVs(ctx context.Context, prefix string) (map[string]string, error) {
-	args := m.Called(ctx, prefix)
-	return args.Get(0).(map[string]string), args.Error(1)
-}
-
-func (m *MockedEtcdWrapper) UpdateKV(ctx context.Context, key string, value string) error {
-	args := m.Called(ctx, key, value)
-	return args.Error(0)
-}
-
-func (m *MockedEtcdWrapper) DelKV(ctx context.Context, prefix string) error {
-	args := m.Called(ctx, prefix)
-	return args.Error(0)
-}
-
-func (m *MockedEtcdWrapper) CreateAndGet(ctx context.Context, nodes []string, values []string, leaseID clientv3.LeaseID) error {
-	args := m.Called(ctx, nodes, values, leaseID)
-	return args.Error(0)
-}
-
-func (m *MockedEtcdWrapper) CompareAndSwap(_ context.Context, node string, curValue string, newValue string, leaseID clientv3.LeaseID) (string, error) {
-	panic("implement me")
-}
-
-func (m *MockedEtcdWrapper) Ctx() context.Context {
-	panic("implement me")
-}
-
-func (m *MockedEtcdWrapper) Put(ctx context.Context, key, val string, opts ...clientv3.OpOption) (*clientv3.PutResponse, error) {
-	panic("implement me")
-}
-
-func (m *MockedEtcdWrapper) Delete(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.DeleteResponse, error) {
-	args := m.Called(ctx, key, opts)
-	return args.Get(0).(*clientv3.DeleteResponse), args.Error(1)
-}
-
 func (suite *ApiTestSuite) TestGinAddSpec_success() {
 	// mock
 	var nodes []string
@@ -163,7 +84,7 @@ func (suite *ApiTestSuite) TestGinAddSpec_success() {
 	nodes = append(nodes, "/sm/app/serviceA/containerhb/")
 	nodes = append(nodes, "/sm/app/foo/service/foo/shard/serviceA")
 
-	mockedEtcdWrapper := new(MockedEtcdWrapper)
+	mockedEtcdWrapper := new(etcdutil.MockedEtcdWrapper)
 	mockedEtcdWrapper.On(
 		"CreateAndGet",
 		mock.Anything,
@@ -204,23 +125,22 @@ func (suite *ApiTestSuite) TestGinDelSpec_notFound() {
 
 func (suite *ApiTestSuite) TestGinDelSpec_success() {
 	service := "serviceA"
-	pfx := "/sm/app/foo/service/foo/shard/" + service
+	pfxList := []string{
+		"/sm/app/" + service + "/",
+		"/sm/app/foo/service/" + service + "/spec",
+		"/sm/app/foo/service/foo/shard/" + service,
+	}
 
 	// mock
-	mockedEtcdWrapper := new(MockedEtcdWrapper)
-	mockedEtcdWrapper.On("DelKV", mock.Anything, pfx).Return(nil)
+	mockedEtcdWrapper := new(etcdutil.MockedEtcdWrapper)
+	mockedEtcdWrapper.On("DelKVs", mock.Anything, pfxList).Return(nil)
 	suite.container.Client = mockedEtcdWrapper
-
-	mockedShard := new(MockedShard)
-	mockedShard.On("Close").Return(nil)
-	suite.container.shards[service] = mockedShard
 
 	req := httptest.NewRequest(http.MethodGet, "/sm/server/del-spec?service="+service, nil)
 	w := httptest.NewRecorder()
 
 	suite.testRouter.ServeHTTP(w, req)
 	mockedEtcdWrapper.AssertExpectations(suite.T())
-	mockedShard.AssertExpectations(suite.T())
 	assert.Equal(suite.T(), w.Code, http.StatusOK)
 }
 
@@ -228,7 +148,7 @@ func (suite *ApiTestSuite) TestGinGetSpec_success() {
 	pfx := "/sm/app/foo/service/foo/shard/"
 
 	// mock
-	mockedEtcdWrapper := new(MockedEtcdWrapper)
+	mockedEtcdWrapper := new(etcdutil.MockedEtcdWrapper)
 	mockedEtcdWrapper.On("GetKVs", mock.Anything, pfx).Return(
 		map[string]string{
 			"1": "2",
@@ -242,40 +162,6 @@ func (suite *ApiTestSuite) TestGinGetSpec_success() {
 
 	suite.testRouter.ServeHTTP(w, req)
 	mockedEtcdWrapper.AssertExpectations(suite.T())
-	assert.Equal(suite.T(), w.Code, http.StatusOK)
-}
-
-func (suite *ApiTestSuite) TestGinUpdateSpec_notFound() {
-	service := "serviceA"
-	spec := smAppSpec{Service: service}
-
-	req := httptest.NewRequest(http.MethodPost, "/sm/server/update-spec", bytes.NewBuffer([]byte(spec.String())))
-	w := httptest.NewRecorder()
-	suite.testRouter.ServeHTTP(w, req)
-	assert.Equal(suite.T(), w.Code, http.StatusBadRequest)
-}
-
-func (suite *ApiTestSuite) TestGinUpdateSpec_success() {
-	service := "serviceA"
-
-	pfx := "/sm/app/foo/service/serviceA/spec"
-
-	mockedEtcdWrapper := new(MockedEtcdWrapper)
-	mockedEtcdWrapper.On("UpdateKV", mock.Anything, pfx, mock.Anything).Return(nil)
-	suite.container.Client = mockedEtcdWrapper
-
-	mockedShard := new(MockedShard)
-	mockedShard.On("SetMaxShardCount", 0)
-	mockedShard.On("SetMaxRecoveryTime", 0)
-	suite.container.shards[service] = mockedShard
-
-	spec := smAppSpec{Service: service}
-	req := httptest.NewRequest(http.MethodPost, "/sm/server/update-spec", bytes.NewBuffer([]byte(spec.String())))
-	req.Header.Add("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	suite.testRouter.ServeHTTP(w, req)
-
-	mockedShard.AssertExpectations(suite.T())
 	assert.Equal(suite.T(), w.Code, http.StatusOK)
 }
 
@@ -300,11 +186,17 @@ func (suite *ApiTestSuite) TestGinAddShard_sameService() {
 
 func (suite *ApiTestSuite) TestGinAddShard_notFound() {
 	shardReq := addShardRequest{Service: "serviceA", ShardId: "shardA"}
+
+	mockedEtcdWrapper := new(etcdutil.MockedEtcdWrapper)
+	mockedEtcdWrapper.On("GetKV", mock.Anything, "/sm/app/foo/service/serviceA/spec", mock.Anything).Return(&clientv3.GetResponse{}, nil)
+	suite.container.Client = mockedEtcdWrapper
+
 	req := httptest.NewRequest(http.MethodPost, "/sm/server/add-shard", bytes.NewBuffer([]byte(shardReq.String())))
 	req.Header.Add("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	suite.testRouter.ServeHTTP(w, req)
 
+	mockedEtcdWrapper.AssertExpectations(suite.T())
 	assert.Equal(suite.T(), w.Code, http.StatusBadRequest)
 }
 
@@ -313,7 +205,8 @@ func (suite *ApiTestSuite) TestGinAddShard_success() {
 	pfx := fmt.Sprintf("/sm/app/foo/service/%s/shard/%s", shardReq.Service, shardReq.ShardId)
 	suite.container.shards[shardReq.Service] = new(smShard)
 
-	mockedEtcdWrapper := new(MockedEtcdWrapper)
+	mockedEtcdWrapper := new(etcdutil.MockedEtcdWrapper)
+	mockedEtcdWrapper.On("GetKV", mock.Anything, "/sm/app/foo/service/serviceA/spec", mock.Anything).Return(&clientv3.GetResponse{Count: 1}, nil)
 	mockedEtcdWrapper.On("CreateAndGet", mock.Anything, []string{pfx}, mock.Anything, clientv3.NoLease).Return(nil)
 	suite.container.Client = mockedEtcdWrapper
 
@@ -322,6 +215,7 @@ func (suite *ApiTestSuite) TestGinAddShard_success() {
 	w := httptest.NewRecorder()
 	suite.testRouter.ServeHTTP(w, req)
 
+	mockedEtcdWrapper.AssertExpectations(suite.T())
 	assert.Equal(suite.T(), w.Code, http.StatusOK)
 }
 
@@ -339,7 +233,7 @@ func (suite *ApiTestSuite) TestGinDelShard_notFound() {
 	shard := "shardA"
 	pfx := fmt.Sprintf("/sm/app/foo/service/%s/shard/%s", service, shard)
 
-	mockedEtcdWrapper := new(MockedEtcdWrapper)
+	mockedEtcdWrapper := new(etcdutil.MockedEtcdWrapper)
 	delResp := clientv3.DeleteResponse{Deleted: 0}
 	mockedEtcdWrapper.On("Delete", mock.Anything, pfx, mock.Anything).Return(&delResp, nil)
 	suite.container.Client = mockedEtcdWrapper
@@ -360,7 +254,7 @@ func (suite *ApiTestSuite) TestGinDelShard_success() {
 	pfx := fmt.Sprintf("/sm/app/foo/service/%s/shard/%s", service, shard)
 	suite.container.shards[service] = new(smShard)
 
-	mockedEtcdWrapper := new(MockedEtcdWrapper)
+	mockedEtcdWrapper := new(etcdutil.MockedEtcdWrapper)
 	delResp := clientv3.DeleteResponse{Deleted: 1}
 	mockedEtcdWrapper.On("Delete", mock.Anything, pfx, mock.Anything).Return(&delResp, nil)
 	suite.container.Client = mockedEtcdWrapper
@@ -386,7 +280,7 @@ func (suite *ApiTestSuite) TestGinGetShard_success() {
 	service := "serviceA"
 	pfx := fmt.Sprintf("/sm/app/foo/service/%s/shard/", service)
 
-	mockedEtcdWrapper := new(MockedEtcdWrapper)
+	mockedEtcdWrapper := new(etcdutil.MockedEtcdWrapper)
 	mockedEtcdWrapper.On("GetKVs", mock.Anything, pfx).Return(map[string]string{"1": "2"}, nil)
 	suite.container.Client = mockedEtcdWrapper
 
