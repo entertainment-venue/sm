@@ -12,6 +12,45 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+var lg *zap.Logger
+
+func init() {
+	l, err := NewLogger()
+	if err != nil {
+		fmt.Println("init logger failed")
+		return
+	}
+	lg = l
+}
+
+func Debug(msg string, filed ...zap.Field) {
+	lg.Debug(msg, filed...)
+}
+
+func Info(msg string, filed ...zap.Field) {
+	lg.Info(msg, filed...)
+}
+
+func Warn(msg string, filed ...zap.Field) {
+	lg.Warn(msg, filed...)
+}
+
+func Error(msg string, filed ...zap.Field) {
+	lg.Error(msg, filed...)
+}
+
+func DPanic(msg string, filed ...zap.Field) {
+	lg.DPanic(msg, filed...)
+}
+
+func Panic(msg string, filed ...zap.Field) {
+	lg.Panic(msg, filed...)
+}
+
+func Fatal(msg string, filed ...zap.Field) {
+	lg.Fatal(msg, filed...)
+}
+
 type logRotationConfig struct {
 	*lumberjack.Logger
 }
