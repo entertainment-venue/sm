@@ -1,6 +1,7 @@
-package apputil
+package core
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 
@@ -18,32 +19,14 @@ const (
 	defaultTestPlaceHolder = "defaultTestPlaceHolder"
 )
 
-var (
-	_ ShardInterface = new(MockedShardInterface)
-)
-
 func TestShardKeeper(t *testing.T) {
 	suite.Run(t, new(ShardKeeperTestSuite))
-}
-
-type MockedShardInterface struct {
-	mock.Mock
-}
-
-func (m *MockedShardInterface) Add(id string, spec *storage.ShardSpec) error {
-	args := m.Called(id, spec)
-	return args.Error(0)
-}
-
-func (m *MockedShardInterface) Drop(id string) error {
-	args := m.Called(id)
-	return args.Error(0)
 }
 
 type ShardKeeperTestSuite struct {
 	suite.Suite
 
-	shardKeeper  *shardKeeper
+	shardKeeper  *ShardKeeper
 	shardDbValue *storage.ShardKeeperDbValue
 }
 
@@ -52,11 +35,14 @@ func (suite *ShardKeeperTestSuite) SetupTest() {
 	service := "foo"
 	defaultLease := storage.Lease{ID: 100, Expire: 100}
 
-	suite.shardKeeper = &shardKeeper{
-		service:     service,
+	suite.shardKeeper = &ShardKeeper{
 		lg:          lg,
 		bridgeLease: storage.NoLease,
 		guardLease:  &defaultLease,
+
+		containerOpts: &ShardKeeperOptions{
+			Service: service,
+		},
 	}
 
 	suite.shardDbValue = &storage.ShardKeeperDbValue{
@@ -185,7 +171,7 @@ func (suite *ShardKeeperTestSuite) TestAcquireBridgeLease_guardLeaseError() {
 	}
 
 	mockedStorage := new(storage.MockedStorage)
-	mockedStorage.On("Drop", mock.Anything).Return(nil)
+	mockedStorage.On("Drop", mock.Anything).Return(errors.New(mock.Anything))
 	suite.shardKeeper.storage = mockedStorage
 
 	err := suite.shardKeeper.acquireBridgeLease(&ev, &sl)
@@ -296,10 +282,10 @@ func (suite *ShardKeeperTestSuite) TestAcquireGuardLease_ok() {
 	mockedEtcdWrapper := new(etcdutil.MockedEtcdWrapper)
 	mockedEtcdWrapper.On("Put",
 		mock.Anything,
-		etcdutil.LeaseSessionPath(suite.shardKeeper.service, suite.shardKeeper.containerId),
+		etcdutil.LeaseSessionPath(suite.shardKeeper.containerOpts.Service, suite.shardKeeper.containerOpts.ContainerId),
 		mock.Anything,
 		mock.Anything).Return(&clientv3.PutResponse{}, nil)
-	suite.shardKeeper.client = mockedEtcdWrapper
+	suite.shardKeeper.containerOpts.Client = mockedEtcdWrapper
 
 	err := suite.shardKeeper.acquireGuardLease(&ev, &sl)
 

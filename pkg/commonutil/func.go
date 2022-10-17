@@ -1,4 +1,4 @@
-package apputil
+package commonutil
 
 import (
 	"time"

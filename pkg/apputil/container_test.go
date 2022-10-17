@@ -6,9 +6,16 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/entertainment-venue/sm/pkg/apputil/core"
+	"go.uber.org/zap"
 )
 
-func TestContainer_NewContainer_ParamErr(t *testing.T) {
+var (
+	ttLogger, _ = zap.NewProduction()
+)
+
+func Test_Container_NewContainer_ParamErr(t *testing.T) {
 	var tests = []struct {
 		opts   []ContainerOption
 		hasErr bool
@@ -72,7 +79,7 @@ func TestContainer_NewContainer_ParamErr(t *testing.T) {
 	}
 }
 
-func TestContainer_NewContainer_CancelCtx(t *testing.T) {
+func Test_Container_NewContainer_CancelCtx(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	ops := newTestContainerOptions(ctx)
 	if _, err := NewContainer(ops...); err != nil {
@@ -90,7 +97,7 @@ func TestContainer_NewContainer_CancelCtx(t *testing.T) {
 	time.Sleep(5 * time.Second)
 }
 
-func TestContainer_Close(t *testing.T) {
+func Test_Container_Close(t *testing.T) {
 	ops := newTestContainerOptions(context.TODO())
 	container, err := NewContainer(ops...)
 	if err != nil {
@@ -117,5 +124,6 @@ func newTestContainerOptions(ctx context.Context) []ContainerOption {
 		WithService("foo.bar"),
 		WithEndpoints([]string{"127.0.0.1:8888"}),
 		WithLogger(ttLogger),
+		WithShardPrimitives(&core.ShardKeeper{}),
 	}
 }

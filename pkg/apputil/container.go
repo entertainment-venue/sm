@@ -18,13 +18,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"sync"
 	"time"
 
+	"github.com/entertainment-venue/sm/pkg/apputil/core"
+	"github.com/entertainment-venue/sm/pkg/apputil/receiver"
 	"github.com/entertainment-venue/sm/pkg/apputil/storage"
+	"github.com/entertainment-venue/sm/pkg/commonutil"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
-	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
@@ -35,17 +36,6 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	ErrClosing  = errors.New("closing")
-	ErrExist    = errors.New("exist")
-	ErrNotExist = errors.New("not exist")
-)
-
-type ShardInterface interface {
-	Add(id string, spec *storage.ShardSpec) error
-	Drop(id string) error
-}
-
 // Container 1 上报container的load信息，保证container的liveness，才能够参与shard的分配
 // 2 与sm交互，下发add和drop给到Shard
 type Container struct {
@@ -53,7 +43,7 @@ type Container struct {
 	Session *concurrency.Session
 
 	// stopper 管理heartbeat
-	stopper *GoroutineStopper
+	stopper *commonutil.GoroutineStopper
 
 	// donec 可以通知调用方
 	donec chan struct{}
@@ -62,17 +52,15 @@ type Container struct {
 	// closed 导致 Container 被关闭的事件是异步的，需要做保护
 	closed bool
 
-	// keeper 代理shard的操作，封装bolt操作进去
-	keeper *shardKeeper
+	// shardKeeper 代理shard的操作，封装bolt操作进去
+	shardKeeper *core.ShardKeeper
 
 	// opts 存储初始化传入的数据
 	opts *containerOptions
-
-	// srv 可选http server
-	srv *http.Server
 }
 
 type containerOptions struct {
+	addr      string
 	endpoints []string
 
 	// 数据传递
@@ -80,9 +68,7 @@ type containerOptions struct {
 	service string
 	lg      *zap.Logger
 
-	routeAndHandler map[string]func(c *gin.Context)
-	addr            string
-	impl            ShardInterface
+	appShardImpl core.ShardPrimitives
 
 	// etcdPrefix 作为sharded application的数据存储prefix，能通过acl做限制
 	// TODO 配合 etcdPrefix 需要有用户名和密码的字段
@@ -98,6 +84,9 @@ type containerOptions struct {
 
 	// storageType 持久存储的类型，默认是boltdb
 	storageType storage.StorageType
+
+	// receiver 允许业务方设置，不传递，可以通过opts选择默认的http receiver
+	receiver receiver.Receiver
 }
 
 type ContainerOption func(options *containerOptions)
@@ -126,15 +115,9 @@ func WithLogger(lg *zap.Logger) ContainerOption {
 	}
 }
 
-func WithShardImplementation(v ShardInterface) ContainerOption {
+func WithShardPrimitives(v core.ShardPrimitives) ContainerOption {
 	return func(co *containerOptions) {
-		co.impl = v
-	}
-}
-
-func WithApiHandler(v map[string]func(c *gin.Context)) ContainerOption {
-	return func(co *containerOptions) {
-		co.routeAndHandler = v
+		co.appShardImpl = v
 	}
 }
 
@@ -192,7 +175,7 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	if ops.lg == nil {
 		return nil, errors.New("lg err")
 	}
-	if ops.impl == nil {
+	if ops.appShardImpl == nil {
 		return nil, errors.New("impl err")
 	}
 
@@ -225,19 +208,57 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 		Session: session,
 		opts:    ops,
 
-		stopper: &GoroutineStopper{},
+		stopper: &commonutil.GoroutineStopper{},
 		donec:   make(chan struct{}),
+	}
+
+	// 提供默认的receiver
+	if ops.receiver == nil {
+		if ops.addr == "" {
+			err := errors.Errorf("Empty addr")
+			ops.lg.Error(
+				"Param err",
+				zap.String("id", ops.id),
+				zap.String("service", ops.service),
+				zap.Error(err),
+			)
+			return nil, errors.Wrap(err, "")
+		} else {
+			// TODO opts中的receiver在Close时用到
+			c.opts.receiver = receiver.NewHttpServer(ops.lg, ops.addr, ops.id)
+		}
 	}
 	return &c, nil
 }
 
 func (ctr *Container) Run() error {
 	// keeper: 向调用方下发shard move指令，提供本地持久存储能力
-	keeper, err := newShardKeeper(ctr.opts.lg, ctr)
+	var (
+		st  storage.Storage
+		err error
+	)
+	switch ctr.opts.storageType {
+	case storage.Boltdb:
+		st, err = storage.NewBoltdb(ctr.opts.shardDir, ctr.opts.service, ctr.opts.lg)
+	default:
+		st, err = storage.NewEtcddb(ctr.opts.service, ctr.opts.id, ctr.Client, ctr.opts.lg)
+	}
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
-	ctr.keeper = keeper
+
+	skOpts := core.ShardKeeperOptions{
+		Service:          ctr.opts.service,
+		ContainerId:      ctr.opts.id,
+		DropExpiredShard: ctr.opts.dropExpiredShard,
+		Client:           ctr.Client,
+		ShardDir:         ctr.opts.shardDir,
+		AppShardImpl:     ctr.opts.appShardImpl,
+	}
+	ctr.shardKeeper, err = core.NewShardKeeper(ctr.opts.lg, &skOpts, st)
+	if err != nil {
+		return errors.Wrap(err, "")
+	}
 
 	// 上报container初始shard状态，初始化同步做一次，
 	// shard带有lease属性，lease的状态分几种：
@@ -255,12 +276,12 @@ func (ctr *Container) Run() error {
 	}
 
 	// 在server知晓本地shard属性的前提下，开启处理本地shard的goroutine
-	ctr.keeper.WatchLease()
+	ctr.shardKeeper.WatchLease()
 
 	// 通过heartbeat上报数据
 	ctr.stopper.Wrap(
 		func(ctx context.Context) {
-			TickerLoop(ctx, ctr.opts.lg, 3*time.Second, "container stop upload load", ctr.heartbeat)
+			commonutil.TickerLoop(ctx, ctr.opts.lg, 3*time.Second, "container stop upload load", ctr.heartbeat)
 		},
 	)
 
@@ -285,44 +306,15 @@ func (ctr *Container) Run() error {
 		}
 	}()
 
-	// 有addr,启动webserver，相当于app自己选择被集成，例如sm自己
-	if ctr.opts.addr != "" {
-		router := gin.Default()
-		if ctr.opts.routeAndHandler != nil {
-			for route, handler := range ctr.opts.routeAndHandler {
-				router.Any(route, handler)
-			}
-		}
-
-		ssg := router.Group("/sm/admin")
-		{
-			ssg.POST("/add-shard", ctr.AddShard)
-			ssg.POST("/drop-shard", ctr.DropShard)
-		}
-
-		// https://learnku.com/docs/gin-gonic/2019/examples-graceful-restart-or-stop/6173
-		srv := &http.Server{
-			Addr:    ctr.opts.addr,
-			Handler: router,
-		}
-		ctr.srv = srv
-
-		// FIXME 这个goroutine在退出时，没有回收当前资源，后续，会改造把gin从sm剔除掉
-		go func() {
-			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				ctr.opts.lg.Panic(
-					"failed to listen",
-					zap.Error(err),
-					zap.String("addr", ctr.opts.addr),
-				)
-				return
-			}
-			ctr.opts.lg.Info(
-				"ListenAndServe exit",
-				zap.String("addr", ctr.opts.addr),
-				zap.String("service", ctr.Service()),
-			)
-		}()
+	ctr.opts.receiver.SetShardPrimitives(ctr.shardKeeper)
+	if err := ctr.opts.receiver.Start(); err != nil {
+		ctr.opts.lg.Error(
+			"Start receiver err",
+			zap.String("id", ctr.Id()),
+			zap.String("service", ctr.Service()),
+			zap.Error(err),
+		)
+		return errors.Wrap(err, "")
 	}
 	return nil
 }
@@ -344,8 +336,8 @@ func (ctr *Container) close() {
 	}
 
 	// 先干掉srv，停止接受协议请求
-	if ctr.srv != nil {
-		if err := ctr.srv.Shutdown(context.TODO()); err != nil {
+	if ctr.opts.receiver != nil {
+		if err := ctr.opts.receiver.Shutdown(); err != nil {
 			ctr.opts.lg.Error(
 				"Shutdown error",
 				zap.Error(err),
@@ -362,20 +354,20 @@ func (ctr *Container) close() {
 	// 保证shard回收的手段，允许调用方启动for不断尝试重新加入存活container中
 	// FIXME session会触发drop动作，不允许失败，但也是潜在风险，一般的sdk使用者，不了解close的机制
 	dropFn := func(shardID string, dv *storage.ShardKeeperDbValue) error {
-		err := ctr.opts.impl.Drop(shardID)
-		if err == ErrNotExist {
+		err := ctr.opts.appShardImpl.Drop(shardID)
+		if err == commonutil.ErrNotExist {
 			return nil
 		}
 		return err
 	}
-	if err := ctr.keeper.storage.ForEach(dropFn); err != nil {
+	if err := ctr.shardKeeper.Storage().ForEach(dropFn); err != nil {
 		ctr.opts.lg.Error(
 			"Drop error",
 			zap.String("service", ctr.Service()),
 			zap.Error(err),
 		)
 	}
-	ctr.keeper.Close()
+	ctr.shardKeeper.Close()
 
 	if ctr.stopper != nil {
 		ctr.stopper.Close()
@@ -468,7 +460,7 @@ func (ctr *Container) heartbeat(ctx context.Context) error {
 
 	// 本地分片信息带到hb中
 	var shards []*storage.ShardKeeperDbValue
-	if err := ctr.keeper.storage.ForEach(
+	if err := ctr.shardKeeper.Storage().ForEach(
 		func(shardID string, dv *storage.ShardKeeperDbValue) error {
 			if dv.Spec.Lease.EqualTo(storage.NoLease) {
 				return nil
@@ -503,87 +495,6 @@ func (ctr *Container) heartbeat(ctx context.Context) error {
 	return nil
 }
 
-// ShardMessage sm服务下发的分片
-type ShardMessage struct {
-	Id   string             `json:"id"`
-	Spec *storage.ShardSpec `json:"spec"`
-}
-
-func (ctr *Container) AddShard(c *gin.Context) {
-	var req ShardMessage
-	if err := c.ShouldBind(&req); err != nil {
-		ctr.opts.lg.Error("ShouldBind err", zap.Error(err))
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// shard属性校验
-	if err := req.Spec.Validate(); err != nil {
-		ctr.opts.lg.Error(
-			"Validate err",
-			zap.Reflect("req", req),
-			zap.Error(err),
-		)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// container校验
-	if req.Spec.ManualContainerId != "" && req.Spec.ManualContainerId != ctr.Id() {
-		ctr.opts.lg.Error(
-			"unexpected container for shard",
-			zap.Reflect("req", req),
-			zap.String("service", ctr.Service()),
-			zap.String("actual", ctr.Id()),
-			zap.String("expect", req.Spec.ManualContainerId),
-		)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unexpected container"})
-		return
-	}
-
-	req.Spec.Id = req.Id
-	if err := ctr.keeper.Add(req.Id, req.Spec); err != nil {
-		ctr.opts.lg.Error(
-			"Add err",
-			zap.Reflect("req", req),
-			zap.Error(err),
-		)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	ctr.opts.lg.Info(
-		"add shard success",
-		zap.Reflect("req", req),
-	)
-
-	c.JSON(http.StatusOK, gin.H{})
-}
-
-func (ctr *Container) DropShard(c *gin.Context) {
-	var req ShardMessage
-	if err := c.ShouldBind(&req); err != nil {
-		ctr.opts.lg.Error(
-			"ShouldBind err",
-			zap.Error(err),
-		)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	if err := ctr.keeper.Drop(req.Id); err != nil && err != ErrNotExist {
-		ctr.opts.lg.Error(
-			"Drop err",
-			zap.Error(err),
-			zap.String("id", req.Id),
-		)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	ctr.opts.lg.Info(
-		"drop shard success",
-		zap.Reflect("req", req),
-	)
-	c.JSON(http.StatusOK, gin.H{})
+func (ctr *Container) Receiver() receiver.Receiver {
+	return ctr.opts.receiver
 }

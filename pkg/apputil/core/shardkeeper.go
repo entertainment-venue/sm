@@ -1,4 +1,4 @@
-package apputil
+package core
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil/storage"
+	"github.com/entertainment-venue/sm/pkg/commonutil"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/pkg/errors"
 	"github.com/zd3tl/evtrigger"
@@ -16,6 +17,11 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
+
+type ShardPrimitives interface {
+	Add(id string, spec *storage.ShardSpec) error
+	Drop(id string) error
+}
 
 const (
 	// rebalanceTrigger shardKeeper.rbTrigger 使用
@@ -29,6 +35,7 @@ type Assignment struct {
 	// Drops v1版本只存放要干掉哪些，add仍旧由smserver在guard阶段下发
 	Drops []string `json:"drops"`
 }
+
 type ShardLease struct {
 	storage.Lease
 
@@ -47,15 +54,10 @@ func (sl *ShardLease) String() string {
 	return string(b)
 }
 
-// shardKeeper 参考raft中log replication节点的实现机制，记录日志到boltdb，开goroutine异步下发指令给调用方
-type shardKeeper struct {
-	lg        *zap.Logger
-	stopper   *GoroutineStopper
-	service   string
-	shardImpl ShardInterface
-	client    etcdutil.EtcdWrapper
-
-	containerId string
+// ShardKeeper 参考raft中log replication节点的实现机制，记录日志到boltdb，开goroutine异步下发指令给调用方
+type ShardKeeper struct {
+	lg      *zap.Logger
+	stopper *commonutil.GoroutineStopper
 
 	// storage 持久存储
 	storage storage.Storage
@@ -73,35 +75,28 @@ type shardKeeper struct {
 	// guardLease acquireGuardLease 赋值，当前guard lease，成功时才能赋值，直到下次rb
 	guardLease *storage.Lease
 
-	// dropExpiredShard 默认false，分片应用明确决定对lease敏感，才开启
-	dropExpiredShard bool
+	containerOpts *ShardKeeperOptions
 }
 
-func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
-	sk := shardKeeper{
-		lg:        lg,
-		stopper:   &GoroutineStopper{},
-		service:   c.Service(),
-		shardImpl: c.opts.impl,
-		client:    c.Client,
+// ShardKeeperOptions copy from containerOptions
+type ShardKeeperOptions struct {
+	Service          string
+	ContainerId      string
+	DropExpiredShard bool
+	Client           etcdutil.EtcdWrapper
+	ShardDir         string
+	AppShardImpl     ShardPrimitives
+}
 
-		containerId: c.Id(),
+func NewShardKeeper(lg *zap.Logger, opts *ShardKeeperOptions, st storage.Storage) (*ShardKeeper, error) {
+	sk := ShardKeeper{
+		lg:            lg,
+		containerOpts: opts,
+		storage:       st,
 
+		stopper:     &commonutil.GoroutineStopper{},
 		bridgeLease: storage.NoLease,
 		guardLease:  storage.NoLease,
-
-		dropExpiredShard: c.opts.dropExpiredShard,
-	}
-
-	var err error
-	switch c.opts.storageType {
-	case storage.Boltdb:
-		sk.storage, err = storage.NewBoltdb(c.opts.shardDir, sk.service, sk.lg)
-	default:
-		sk.storage, err = storage.NewEtcddb(sk.service, sk.containerId, sk.client, sk.lg)
-	}
-	if err != nil {
-		return nil, err
 	}
 
 	sk.rbTrigger, _ = evtrigger.NewTrigger(evtrigger.WithLogger(lg), evtrigger.WithWorkerSize(1))
@@ -111,14 +106,14 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 	if err := sk.storage.Reset(); err != nil {
 		sk.lg.Error(
 			"Reset error",
-			zap.String("service", sk.service),
+			zap.String("service", sk.containerOpts.Service),
 			zap.Error(err),
 		)
 		return nil, err
 	}
 
-	leasePfx := etcdutil.LeasePath(sk.service)
-	gresp, err := sk.client.Get(context.Background(), leasePfx, clientv3.WithPrefix())
+	leasePfx := etcdutil.LeasePath(sk.containerOpts.Service)
+	gresp, err := sk.containerOpts.Client.Get(context.Background(), leasePfx, clientv3.WithPrefix())
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -127,9 +122,9 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 		sk.lg.Error(
 			"guard lease not exist",
 			zap.String("leasePfx", leasePfx),
-			zap.Error(ErrNotExist),
+			zap.Error(commonutil.ErrNotExist),
 		)
-		return nil, errors.Wrap(ErrNotExist, "")
+		return nil, errors.Wrap(commonutil.ErrNotExist, "")
 	}
 	if gresp.Count == 1 {
 		// 存在历史revision被compact的场景，所以可能watch不到最后一个event，这里通过get，防止miss event
@@ -137,7 +132,7 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 		if err := json.Unmarshal(gresp.Kvs[0].Value, &lease); err != nil {
 			return nil, errors.Wrap(err, "")
 		}
-		if !sk.dropExpiredShard {
+		if !sk.containerOpts.DropExpiredShard {
 			// 默认client不开启，降低client对lease的敏感度：
 			// 1 server长时间不刷新lease
 			// 2 网络问题或etcd异常会导致lease失效
@@ -146,19 +141,19 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 
 			sk.lg.Info(
 				"ignore guard lease expire status",
-				zap.String("service", sk.service),
+				zap.String("service", sk.containerOpts.Service),
 				zap.Int64("guard-lease", int64(lease.ID)),
 			)
 		} else {
 			// 判断lease的合法性，expire后续会废弃掉，统一通过etcd做lease合法性校验
-			clientv3Lease := clientv3.NewLease(sk.client.GetClient().Client)
+			clientv3Lease := clientv3.NewLease(sk.containerOpts.Client.GetClient().Client)
 			ctx, cancel := context.WithTimeout(context.TODO(), etcdutil.DefaultRequestTimeout)
 			res, err := clientv3Lease.TimeToLive(ctx, lease.ID)
 			cancel()
 			if err != nil {
 				sk.lg.Error(
 					"guard lease fetch error",
-					zap.String("service", sk.service),
+					zap.String("service", sk.containerOpts.Service),
 					zap.Int64("guard-lease", int64(lease.ID)),
 					zap.Error(err),
 				)
@@ -166,14 +161,14 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 				if res.TTL <= 0 {
 					sk.lg.Warn(
 						"guard lease expired, shards will be dropped",
-						zap.String("service", sk.service),
+						zap.String("service", sk.containerOpts.Service),
 						zap.Int64("guard-lease", int64(lease.ID)),
 					)
 				} else {
 					sk.guardLease = &lease.Lease
 					sk.lg.Info(
 						"guard lease not expired",
-						zap.String("service", sk.service),
+						zap.String("service", sk.containerOpts.Service),
 						zap.Int64("guard-lease", int64(lease.ID)),
 					)
 				}
@@ -184,11 +179,11 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 
 	// 启动同步goroutine，对shard做move动作
 	sk.stopper.Wrap(func(ctx context.Context) {
-		SequenceTickerLoop(
+		commonutil.SequenceTickerLoop(
 			ctx,
 			sk.lg,
 			defaultSyncInterval,
-			fmt.Sprintf("sync exit %s", sk.service),
+			fmt.Sprintf("sync exit %s", sk.containerOpts.Service),
 			func(ctx context.Context) error {
 				return sk.sync()
 			},
@@ -199,14 +194,14 @@ func newShardKeeper(lg *zap.Logger, c *Container) (*shardKeeper, error) {
 }
 
 // WatchLease 监听lease节点，及时参与到rb中
-func (sk *shardKeeper) WatchLease() {
-	leasePfx := etcdutil.LeasePath(sk.service)
+func (sk *ShardKeeper) WatchLease() {
+	leasePfx := etcdutil.LeasePath(sk.containerOpts.Service)
 	sk.stopper.Wrap(
 		func(ctx context.Context) {
-			WatchLoop(
+			etcdutil.WatchLoop(
 				ctx,
 				sk.lg,
-				sk.client,
+				sk.containerOpts.Client,
 				leasePfx,
 				sk.startRev,
 				func(ctx context.Context, ev *clientv3.Event) error {
@@ -217,7 +212,7 @@ func (sk *shardKeeper) WatchLease() {
 	)
 }
 
-func (sk *shardKeeper) handleRbEvent(_ string, value interface{}) error {
+func (sk *ShardKeeper) handleRbEvent(_ string, value interface{}) error {
 	ev, ok := value.(*clientv3.Event)
 	if !ok {
 		return errors.New("type error")
@@ -240,7 +235,7 @@ func (sk *shardKeeper) handleRbEvent(_ string, value interface{}) error {
 	)
 
 	switch key {
-	case etcdutil.LeaseBridgePath(sk.service):
+	case etcdutil.LeaseBridgePath(sk.containerOpts.Service):
 		if err := sk.acquireBridgeLease(ev, lease); err != nil {
 			sk.lg.Error(
 				"acquireBridgeLease error",
@@ -250,7 +245,7 @@ func (sk *shardKeeper) handleRbEvent(_ string, value interface{}) error {
 			)
 			return nil
 		}
-	case etcdutil.LeaseGuardPath(sk.service):
+	case etcdutil.LeaseGuardPath(sk.containerOpts.Service):
 		if err := sk.acquireGuardLease(ev, lease); err != nil {
 			sk.lg.Error(
 				"acquireGuardLease error",
@@ -261,7 +256,7 @@ func (sk *shardKeeper) handleRbEvent(_ string, value interface{}) error {
 			return nil
 		}
 	default:
-		if !strings.HasPrefix(key, etcdutil.LeaseSessionDir(sk.service)) {
+		if !strings.HasPrefix(key, etcdutil.LeaseSessionDir(sk.containerOpts.Service)) {
 			return errors.Errorf("unexpected key [%s]", key)
 		}
 		return sk.handleSessionKeyEvent(ev)
@@ -269,7 +264,7 @@ func (sk *shardKeeper) handleRbEvent(_ string, value interface{}) error {
 	return nil
 }
 
-func (sk *shardKeeper) parseShardLease(ev *clientv3.Event) (*ShardLease, error) {
+func (sk *ShardKeeper) parseShardLease(ev *clientv3.Event) (*ShardLease, error) {
 	var value []byte
 	if ev.Type == mvccpb.DELETE {
 		value = ev.PrevKv.Value
@@ -283,7 +278,7 @@ func (sk *shardKeeper) parseShardLease(ev *clientv3.Event) (*ShardLease, error) 
 	return &lease, nil
 }
 
-func (sk *shardKeeper) handleSessionKeyEvent(ev *clientv3.Event) error {
+func (sk *ShardKeeper) handleSessionKeyEvent(ev *clientv3.Event) error {
 	switch ev.Type {
 	case mvccpb.PUT:
 		k := ev.Kv.Key
@@ -291,7 +286,7 @@ func (sk *shardKeeper) handleSessionKeyEvent(ev *clientv3.Event) error {
 		if ev.IsCreate() {
 			sk.lg.Info(
 				"lease session receive create event, ignore",
-				zap.String("service", sk.service),
+				zap.String("service", sk.containerOpts.Service),
 				zap.ByteString("key", k),
 				zap.ByteString("value", v),
 			)
@@ -300,7 +295,7 @@ func (sk *shardKeeper) handleSessionKeyEvent(ev *clientv3.Event) error {
 		if ev.IsModify() {
 			sk.lg.Info(
 				"lease session receive modify event, ignore",
-				zap.String("service", sk.service),
+				zap.String("service", sk.containerOpts.Service),
 				zap.ByteString("key", ev.Kv.Key),
 				zap.ByteString("value", ev.Kv.Value),
 			)
@@ -322,7 +317,7 @@ func (sk *shardKeeper) handleSessionKeyEvent(ev *clientv3.Event) error {
 	return nil
 }
 
-func (sk *shardKeeper) acquireBridgeLease(ev *clientv3.Event, lease *ShardLease) error {
+func (sk *ShardKeeper) acquireBridgeLease(ev *clientv3.Event, lease *ShardLease) error {
 	key := string(ev.Kv.Key)
 
 	// bridge不存在修改场景
@@ -363,7 +358,7 @@ func (sk *shardKeeper) acquireBridgeLease(ev *clientv3.Event, lease *ShardLease)
 	return nil
 }
 
-func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *ShardLease) error {
+func (sk *ShardKeeper) acquireGuardLease(ev *clientv3.Event, lease *ShardLease) error {
 	// guard处理创建场景，等待下一个event，smserver保证rb是由modify触发
 	if ev.IsCreate() {
 		return errors.Errorf(
@@ -419,9 +414,9 @@ func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *ShardLease) 
 	)
 
 	// 存储和lease的关联节点
-	sessionPath := etcdutil.LeaseSessionPath(sk.service, sk.containerId)
+	sessionPath := etcdutil.LeaseSessionPath(sk.containerOpts.Service, sk.containerOpts.ContainerId)
 	leaseIDStr := strconv.FormatInt(int64(sk.guardLease.ID), 10)
-	if _, err := sk.client.Put(context.TODO(), sessionPath, sk.guardLease.String(), clientv3.WithLease(sk.guardLease.ID)); err != nil {
+	if _, err := sk.containerOpts.Client.Put(context.TODO(), sessionPath, sk.guardLease.String(), clientv3.WithLease(sk.guardLease.ID)); err != nil {
 		sk.lg.Error(
 			"Put error",
 			zap.String("session-path", sessionPath),
@@ -433,12 +428,12 @@ func (sk *shardKeeper) acquireGuardLease(ev *clientv3.Event, lease *ShardLease) 
 	return nil
 }
 
-func (sk *shardKeeper) Add(id string, spec *storage.ShardSpec) error {
+func (sk *ShardKeeper) Add(id string, spec *storage.ShardSpec) error {
 	// 提前判断添加shard场景下的细节，让storage内部逻辑尽量明确
 	if !spec.Lease.EqualTo(sk.guardLease) {
 		sk.lg.Warn(
 			"shard guard lease not equal with guard lease",
-			zap.String("service", sk.service),
+			zap.String("service", sk.containerOpts.Service),
 			zap.String("shard-id", id),
 			zap.Int64("local-guard-lease", int64(sk.guardLease.ID)),
 			zap.Int64("shard-guard-lease", int64(spec.Lease.ID)),
@@ -448,27 +443,27 @@ func (sk *shardKeeper) Add(id string, spec *storage.ShardSpec) error {
 	return sk.storage.Add(spec)
 }
 
-func (sk *shardKeeper) Drop(id string) error {
+func (sk *ShardKeeper) Drop(id string) error {
 	return sk.storage.Drop([]string{id})
 }
 
 // sync 没有关注lease，boltdb中存在的就需要提交给app
-func (sk *shardKeeper) sync() error {
+func (sk *ShardKeeper) sync() error {
 	var (
 		dropShardIDs   []string
 		updateDbValues = make(map[string]*storage.ShardKeeperDbValue)
 	)
 
 	dropFn := func(dv *storage.ShardKeeperDbValue) error {
-		err := sk.shardImpl.Drop(dv.Spec.Id)
-		if err == nil || err == ErrNotExist {
+		err := sk.containerOpts.AppShardImpl.Drop(dv.Spec.Id)
+		if err == nil || err == commonutil.ErrNotExist {
 			// 清理掉shard
 			dropShardIDs = append(dropShardIDs, dv.Spec.Id)
 			return nil
 		}
 		sk.lg.Error(
 			"drop shard failed",
-			zap.String("service", sk.service),
+			zap.String("service", sk.containerOpts.Service),
 			zap.String("shardId", dv.Spec.Id),
 			zap.Error(err),
 		)
@@ -476,8 +471,8 @@ func (sk *shardKeeper) sync() error {
 	}
 
 	addFn := func(dv *storage.ShardKeeperDbValue) error {
-		err := sk.shardImpl.Add(dv.Spec.Id, dv.Spec)
-		if err == nil || err == ErrExist {
+		err := sk.containerOpts.AppShardImpl.Add(dv.Spec.Id, dv.Spec)
+		if err == nil || err == commonutil.ErrExist {
 			// 下发成功后更新boltdb
 			dv.Disp = true
 			updateDbValues[dv.Spec.Id] = dv
@@ -485,7 +480,7 @@ func (sk *shardKeeper) sync() error {
 		}
 		sk.lg.Error(
 			"add shard failed",
-			zap.String("service", sk.service),
+			zap.String("service", sk.containerOpts.Service),
 			zap.String("shardId", dv.Spec.Id),
 			zap.Error(err),
 		)
@@ -516,7 +511,7 @@ func (sk *shardKeeper) sync() error {
 		if dv.Drop {
 			sk.lg.Info(
 				"drop shard from app",
-				zap.String("service", sk.service),
+				zap.String("service", sk.containerOpts.Service),
 				zap.Reflect("shard", dv),
 			)
 			return dropFn(dv)
@@ -524,7 +519,7 @@ func (sk *shardKeeper) sync() error {
 
 		sk.lg.Info(
 			"add shard to app",
-			zap.String("service", sk.service),
+			zap.String("service", sk.containerOpts.Service),
 			zap.Reflect("shard", dv),
 		)
 		return addFn(dv)
@@ -550,7 +545,7 @@ func (sk *shardKeeper) sync() error {
 	return nil
 }
 
-func (sk *shardKeeper) Close() {
+func (sk *ShardKeeper) Close() {
 	if sk.stopper != nil {
 		sk.stopper.Close()
 	}
@@ -565,6 +560,10 @@ func (sk *shardKeeper) Close() {
 
 	sk.lg.Info(
 		"active closed",
-		zap.String("service", sk.service),
+		zap.String("service", sk.containerOpts.Service),
 	)
+}
+
+func (sk *ShardKeeper) Storage() storage.Storage {
+	return sk.storage
 }
