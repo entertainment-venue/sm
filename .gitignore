@@ -19,3 +19,4 @@ vendor/
 *.db
 .DS_Store
 server/pkg/
+.vscode/

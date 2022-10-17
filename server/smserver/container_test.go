@@ -5,6 +5,7 @@ import (
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/entertainment-venue/sm/pkg/apputil/storage"
+	"github.com/entertainment-venue/sm/pkg/commonutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -62,7 +63,7 @@ func (suite *ContainerTestSuite) SetupTest() {
 	suite.container = &smContainer{
 		lg:        lg,
 		Container: &apputil.Container{},
-		stopper:   &apputil.GoroutineStopper{},
+		stopper:   &commonutil.GoroutineStopper{},
 		shards:    make(map[string]Shard),
 	}
 	suite.container.shards["s1"] = &smShard{
@@ -84,12 +85,12 @@ func (suite *ContainerTestSuite) TestAdd_closing() {
 	var err error
 	suite.container.closing = true
 	err = suite.container.Add("s2", &storage.ShardSpec{})
-	assert.Equal(suite.T(), err, apputil.ErrClosing)
+	assert.Equal(suite.T(), err, commonutil.ErrClosing)
 
 	// errExist test
 	suite.container.closing = false
 	err = suite.container.Add("s1", &storage.ShardSpec{})
-	assert.Equal(suite.T(), err, apputil.ErrExist)
+	assert.Equal(suite.T(), err, commonutil.ErrExist)
 }
 
 func (suite *ContainerTestSuite) TestAdd_create() {
@@ -137,12 +138,12 @@ func (suite *ContainerTestSuite) TestAdd_update() {
 func (suite *ContainerTestSuite) TestDrop_closing() {
 	suite.container.closing = true
 	err := suite.container.Drop("s1")
-	assert.Equal(suite.T(), err, apputil.ErrClosing)
+	assert.Equal(suite.T(), err, commonutil.ErrClosing)
 }
 
 func (suite *ContainerTestSuite) TestDrop_notExist() {
 	err := suite.container.Drop(mock.Anything)
-	assert.Equal(suite.T(), err, apputil.ErrNotExist)
+	assert.Equal(suite.T(), err, commonutil.ErrNotExist)
 }
 
 func (suite *ContainerTestSuite) TestDrop_common() {
@@ -158,5 +159,5 @@ func (suite *ContainerTestSuite) TestDrop_common() {
 func (suite *ContainerTestSuite) TestClose_closing() {
 	suite.container.closing = true
 	err := suite.container.Close()
-	assert.Equal(suite.T(), err, apputil.ErrClosing)
+	assert.Equal(suite.T(), err, commonutil.ErrClosing)
 }

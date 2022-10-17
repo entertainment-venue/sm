@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/commonutil"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -38,7 +39,7 @@ func (suite *ApiTestSuite) SetupTest() {
 	suite.container = &smContainer{
 		lg:        lg,
 		Container: &apputil.Container{},
-		stopper:   &apputil.GoroutineStopper{},
+		stopper:   &commonutil.GoroutineStopper{},
 		shards:    make(map[string]Shard),
 
 		nodeManager: &nodeManager{"foo"},

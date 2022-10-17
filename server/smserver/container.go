@@ -21,7 +21,9 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil/core"
 	"github.com/entertainment-venue/sm/pkg/apputil/storage"
+	"github.com/entertainment-venue/sm/pkg/commonutil"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -33,7 +35,7 @@ import (
 )
 
 var (
-	_ apputil.ShardInterface = new(smContainer)
+	_ core.ShardPrimitives = new(smContainer)
 )
 
 // smContainer 竞争leader，管理sm整个集群
@@ -56,7 +58,7 @@ type smContainer struct {
 	shards map[string]Shard
 
 	// stopper 管理campaign
-	stopper *apputil.GoroutineStopper
+	stopper *commonutil.GoroutineStopper
 
 	// leaderShard 保证sm运行健康的goroutine，通过task节点下发任务给op
 	leaderShard *smShard
@@ -66,9 +68,9 @@ type smContainer struct {
 }
 
 func newSMContainer(opts *serverOptions) (*smContainer, error) {
-	sCtr := smContainer{
+	smCtr := smContainer{
 		lg:           opts.lg,
-		stopper:      &apputil.GoroutineStopper{},
+		stopper:      &commonutil.GoroutineStopper{},
 		shards:       make(map[string]Shard),
 		shardWrapper: &smShardWrapper{},
 		nodeManager:  &nodeManager{smService: opts.service},
@@ -78,7 +80,7 @@ func newSMContainer(opts *serverOptions) (*smContainer, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	sCtr.Client = etcdClient
+	smCtr.Client = etcdClient
 
 	// 判断sm的spec是否存在,如果不存在，那么进行创建,可以通过接口进行参数更改
 	spec := smAppSpec{
@@ -86,12 +88,12 @@ func newSMContainer(opts *serverOptions) (*smContainer, error) {
 		CreateTime: time.Now().Unix(),
 	}
 	lease := storage.Lease{}
-	if err := sCtr.Client.CreateAndGet(
+	if err := smCtr.Client.CreateAndGet(
 		context.TODO(),
 		[]string{
-			sCtr.nodeManager.ServiceSpecPath(opts.service),
-			sCtr.nodeManager.ExternalLeaseGuardPath(opts.service),
-			sCtr.nodeManager.ExternalContainerHbDir(opts.service),
+			smCtr.nodeManager.ServiceSpecPath(opts.service),
+			smCtr.nodeManager.ExternalLeaseGuardPath(opts.service),
+			smCtr.nodeManager.ExternalContainerHbDir(opts.service),
 		},
 		[]string{
 			spec.String(),
@@ -113,18 +115,22 @@ func newSMContainer(opts *serverOptions) (*smContainer, error) {
 
 		// http server
 		apputil.WithAddr(opts.addr),
-		// 使用Container内置的http server
-		apputil.WithApiHandler(sCtr.getHttpHandlers()),
 		// api背后的具体实现
-		apputil.WithShardImplementation(&sCtr),
+		apputil.WithShardPrimitives(&smCtr),
 
 		apputil.WithStorageType(storage.Etcd),
 	)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	sCtr.Container = container
-	if err := sCtr.Run(); err != nil {
+
+	engine := container.Receiver().Extract().(*gin.Engine)
+	for router, handler := range smCtr.getHttpHandlers() {
+		engine.Any(router, handler)
+	}
+
+	smCtr.Container = container
+	if err := smCtr.Run(); err != nil {
 		if container != nil {
 			container.Close()
 		}
@@ -132,13 +138,13 @@ func newSMContainer(opts *serverOptions) (*smContainer, error) {
 	}
 
 	// 竞争leader
-	sCtr.stopper.Wrap(
+	smCtr.stopper.Wrap(
 		func(ctx context.Context) {
-			sCtr.campaign(ctx)
+			smCtr.campaign(ctx)
 		},
 	)
 
-	return &sCtr, nil
+	return &smCtr, nil
 }
 
 func (c *smContainer) getHttpHandlers() map[string]func(c *gin.Context) {
@@ -175,7 +181,7 @@ func (c *smContainer) Close() error {
 
 	// 保证只被停止一次
 	if c.closing {
-		return apputil.ErrClosing
+		return commonutil.ErrClosing
 	}
 	c.closing = true
 
@@ -219,7 +225,7 @@ func (c *smContainer) Add(id string, spec *storage.ShardSpec) error {
 		)
 		// 4 unit test 提升代码分支可测试性
 		// 异常情况不吞掉，反馈给server端，server端也不会一直重试，而是等待下次rebalance
-		return apputil.ErrClosing
+		return commonutil.ErrClosing
 	}
 
 	sd, ok := c.shards[id]
@@ -230,7 +236,7 @@ func (c *smContainer) Add(id string, spec *storage.ShardSpec) error {
 				zap.Reflect("spec", spec),
 			)
 			// 4 unit test 提升代码分支可测试性
-			return apputil.ErrExist
+			return commonutil.ErrExist
 		}
 
 		// 判断是否需要更新shard的工作内容，task有变更停掉当前shard，重新启动
@@ -266,7 +272,7 @@ func (c *smContainer) Drop(id string) error {
 			zap.String("id", id),
 			zap.String("service", c.Service()),
 		)
-		return apputil.ErrClosing
+		return commonutil.ErrClosing
 	}
 
 	sd, ok := c.shards[id]
@@ -276,7 +282,7 @@ func (c *smContainer) Drop(id string) error {
 			zap.String("id", id),
 			zap.String("service", c.Service()),
 		)
-		return apputil.ErrNotExist
+		return commonutil.ErrNotExist
 	}
 	sd.Close()
 	delete(c.shards, id)

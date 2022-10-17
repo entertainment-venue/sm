@@ -24,8 +24,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil/core"
 	"github.com/entertainment-venue/sm/pkg/apputil/storage"
+	"github.com/entertainment-venue/sm/pkg/commonutil"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -70,7 +71,7 @@ func (t *shardTask) Validate() bool {
 type smShard struct {
 	container *smContainer
 	lg        *zap.Logger
-	stopper   *apputil.GoroutineStopper
+	stopper   *commonutil.GoroutineStopper
 
 	// service 从属于leader或者sm smShard，service和container不一定一样
 	service string
@@ -93,7 +94,7 @@ type smShard struct {
 	guardLeaseID  clientv3.LeaseID
 
 	// leaseStopper 维护guard lease的keepalive
-	leaseStopper *apputil.GoroutineStopper
+	leaseStopper *commonutil.GoroutineStopper
 	closeCh      chan struct{}
 }
 
@@ -101,9 +102,9 @@ func newSMShard(container *smContainer, shardSpec *storage.ShardSpec) (*smShard,
 	ss := &smShard{
 		container:    container,
 		shardSpec:    shardSpec,
-		stopper:      &apputil.GoroutineStopper{},
+		stopper:      &commonutil.GoroutineStopper{},
 		lg:           container.lg,
-		leaseStopper: &apputil.GoroutineStopper{},
+		leaseStopper: &commonutil.GoroutineStopper{},
 		closeCh:      make(chan struct{}),
 	}
 
@@ -164,7 +165,7 @@ func newSMShard(container *smContainer, shardSpec *storage.ShardSpec) (*smShard,
 
 	ss.stopper.Wrap(
 		func(ctx context.Context) {
-			apputil.SequenceTickerLoop(
+			commonutil.SequenceTickerLoop(
 				ctx,
 				ss.lg,
 				defaultLoopInterval,
@@ -501,7 +502,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	}
 
 	// 1 先梳理出来drop的shard
-	assignment := apputil.Assignment{}
+	assignment := core.Assignment{}
 	for _, action := range shardMoves {
 		// 涉及到移动的分片，都需要公布出来，防止以下情况，
 		assignment.Drops = append(assignment.Drops, action.ShardId)
@@ -521,7 +522,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 		ss.bridgeLeaseID = clientv3.NoLease
 	}()
 	// 3 写入bridge lease节点
-	bridgeLease := apputil.ShardLease{
+	bridgeLease := core.ShardLease{
 		GuardLeaseID: ss.guardLeaseID,
 		Assignment:   &assignment,
 	}
@@ -555,7 +556,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	// The Assigner writes and distributes assignment
 	// A2, creates the bridge lease, delays for Slicelets to acquire the bridge lease for reading, and only then does it
 	// recall and rewrite the guard lease.
-	apputil.SleepCanClose(defaultGuardLeaseTimeout*time.Second, ss.closeCh)
+	commonutil.SleepCanClose(defaultGuardLeaseTimeout*time.Second, ss.closeCh)
 	ss.lg.Info(
 		"old guard expired",
 		zap.Int64("oldGuardLease", int64(ss.guardLeaseID)),
@@ -594,7 +595,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 		zap.Reflect("currentBridgeLease", bridgeLease),
 		zap.Reflect("newGuardLease", guardLease),
 	)
-	apputil.SleepCanClose(defaultGuardLeaseTimeout*time.Second, ss.closeCh)
+	commonutil.SleepCanClose(defaultGuardLeaseTimeout*time.Second, ss.closeCh)
 	ss.lg.Info(
 		"bridge expired",
 		zap.String("guardPfx", guardPfx),
@@ -648,7 +649,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	}
 
 	// 4 debug，日志排查困难
-	apputil.SleepCanClose(3*time.Second, ss.closeCh)
+	commonutil.SleepCanClose(3*time.Second, ss.closeCh)
 
 	return nil
 }
@@ -668,7 +669,7 @@ func (ss *smShard) leaseKeepAlive(leaseID clientv3.LeaseID, leaseTimeout time.Du
 	lease := clientv3.NewLease(ss.container.Client.GetClient().Client)
 	ss.leaseStopper.Wrap(
 		func(ctx context.Context) {
-			apputil.TickerLoop(
+			commonutil.TickerLoop(
 				ctx,
 				ss.lg,
 				3*time.Second,

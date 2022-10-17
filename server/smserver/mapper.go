@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/commonutil"
+	"github.com/entertainment-venue/sm/pkg/etcdutil"
 	"github.com/pkg/errors"
 	"github.com/zd3tl/evtrigger"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -52,7 +54,7 @@ type mapper struct {
 	trigger evtrigger.Trigger
 
 	// stopper 管理watch goroutine
-	stopper *apputil.GoroutineStopper
+	stopper *commonutil.GoroutineStopper
 }
 
 func newMapper(container *smContainer, appSpec *smAppSpec, shard *smShard) (*mapper, error) {
@@ -60,7 +62,7 @@ func newMapper(container *smContainer, appSpec *smAppSpec, shard *smShard) (*map
 		container: container,
 		lg:        container.lg,
 		appSpec:   appSpec,
-		stopper:   &apputil.GoroutineStopper{},
+		stopper:   &commonutil.GoroutineStopper{},
 		shard:     shard,
 
 		containerState: newMapperState(),
@@ -117,7 +119,7 @@ func (mpr *mapper) initAndWatch() error {
 
 	mpr.stopper.Wrap(
 		func(ctx context.Context) {
-			apputil.WatchLoop(
+			etcdutil.WatchLoop(
 				ctx,
 				mpr.lg,
 				mpr.container.Client,

@@ -7,6 +7,7 @@ import (
 
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/entertainment-venue/sm/pkg/apputil/storage"
+	"github.com/entertainment-venue/sm/pkg/commonutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
@@ -303,7 +304,7 @@ func (suite *MapperTestSuite) TestRefresh_reduceShardsProblem() {
 func (suite *MapperTestSuite) TestWait_containerNotFound() {
 	fakeContainerId := mock.Anything
 	err := suite.mpr.Wait(fakeContainerId)
-	assert.Equal(suite.T(), err, apputil.ErrNotExist)
+	assert.Equal(suite.T(), err, commonutil.ErrNotExist)
 }
 
 func (suite *MapperTestSuite) TestWait_triggerWait() {

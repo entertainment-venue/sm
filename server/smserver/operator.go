@@ -22,7 +22,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/entertainment-venue/sm/pkg/apputil"
+	"github.com/entertainment-venue/sm/pkg/apputil/receiver"
 	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -144,7 +144,7 @@ func (o *operator) dropOrAdd(ma *moveAction) error {
 }
 
 func (o *operator) send(id string, spec *storage.ShardSpec, endpoint string, action string) error {
-	msg := apputil.ShardMessage{Id: id, Spec: spec}
+	msg := receiver.HttpReceiverRequest{Id: id, Spec: spec}
 	b, err := json.Marshal(msg)
 	if err != nil {
 		return errors.Wrap(err, "")
