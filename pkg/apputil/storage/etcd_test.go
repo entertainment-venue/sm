@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
 )
 
 type EtcdTestSuite struct {
@@ -22,10 +21,9 @@ func TestEtcd(t *testing.T) {
 }
 
 func (suite *EtcdTestSuite) SetupTest() {
-	lg, _ := zap.NewDevelopment()
 	service := "foo"
 	containerId := "127.0.0.1:8801"
-	suite.db, _ = NewEtcddb(service, containerId, nil, lg)
+	suite.db, _ = NewEtcddb(service, containerId, nil)
 }
 
 func (suite *EtcdTestSuite) TestAdd() {

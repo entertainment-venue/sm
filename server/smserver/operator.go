@@ -24,6 +24,7 @@ import (
 
 	"github.com/entertainment-venue/sm/pkg/apputil/receiver"
 	"github.com/entertainment-venue/sm/pkg/apputil/storage"
+	"github.com/entertainment-venue/sm/pkg/logutil"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -62,17 +63,14 @@ func (l moveActionList) Swap(i, j int) {
 
 // operator 负责下发http请求
 type operator struct {
-	lg *zap.Logger
-
 	// operator 属于接入业务的service
 	service string
 
 	httpClient *http.Client
 }
 
-func newOperator(lg *zap.Logger, service string) *operator {
+func newOperator(service string) *operator {
 	return &operator{
-		lg:         lg,
 		service:    service,
 		httpClient: newHttpClient(),
 	}
@@ -80,7 +78,7 @@ func newOperator(lg *zap.Logger, service string) *operator {
 
 // move 明确参数类型，预防编程错误
 func (o *operator) move(mal moveActionList) error {
-	o.lg.Info(
+	logutil.Info(
 		"start move",
 		zap.Reflect("mal", mal),
 	)
@@ -104,7 +102,7 @@ func (o *operator) move(mal moveActionList) error {
 			})
 		}
 		if err := g.Wait(); err != nil {
-			o.lg.Error(
+			logutil.Error(
 				"Wait err",
 				zap.Error(err),
 			)
@@ -115,7 +113,7 @@ func (o *operator) move(mal moveActionList) error {
 		}
 	}
 
-	o.lg.Info(
+	logutil.Info(
 		"complete move",
 		zap.Bool("succ", succ),
 		zap.Reflect("mal", mal),
@@ -136,7 +134,7 @@ func (o *operator) dropOrAdd(ma *moveAction) error {
 		}
 	}
 
-	o.lg.Info(
+	logutil.Info(
 		"dropOrAdd success",
 		zap.Reflect("ma", ma),
 	)
@@ -153,7 +151,7 @@ func (o *operator) send(id string, spec *storage.ShardSpec, endpoint string, act
 	urlStr := fmt.Sprintf("http://%s/sm/admin/%s-shard", endpoint, action)
 	req, err := http.NewRequest(http.MethodPost, urlStr, bytes.NewBuffer(b))
 	if err != nil {
-		o.lg.Error(
+		logutil.Error(
 			"NewRequest error",
 			zap.String("urlStr", urlStr),
 			zap.Error(err),
@@ -164,7 +162,7 @@ func (o *operator) send(id string, spec *storage.ShardSpec, endpoint string, act
 
 	resp, err := o.httpClient.Do(req)
 	if err != nil {
-		o.lg.Error(
+		logutil.Error(
 			"Do error",
 			zap.String("urlStr", urlStr),
 			zap.Error(err),
@@ -175,7 +173,7 @@ func (o *operator) send(id string, spec *storage.ShardSpec, endpoint string, act
 	rb, _ := ioutil.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		o.lg.Error(
+		logutil.Error(
 			"status not 200",
 			zap.String("urlStr", urlStr),
 			zap.Int("status", resp.StatusCode),
@@ -184,7 +182,7 @@ func (o *operator) send(id string, spec *storage.ShardSpec, endpoint string, act
 		return errors.New("FAILED to send")
 	}
 
-	o.lg.Info(
+	logutil.Info(
 		"send success",
 		zap.String("urlStr", urlStr),
 		zap.Reflect("msg", msg),

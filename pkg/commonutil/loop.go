@@ -18,25 +18,31 @@ import (
 	"context"
 	"time"
 
-	"go.uber.org/zap"
+	"github.com/entertainment-venue/sm/pkg/logutil"
 )
 
-func TickerLoop(ctx context.Context, lg *zap.Logger, duration time.Duration, exitMsg string, fn func(ctx context.Context) error) {
-	tickerLoop(ctx, lg, duration, exitMsg, fn, false)
+type ErrFunc func(err error)
+
+func LogErrFunc(err error) {
+	logutil.SError("ticker loop meet error, error is %+v", err)
 }
 
-func SequenceTickerLoop(ctx context.Context, lg *zap.Logger, duration time.Duration, exitMsg string, fn func(ctx context.Context) error) {
-	tickerLoop(ctx, lg, duration, exitMsg, fn, true)
+func TickerLoop(ctx context.Context, errFn ErrFunc, duration time.Duration, fn func(ctx context.Context) error) {
+	tickerLoop(ctx, errFn, duration, fn, false)
 }
 
-func tickerLoop(ctx context.Context, lg *zap.Logger, duration time.Duration, exitMsg string, fn func(ctx context.Context) error, sequence bool) {
+func SequenceTickerLoop(ctx context.Context, errFn ErrFunc, duration time.Duration, exitMsg string, fn func(ctx context.Context) error) {
+	tickerLoop(ctx, errFn, duration, fn, true)
+}
+
+func tickerLoop(ctx context.Context, errFn ErrFunc, duration time.Duration, fn func(ctx context.Context) error, sequence bool) {
 	ticker := time.NewTicker(duration)
 	defer ticker.Stop()
 	for {
 		if sequence {
 			// 想要周期又不想要因为fn执行慢，导致多个goroutine并行执行，例如：周期检查rb
 			if err := fn(ctx); err != nil {
-				lg.Error("TickerLoop err", zap.Error(err))
+				errFn(err)
 			}
 		} else {
 			// 参考PD的lease.go修正ticker的机制
@@ -44,7 +50,7 @@ func tickerLoop(ctx context.Context, lg *zap.Logger, duration time.Duration, exi
 			// 2 利用goroutine隔离不同的fn，尽可能防止单次goroutine STW或者block，但etcd其实健康的情况，没有心跳，但也有goroutine泄漏的风险
 			go func() {
 				if err := fn(ctx); err != nil {
-					lg.Error("TickerLoop err", zap.Error(err))
+					errFn(err)
 				}
 			}()
 		}
@@ -52,9 +58,7 @@ func tickerLoop(ctx context.Context, lg *zap.Logger, duration time.Duration, exi
 		select {
 		case <-ticker.C:
 		case <-ctx.Done():
-			lg.Info(exitMsg)
 			return
 		}
 	}
 }
-

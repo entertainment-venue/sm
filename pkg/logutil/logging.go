@@ -13,6 +13,7 @@ import (
 )
 
 var lg *zap.Logger
+var sugerLg *zap.SugaredLogger
 
 func init() {
 	l, err := NewLogger()
@@ -21,6 +22,7 @@ func init() {
 		return
 	}
 	lg = l
+	sugerLg = l.Sugar()
 }
 
 func Debug(msg string, filed ...zap.Field) {
@@ -49,6 +51,38 @@ func Panic(msg string, filed ...zap.Field) {
 
 func Fatal(msg string, filed ...zap.Field) {
 	lg.Fatal(msg, filed...)
+}
+
+func Sync() {
+	lg.Sync()
+}
+
+func SDebug(tpl string, args ...interface{}) {
+	sugerLg.Debugf(tpl, args...)
+}
+
+func SInfo(tpl string, args ...interface{}) {
+	sugerLg.Infof(tpl, args...)
+}
+
+func SWarn(tpl string, args ...interface{}) {
+	sugerLg.Warnf(tpl, args...)
+}
+
+func SError(tpl string, args ...interface{}) {
+	sugerLg.Errorf(tpl, args...)
+}
+
+func SDPanic(tpl string, args ...interface{}) {
+	sugerLg.DPanicf(tpl, args...)
+}
+
+func SPanic(tpl string, args ...interface{}) {
+	sugerLg.Panicf(tpl, args...)
+}
+
+func SFatal(tpl string, args ...interface{}) {
+	sugerLg.Fatalf(tpl, args...)
 }
 
 type logRotationConfig struct {

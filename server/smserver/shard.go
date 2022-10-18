@@ -28,6 +28,7 @@ import (
 	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"github.com/entertainment-venue/sm/pkg/commonutil"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
+	"github.com/entertainment-venue/sm/pkg/logutil"
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -70,7 +71,6 @@ func (t *shardTask) Validate() bool {
 // smShard 管理某个sm app的shard
 type smShard struct {
 	container *smContainer
-	lg        *zap.Logger
 	stopper   *commonutil.GoroutineStopper
 
 	// service 从属于leader或者sm smShard，service和container不一定一样
@@ -103,7 +103,6 @@ func newSMShard(container *smContainer, shardSpec *storage.ShardSpec) (*smShard,
 		container:    container,
 		shardSpec:    shardSpec,
 		stopper:      &commonutil.GoroutineStopper{},
-		lg:           container.lg,
 		leaseStopper: &commonutil.GoroutineStopper{},
 		closeCh:      make(chan struct{}),
 	}
@@ -135,7 +134,7 @@ func newSMShard(container *smContainer, shardSpec *storage.ShardSpec) (*smShard,
 	}
 	ss.appSpec = &appSpec
 
-	ss.operator = newOperator(ss.lg, shardSpec.Service)
+	ss.operator = newOperator(shardSpec.Service)
 	// TODO 参数传递的有些冗余，需要重新梳理
 	ss.mpr, err = newMapper(container, &appSpec, ss)
 	if err != nil {
@@ -150,7 +149,7 @@ func newSMShard(container *smContainer, shardSpec *storage.ShardSpec) (*smShard,
 	}
 	if gresp.Count != 1 {
 		err := errors.New("lease node error")
-		ss.lg.Error(
+		logutil.Error(
 			"unexpected lease count in etcd",
 			zap.String("service", ss.service),
 			zap.Int64("count", gresp.Count),
@@ -167,7 +166,7 @@ func newSMShard(container *smContainer, shardSpec *storage.ShardSpec) (*smShard,
 		func(ctx context.Context) {
 			commonutil.SequenceTickerLoop(
 				ctx,
-				ss.lg,
+				ErrLog,
 				defaultLoopInterval,
 				fmt.Sprintf("balanceChecker exit, service %s ", ss.service),
 				func(ctx context.Context) error {
@@ -177,7 +176,7 @@ func newSMShard(container *smContainer, shardSpec *storage.ShardSpec) (*smShard,
 		},
 	)
 
-	ss.lg.Info("smShard started", zap.String("service", ss.service))
+	logutil.Info("smShard started", zap.String("service", ss.service))
 	return ss, nil
 }
 
@@ -204,7 +203,7 @@ func (ss *smShard) Close() error {
 	ss.stopper.Close()
 	ss.leaseStopper.Close()
 
-	ss.lg.Info(
+	logutil.Info(
 		"smShard closed",
 		zap.String("service", ss.service),
 	)
@@ -220,7 +219,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 	// rb中，没必要再次rb
 	// 当前进行的rb要根据container存活现状（方法调用时刻的一个切面）计算策略
 	if ss.balancing {
-		ss.lg.Info("balancing", zap.String("service", ss.service))
+		logutil.Info("balancing", zap.String("service", ss.service))
 		return nil
 	}
 	ss.balancing = true
@@ -235,13 +234,13 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 		return errors.Wrap(erre, "")
 	}
 	if liveResp.TTL == -1 {
-		ss.lg.Info(
+		logutil.Info(
 			"current guard lease expired, will rb to renew lease",
 			zap.String("service", ss.service),
 			zap.Int64("guardLease", int64(ss.guardLeaseID)),
 		)
 		if err := ss.rb(moveActionList{}); err != nil {
-			ss.lg.Error(
+			logutil.Error(
 				"rb to renew lease failed",
 				zap.String("service", ss.service),
 				zap.Int64("guardLease", int64(ss.guardLeaseID)),
@@ -253,7 +252,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 
 	// 获取guard lease
 	if err := ss.validateGuardLease(); err != nil {
-		ss.lg.Error(
+		logutil.Error(
 			"validateGuardLease error",
 			zap.String("service", ss.service),
 			zap.Error(err),
@@ -265,7 +264,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 	etcdHbContainerIdAndAny := ss.mpr.AliveContainers()
 	// 没有存活的container，不需要做shard移动
 	if len(etcdHbContainerIdAndAny) == 0 {
-		ss.lg.Info(
+		logutil.Info(
 			"no alive container",
 			zap.String("service", ss.service),
 		)
@@ -301,7 +300,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 		// shard手动指定的container不存活则不参与rb
 		if ssc.ManualContainerId != "" {
 			if _, ok := etcdHbContainerIdAndAny[ssc.ManualContainerId]; !ok {
-				ss.lg.Error(
+				logutil.Error(
 					"shard manualContainerId not alive",
 					zap.String("service", ss.service),
 					zap.String("shardId", id),
@@ -316,7 +315,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 			// shard手动指定的优先级高于workerGroup
 			// shard的workerGroup不存在则不参与rb
 			if _, ok := workerGroupAndContainers[ssc.WorkerGroup]; !ok {
-				ss.lg.Error(
+				logutil.Error(
 					"shard worker group no alive containers",
 					zap.String("service", ss.service),
 					zap.String("shardId", id),
@@ -392,7 +391,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 
 	if len(deleting) > 0 {
 		allShardMoves = append(allShardMoves, deleting...)
-		ss.lg.Info(
+		logutil.Info(
 			"shard deleting",
 			zap.String("service", ss.service),
 			zap.Reflect("deleting", deleting),
@@ -400,7 +399,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 	} else {
 		// shard被清理，但是发现心跳带上来的还有未清理掉的shard，通过rb drop掉
 		if len(etcdShardIdAndAny) == 0 {
-			ss.lg.Info(
+			logutil.Info(
 				"no shard configured",
 				zap.String("service", ss.service),
 			)
@@ -439,7 +438,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 		hbShardIds := bg.hbShardIdAndContainerId.KeyList()
 		// 没有存活分片，且没有分片待分配
 		if len(fixShardIds) == 0 && len(hbShardIds) == 0 {
-			ss.lg.Warn(
+			logutil.Warn(
 				"no survive shard",
 				zap.String("group", group),
 				zap.String("service", ss.service),
@@ -453,7 +452,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 			continue
 		}
 
-		ss.lg.Info(
+		logutil.Info(
 			"changed",
 			zap.String("group", group),
 			zap.String("workerGroup", wGroup),
@@ -472,7 +471,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 			continue
 		}
 		// 当survive的container为nil的时候，不能形成有效的分配，直接返回即可
-		ss.lg.Warn(
+		logutil.Warn(
 			"can not extractShardMoves",
 			zap.String("service", ss.service),
 			zap.Bool("container-changed", containerChanged),
@@ -487,7 +486,7 @@ func (ss *smShard) balanceChecker(ctx context.Context) error {
 
 	// guard lease 实现
 	if len(allShardMoves) > 0 {
-		ss.lg.Info(
+		logutil.Info(
 			"service start rb",
 			zap.String("service", ss.service),
 		)
@@ -533,7 +532,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	if err := ss.container.Client.CreateAndGet(context.TODO(), []string{bridgePfx}, []string{bridgeLease.String()}, bridgeGrantLeaseResp.ID); err != nil {
 		return err
 	}
-	ss.lg.Info(
+	logutil.Info(
 		"bridge created",
 		zap.String("service", ss.service),
 		zap.Int64("new-bridge-lease", int64(bridgeLease.ID)),
@@ -544,7 +543,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	// old guard lease不继续续约，etcd中的数据不在刷新，会导致Expire停止更新，下面的等待就能保证切换到bridge有延迟的shard被drop掉
 	ss.leaseStopper.Close()
 
-	ss.lg.Info(
+	logutil.Info(
 		"waiting old guard expired",
 		zap.Int64("oldGuardLease", int64(ss.guardLeaseID)),
 		zap.String("currentBridgePfx", bridgePfx),
@@ -557,7 +556,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	// A2, creates the bridge lease, delays for Slicelets to acquire the bridge lease for reading, and only then does it
 	// recall and rewrite the guard lease.
 	commonutil.SleepCanClose(defaultGuardLeaseTimeout*time.Second, ss.closeCh)
-	ss.lg.Info(
+	logutil.Info(
 		"old guard expired",
 		zap.Int64("oldGuardLease", int64(ss.guardLeaseID)),
 		zap.String("currentBridgePfx", bridgePfx),
@@ -589,14 +588,14 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	ss.leaseKeepAlive(ss.guardLeaseID, etcdutil.DefaultRequestTimeout)
 
 	// 7 等待bridge到guard迁移，以及bridge expired，足够网络健康状态下的所有节点的shard迁移
-	ss.lg.Info(
+	logutil.Info(
 		"waiting bridge expired",
 		zap.String("guardPfx", guardPfx),
 		zap.Reflect("currentBridgeLease", bridgeLease),
 		zap.Reflect("newGuardLease", guardLease),
 	)
 	commonutil.SleepCanClose(defaultGuardLeaseTimeout*time.Second, ss.closeCh)
-	ss.lg.Info(
+	logutil.Info(
 		"bridge expired",
 		zap.String("guardPfx", guardPfx),
 		zap.Reflect("currentBridgeLease", bridgeLease),
@@ -628,7 +627,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 		}
 
 		// shard存活，又需要移动，不太可能
-		ss.lg.Warn(
+		logutil.Warn(
 			"alive shard valid lease, but rb include this shard's add action",
 			zap.String("shardId", action.ShardId),
 			zap.Int64("curLeaseID", int64(t.leaseID)),
@@ -639,7 +638,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 	// http请求成功，boltdb中就会记录新的shard，这个shard会随着下一个heartbeat上报上来，这块http异步走，可能和下次rb冲突，case变得复杂。
 	// 并发或者同步会把延迟算到guard lease的下次续约延时中，也会影响系统稳定性。所以这块需要做lease keepalive。
 	if err := ss.dispatchMALs(addMALs); err != nil {
-		ss.lg.Error(
+		logutil.Error(
 			"dispatchMALs error",
 			zap.String("service", ss.service),
 			zap.Reflect("mal", addMALs),
@@ -658,7 +657,7 @@ func (ss *smShard) rb(shardMoves moveActionList) error {
 // proposal https://github.com/entertainment-venue/sm/wiki/%5Bproposal%5D%E4%BD%BF%E7%94%A8clientv3%E4%B8%AD%E7%9A%84lease%E7%9A%84keepalive%E6%9B%BF%E4%BB%A3guardKeepaliver%E6%9C%BA%E5%88%B6
 func (ss *smShard) leaseKeepAlive(leaseID clientv3.LeaseID, leaseTimeout time.Duration) {
 	if leaseID == clientv3.NoLease {
-		ss.lg.Info(
+		logutil.Info(
 			"leaseKeepAlive can not started, leaseID is 0",
 			zap.String("service", ss.service),
 			zap.Int64("lease-id", int64(leaseID)),
@@ -671,9 +670,8 @@ func (ss *smShard) leaseKeepAlive(leaseID clientv3.LeaseID, leaseTimeout time.Du
 		func(ctx context.Context) {
 			commonutil.TickerLoop(
 				ctx,
-				ss.lg,
+				ErrLog,
 				3*time.Second,
-				fmt.Sprintf("leaseStopper exit %s", ss.service),
 				func(ctx context.Context) error {
 					ctx1, cancel := context.WithTimeout(ctx, leaseTimeout)
 					defer cancel()
@@ -681,7 +679,7 @@ func (ss *smShard) leaseKeepAlive(leaseID clientv3.LeaseID, leaseTimeout time.Du
 					if err != nil {
 						// 如果client不开启dropExpiredShard，这个报错不会造成影响，如果开启，那么client会先drop掉shard，触发rb，然后server端
 						// 重启leaseKeepAlive
-						ss.lg.Warn(
+						logutil.Warn(
 							"failed to KeepAliveOnce",
 							zap.String("service", ss.service),
 							zap.Int64("lease-id", int64(leaseID)),
@@ -690,7 +688,7 @@ func (ss *smShard) leaseKeepAlive(leaseID clientv3.LeaseID, leaseTimeout time.Du
 						return nil
 					}
 
-					ss.lg.Info(
+					logutil.Info(
 						"leaseKeepAlive looping",
 						zap.String("service", ss.service),
 						zap.Int64("lease-id", int64(leaseID)),
@@ -702,7 +700,7 @@ func (ss *smShard) leaseKeepAlive(leaseID clientv3.LeaseID, leaseTimeout time.Du
 			)
 		},
 	)
-	ss.lg.Info(
+	logutil.Info(
 		"leaseKeepAlive started",
 		zap.String("service", ss.service),
 	)
@@ -755,7 +753,7 @@ func (ss *smShard) extractShardMoves(
 	for containerId := range containerIdAndHbShardIds {
 		_, ok := hbContainerIdAndAny[containerId]
 		if !ok {
-			ss.lg.Error(
+			logutil.Error(
 				"container in shard heartbeat do not exist in container heartbeat",
 				zap.String("containerId", containerId),
 			)
@@ -911,7 +909,7 @@ func (ss *smShard) extractShardMoves(
 		br.forEach(add)
 	}
 
-	ss.lg.Info(
+	logutil.Info(
 		"rb result",
 		zap.String("service", ss.service),
 		zap.Reflect("resultMAL", mals),
@@ -940,7 +938,7 @@ func (ss *smShard) maxHold(containerCnt, shardCnt int) int {
 
 func (ss *smShard) dispatchMALs(mal moveActionList) error {
 	if len(mal) == 0 {
-		ss.lg.Warn(
+		logutil.Warn(
 			"empty mal",
 			zap.String("service", ss.service),
 		)
@@ -957,7 +955,7 @@ func (ss *smShard) getHbWorkerGroupAndContainers(hbContainers ArmorMap) (map[str
 	pfx := ss.container.nodeManager.WorkerGroupPath(ss.service)
 	resp, err := ss.container.Client.Get(context.TODO(), pfx, clientv3.WithPrefix())
 	if err != nil {
-		ss.lg.Error(
+		logutil.Error(
 			"GetKVs error",
 			zap.String("service", ss.service),
 			zap.String("pfx", pfx),
@@ -979,4 +977,8 @@ func (ss *smShard) getHbWorkerGroupAndContainers(hbContainers ArmorMap) (map[str
 		}
 	}
 	return wgc, nil
+}
+
+func ErrLog(err error) {
+	logutil.Info("error happen %+v", zap.Error(err))
 }

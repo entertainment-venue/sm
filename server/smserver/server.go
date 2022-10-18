@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
+	"github.com/entertainment-venue/sm/pkg/logutil"
 	_ "github.com/entertainment-venue/sm/server/docs"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -42,8 +43,6 @@ type serverOptions struct {
 
 	// 监听端口: 提供管理职能，add、drop
 	addr string
-
-	lg *zap.Logger
 
 	// etcdPrefix 这个路径是etcd中开辟出来给sm使用的，etcd可能是多个组件公用
 	// TODO 要有用户名和密码限制
@@ -76,12 +75,6 @@ func WithAddr(v string) ServerOption {
 	}
 }
 
-func WithLogger(v *zap.Logger) ServerOption {
-	return func(options *serverOptions) {
-		options.lg = v
-	}
-}
-
 func WithEtcdPrefix(v string) ServerOption {
 	return func(options *serverOptions) {
 		options.etcdPrefix = v
@@ -106,9 +99,6 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 	if len(ops.endpoints) == 0 {
 		return nil, errors.New("endpoints err")
 	}
-	if ops.lg == nil {
-		return nil, errors.New("logger err")
-	}
 	etcdutil.SetPfx(ops.etcdPrefix)
 
 	srv := Server{opts: &ops, donec: make(chan struct{})}
@@ -121,7 +111,7 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 			select {
 			// 主动关闭: Close方法调用
 			case <-srv.donec:
-				ops.lg.Info(
+				logutil.Info(
 					"server active exit",
 					zap.String("service", srv.opts.service),
 				)
@@ -131,13 +121,13 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 			// 被动关闭: 观测ShardServer或者smContainer都预Session相关退出，可能因为session的关闭导致
 			case <-srv.smContainer.Done():
 				srv.close()
-				ops.lg.Info("server passive exit")
+				logutil.Info("server passive exit")
 
 				// 尝试重启
 				for {
 					select {
 					case <-srv.donec:
-						ops.lg.Info(
+						logutil.Info(
 							"server active exit when retry run server",
 							zap.String("service", ops.service),
 						)
@@ -149,7 +139,7 @@ func NewServer(fn ...ServerOption) (*Server, error) {
 					if err == nil {
 						break
 					}
-					ops.lg.Error(
+					logutil.Error(
 						"run error",
 						zap.String("service", ops.service),
 						zap.Error(err),
@@ -188,7 +178,7 @@ func (s *Server) Close() {
 }
 
 func (s *Server) close() {
-	defer s.opts.lg.Sync()
+	defer logutil.Sync()
 	s.smContainer.Close()
 }
 

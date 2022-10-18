@@ -8,15 +8,10 @@ import (
 	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
-)
-
-var (
-	ttLogger, _ = zap.NewProduction()
 )
 
 func Test_WatchLoop(t *testing.T) {
-	client, err := NewEtcdClient([]string{"127.0.0.1:2379"}, ttLogger)
+	client, err := NewEtcdClient([]string{"127.0.0.1:2379"})
 	if err != nil {
 		t.Errorf("err: %v", err)
 		t.SkipNow()
@@ -31,7 +26,6 @@ func Test_WatchLoop(t *testing.T) {
 
 	WatchLoop(
 		context.TODO(),
-		ttLogger,
 		client,
 		"foo",
 		resp.Header.GetRevision()+1,
@@ -48,7 +42,7 @@ func Test_WatchLoop_close(t *testing.T) {
 		ctx, cancel = context.WithCancel(context.Background())
 	)
 
-	client, err := NewEtcdClient([]string{"127.0.0.1:2379"}, ttLogger)
+	client, err := NewEtcdClient([]string{"127.0.0.1:2379"})
 	if err != nil {
 		t.Errorf("err: %v", err)
 		t.SkipNow()
@@ -57,7 +51,6 @@ func Test_WatchLoop_close(t *testing.T) {
 	wg.Add(1)
 	go WatchLoop(
 		ctx,
-		ttLogger,
 		client,
 		"foo",
 		0,

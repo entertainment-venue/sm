@@ -46,7 +46,6 @@ type smContainer struct {
 	// shardKeeper就开始干活下发shard，但是 smContainer 的shard实现中包含对Client的使用
 	Client etcdutil.EtcdWrapper
 
-	lg *zap.Logger
 	// nodeManager 管理 smContainer 内部的etcd节点的pfx
 	nodeManager *nodeManager
 
@@ -69,14 +68,13 @@ type smContainer struct {
 
 func newSMContainer(opts *serverOptions) (*smContainer, error) {
 	smCtr := smContainer{
-		lg:           opts.lg,
 		stopper:      &commonutil.GoroutineStopper{},
 		shards:       make(map[string]Shard),
 		shardWrapper: &smShardWrapper{},
 		nodeManager:  &nodeManager{smService: opts.service},
 	}
 
-	etcdClient, err := etcdutil.NewEtcdClient(opts.endpoints, opts.lg)
+	etcdClient, err := etcdutil.NewEtcdClient(opts.endpoints)
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
@@ -105,7 +103,6 @@ func newSMContainer(opts *serverOptions) (*smContainer, error) {
 	}
 
 	container, err := apputil.NewContainer(
-		apputil.WithLogger(opts.lg),
 		apputil.WithService(opts.service),
 
 		// etcd

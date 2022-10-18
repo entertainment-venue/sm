@@ -24,6 +24,7 @@ import (
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
+	"github.com/entertainment-venue/sm/pkg/logutil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -50,12 +51,10 @@ func (s *smAppSpec) String() string {
 
 type smShardApi struct {
 	container *smContainer
-
-	lg *zap.Logger
 }
 
 func newSMShardApi(container *smContainer) *smShardApi {
-	return &smShardApi{container: container, lg: container.lg}
+	return &smShardApi{container: container}
 }
 
 // GinAddSpec
@@ -69,17 +68,17 @@ func newSMShardApi(container *smContainer) *smShardApi {
 func (ss *smShardApi) GinAddSpec(c *gin.Context) {
 	var req smAppSpec
 	if err := c.ShouldBind(&req); err != nil {
-		ss.lg.Error("ShouldBind err", zap.Error(err))
+		logutil.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	req.CreateTime = time.Now().Unix()
-	ss.lg.Info("receive add spec request", zap.Reflect("request", req))
+	logutil.Info("receive add spec request", zap.Reflect("request", req))
 
 	// sm的service是保留service，在程序启动的时候初始化
 	if req.Service == ss.container.Service() {
 		err := errors.Errorf("Same as shard manager's service")
-		ss.lg.Error("service error", zap.Error(err))
+		logutil.Error("service error", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -114,7 +113,7 @@ func (ss *smShardApi) GinAddSpec(c *gin.Context) {
 	values = append(values, v.String())
 	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
 		if err != etcdutil.ErrEtcdNodeExist {
-			ss.lg.Error("CreateAndGet err",
+			logutil.Error("CreateAndGet err",
 				zap.Strings("nodes", nodes),
 				zap.Strings("values", values),
 				zap.Error(err),
@@ -122,13 +121,13 @@ func (ss *smShardApi) GinAddSpec(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		ss.lg.Warn("CreateAndGet node exist",
+		logutil.Warn("CreateAndGet node exist",
 			zap.Strings("nodes", nodes),
 			zap.Strings("values", values),
 			zap.Error(err),
 		)
 	}
-	ss.lg.Info("add spec success", zap.String("service", req.Service))
+	logutil.Info("add spec success", zap.String("service", req.Service))
 	c.JSON(http.StatusOK, gin.H{})
 }
 
@@ -148,7 +147,7 @@ func (ss *smShardApi) GinDelSpec(c *gin.Context) {
 	service := c.Query("service")
 	if service == "" {
 		err := errors.Errorf("param error")
-		ss.lg.Error(
+		logutil.Error(
 			"empty service",
 			zap.String("service", service),
 		)
@@ -158,7 +157,7 @@ func (ss *smShardApi) GinDelSpec(c *gin.Context) {
 	// 不允许删除sm
 	if service == ss.container.Service() {
 		err := errors.Errorf("param error")
-		ss.lg.Error(
+		logutil.Error(
 			"same as shard manager's service",
 			zap.String("service", service),
 		)
@@ -175,7 +174,7 @@ func (ss *smShardApi) GinDelSpec(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	ss.lg.Info(
+	logutil.Info(
 		"delete spec success",
 		zap.Strings("nodes", nodes),
 	)
@@ -201,7 +200,7 @@ func (ss *smShardApi) GinGetSpec(c *gin.Context) {
 		services = append(services, k)
 	}
 	services = append(services, ss.container.Service())
-	ss.lg.Info("get all service success")
+	logutil.Info("get all service success")
 	c.JSON(http.StatusOK, gin.H{"services": services})
 }
 
@@ -239,11 +238,11 @@ func (r *addShardRequest) String() string {
 func (ss *smShardApi) GinAddShard(c *gin.Context) {
 	var req addShardRequest
 	if err := c.ShouldBind(&req); err != nil {
-		ss.lg.Error("ShouldBind err", zap.Error(err))
+		logutil.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	ss.lg.Info(
+	logutil.Info(
 		"add shard request",
 		zap.Reflect("req", req),
 	)
@@ -251,7 +250,7 @@ func (ss *smShardApi) GinAddShard(c *gin.Context) {
 	// sm本身的shard是和service添加绑定的，不需要走这个接口
 	if req.Service == ss.container.Service() {
 		err := errors.Errorf("same as shard manager's service")
-		ss.lg.Error("service error", zap.Error(err))
+		logutil.Error("service error", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -259,7 +258,7 @@ func (ss *smShardApi) GinAddShard(c *gin.Context) {
 	// 检查是否存在该service
 	resp, err := ss.container.Client.GetKV(context.Background(), ss.container.nodeManager.ServiceSpecPath(req.Service), nil)
 	if err != nil {
-		ss.lg.Error("GetKV error",
+		logutil.Error("GetKV error",
 			zap.Error(err),
 			zap.String("service node", ss.container.nodeManager.ServiceSpecPath(req.Service)),
 		)
@@ -268,7 +267,7 @@ func (ss *smShardApi) GinAddShard(c *gin.Context) {
 	}
 	if resp.Count == 0 {
 		err := errors.Errorf(fmt.Sprintf("service[%s] not exist", req.Service))
-		ss.lg.Error("service error", zap.Error(err))
+		logutil.Error("service error", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -290,7 +289,7 @@ func (ss *smShardApi) GinAddShard(c *gin.Context) {
 		values = []string{spec.String()}
 	)
 	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
-		ss.lg.Error("CreateAndGet error",
+		logutil.Error("CreateAndGet error",
 			zap.Error(err),
 			zap.Strings("nodes", nodes),
 			zap.Strings("values", values),
@@ -324,17 +323,17 @@ func (r *delShardRequest) String() string {
 func (ss *smShardApi) GinDelShard(c *gin.Context) {
 	var req delShardRequest
 	if err := c.ShouldBind(&req); err != nil {
-		ss.lg.Error("ShouldBind err", zap.Error(err))
+		logutil.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	ss.lg.Info("del shard request", zap.Reflect("req", req))
+	logutil.Info("del shard request", zap.Reflect("req", req))
 
 	// 删除shard节点
 	pfx := ss.container.nodeManager.ShardPath(req.Service, req.ShardId)
 	delResp, err := ss.container.Client.Delete(context.TODO(), pfx)
 	if err != nil {
-		ss.lg.Error("Delete err",
+		logutil.Error("Delete err",
 			zap.Error(err),
 			zap.String("pfx", pfx),
 		)
@@ -342,7 +341,7 @@ func (ss *smShardApi) GinDelShard(c *gin.Context) {
 		return
 	}
 	if delResp.Deleted != 1 {
-		ss.lg.Warn("shard not exist",
+		logutil.Warn("shard not exist",
 			zap.Reflect("req", req),
 			zap.String("pfx", pfx),
 		)
@@ -350,7 +349,7 @@ func (ss *smShardApi) GinDelShard(c *gin.Context) {
 		return
 	}
 
-	ss.lg.Info(
+	logutil.Info(
 		"delete shard success",
 		zap.Reflect("req", req),
 		zap.String("pfx", pfx),
@@ -370,7 +369,7 @@ func (ss *smShardApi) GinGetShard(c *gin.Context) {
 	service := c.Query("service")
 	if service == "" {
 		err := errors.Errorf("param error")
-		ss.lg.Error(
+		logutil.Error(
 			"empty service",
 			zap.String("service", service),
 		)
@@ -381,7 +380,7 @@ func (ss *smShardApi) GinGetShard(c *gin.Context) {
 	pfx := ss.container.nodeManager.ShardDir(service)
 	kvs, err := ss.container.Client.GetKVs(context.TODO(), pfx)
 	if err != nil {
-		ss.lg.Error(
+		logutil.Error(
 			"GetKVs error",
 			zap.String("service", service),
 			zap.Error(err),
@@ -393,7 +392,7 @@ func (ss *smShardApi) GinGetShard(c *gin.Context) {
 	for k := range kvs {
 		shards = append(shards, k)
 	}
-	ss.lg.Info(
+	logutil.Info(
 		"get shards success",
 		zap.String("pfx", pfx),
 		zap.Strings("shards", shards),
@@ -423,11 +422,11 @@ type workerRequest struct {
 func (ss *smShardApi) GinAddWorker(c *gin.Context) {
 	var req workerRequest
 	if err := c.ShouldBind(&req); err != nil {
-		ss.lg.Error("ShouldBind err", zap.Error(err))
+		logutil.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	ss.lg.Info(
+	logutil.Info(
 		"add worker request",
 		zap.Reflect("req", req),
 	)
@@ -435,7 +434,7 @@ func (ss *smShardApi) GinAddWorker(c *gin.Context) {
 	// 检查是否存在该service
 	resp, err := ss.container.Client.GetKV(context.Background(), ss.container.nodeManager.ServiceSpecPath(req.Service), nil)
 	if err != nil {
-		ss.lg.Error("GetKV error",
+		logutil.Error("GetKV error",
 			zap.String("service node", ss.container.nodeManager.ServiceSpecPath(req.Service)),
 			zap.Error(err),
 		)
@@ -443,7 +442,7 @@ func (ss *smShardApi) GinAddWorker(c *gin.Context) {
 		return
 	}
 	if resp.Count == 0 {
-		ss.lg.Warn("service not exist", zap.String("service", req.Service))
+		logutil.Warn("service not exist", zap.String("service", req.Service))
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("service[%s] not exist", req.Service)})
 		return
 	}
@@ -453,7 +452,7 @@ func (ss *smShardApi) GinAddWorker(c *gin.Context) {
 		values = []string{""}
 	)
 	if err := ss.container.Client.CreateAndGet(context.Background(), nodes, values, clientv3.NoLease); err != nil {
-		ss.lg.Error("CreateAndGet error",
+		logutil.Error("CreateAndGet error",
 			zap.Strings("nodes", nodes),
 			zap.Strings("values", values),
 			zap.Error(err),
@@ -475,11 +474,11 @@ func (ss *smShardApi) GinAddWorker(c *gin.Context) {
 func (ss *smShardApi) GinDelWorker(c *gin.Context) {
 	var req workerRequest
 	if err := c.ShouldBind(&req); err != nil {
-		ss.lg.Error("ShouldBind err", zap.Error(err))
+		logutil.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	ss.lg.Info(
+	logutil.Info(
 		"del worker request",
 		zap.Reflect("req", req),
 	)
@@ -488,7 +487,7 @@ func (ss *smShardApi) GinDelWorker(c *gin.Context) {
 	pfx := ss.container.nodeManager.WorkerPath(req.Service, req.WorkerGroup, req.Worker)
 	delResp, err := ss.container.Client.Delete(context.TODO(), pfx)
 	if err != nil {
-		ss.lg.Error("Delete err",
+		logutil.Error("Delete err",
 			zap.String("pfx", pfx),
 			zap.Error(err),
 		)
@@ -496,7 +495,7 @@ func (ss *smShardApi) GinDelWorker(c *gin.Context) {
 		return
 	}
 	if delResp.Deleted != 1 {
-		ss.lg.Warn("worker not exist",
+		logutil.Warn("worker not exist",
 			zap.Reflect("req", req),
 			zap.String("pfx", pfx),
 		)
@@ -504,7 +503,7 @@ func (ss *smShardApi) GinDelWorker(c *gin.Context) {
 		return
 	}
 
-	ss.lg.Info(
+	logutil.Info(
 		"delete worker success",
 		zap.Reflect("req", req),
 		zap.String("pfx", pfx),
@@ -530,7 +529,7 @@ func (ss *smShardApi) GinGetWorker(c *gin.Context) {
 	pfx := ss.container.nodeManager.WorkerGroupPath(service)
 	resp, err := ss.container.Client.Get(context.TODO(), pfx, clientv3.WithPrefix())
 	if err != nil {
-		ss.lg.Error(
+		logutil.Error(
 			"Get error",
 			zap.String("service", service),
 			zap.Error(err),
@@ -543,7 +542,7 @@ func (ss *smShardApi) GinGetWorker(c *gin.Context) {
 		wGroup, container := ss.container.nodeManager.parseWorkerGroupAndContainer(string(kv.Key))
 		result[wGroup] = append(result[wGroup], container)
 	}
-	ss.lg.Info(
+	logutil.Info(
 		"get worker success",
 		zap.String("pfx", pfx),
 		zap.Reflect("shards", result),
@@ -582,7 +581,7 @@ func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
 	pfx := ss.container.nodeManager.ServiceSpecPath(service)
 	resp, err := ss.container.Client.GetKV(context.Background(), pfx, nil)
 	if err != nil {
-		ss.lg.Error("GetKV error",
+		logutil.Error("GetKV error",
 			zap.String("service node", pfx),
 			zap.Error(err),
 		)
@@ -590,12 +589,12 @@ func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
 		return
 	}
 	if resp.Count == 0 {
-		ss.lg.Warn("service not exist", zap.String("service", service))
+		logutil.Warn("service not exist", zap.String("service", service))
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("service[%s] not exist", service)})
 		return
 	}
 	if string(resp.Kvs[0].Value) == "" {
-		ss.lg.Error(
+		logutil.Error(
 			"service spec empty",
 			zap.String("service", service),
 			zap.String("content", string(resp.Kvs[0].Value)),
@@ -604,7 +603,7 @@ func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
 		return
 	}
 	if err := json.Unmarshal(resp.Kvs[0].Value, result.Spec); err != nil {
-		ss.lg.Error(
+		logutil.Error(
 			"json unmarshal error",
 			zap.String("service", service),
 			zap.String("content", string(resp.Kvs[0].Value)),
@@ -620,7 +619,7 @@ func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
 	pfx = ss.container.nodeManager.ShardDir(service)
 	resp1, err := ss.container.Client.GetKVs(context.Background(), pfx)
 	if err != nil {
-		ss.lg.Error("GetKVs error",
+		logutil.Error("GetKVs error",
 			zap.String("service node", pfx),
 			zap.Error(err),
 		)
@@ -633,7 +632,7 @@ func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
 			continue
 		}
 		if err := json.Unmarshal([]byte(shardSpec), sp); err != nil {
-			ss.lg.Error(
+			logutil.Error(
 				"json unmarshal error",
 				zap.String("service", service),
 				zap.String("content", shardSpec),
@@ -650,7 +649,7 @@ func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
 	pfx = ss.container.nodeManager.WorkerGroupPath(service)
 	resp2, err := ss.container.Client.Get(context.TODO(), pfx, clientv3.WithPrefix())
 	if err != nil {
-		ss.lg.Error(
+		logutil.Error(
 			"Get error",
 			zap.String("service node", pfx),
 			zap.Error(err),
@@ -669,7 +668,7 @@ func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
 	pfx = ss.container.nodeManager.ExternalContainerHbDir(service)
 	resp3, err := ss.container.Client.Get(context.TODO(), pfx, clientv3.WithPrefix())
 	if err != nil {
-		ss.lg.Error(
+		logutil.Error(
 			"Get error",
 			zap.String("service node", pfx),
 			zap.Error(err),
@@ -686,7 +685,7 @@ func (ss *smShardApi) GinServiceDetail(c *gin.Context) {
 		result.AliveContainers = append(result.AliveContainers, container)
 		info := &apputil.ContainerHeartbeat{}
 		if err := json.Unmarshal(kv.Value, &info); err != nil {
-			ss.lg.Error(
+			logutil.Error(
 				"json unmarshal error",
 				zap.String("service", service),
 				zap.String("content", string(kv.Value)),

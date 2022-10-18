@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
 )
 
 type BoltdbTestSuite struct {
@@ -25,9 +24,8 @@ func TestBoltdb(t *testing.T) {
 }
 
 func (suite *BoltdbTestSuite) SetupTest() {
-	lg, _ := zap.NewDevelopment()
 	service := "foo"
-	suite.db, _ = NewBoltdb("./", service, lg)
+	suite.db, _ = NewBoltdb("./", service)
 	suite.shardId = "bar"
 
 	spec := ShardSpec{

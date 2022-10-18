@@ -112,7 +112,6 @@ func StartSM(opts ...ServerOption) error {
 	defer lg.Sync()
 
 	srv, err := smserver.NewServer(
-		smserver.WithLogger(lg),
 		smserver.WithId(ops.appMixer.Addr()),
 		smserver.WithService(srvCfg.Service),
 		smserver.WithAddr(fmt.Sprintf(":%s", srvCfg.Port)),

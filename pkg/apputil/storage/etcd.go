@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
+	"github.com/entertainment-venue/sm/pkg/logutil"
 	"github.com/pkg/errors"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -16,7 +17,6 @@ var _ Storage = new(etcddb)
 type etcddb struct {
 	service     string
 	containerId string
-	lg          *zap.Logger
 
 	mu struct {
 		sync.Mutex
@@ -28,11 +28,10 @@ type etcddb struct {
 	client etcdutil.EtcdWrapper
 }
 
-func NewEtcddb(service string, containerId string, client etcdutil.EtcdWrapper, lg *zap.Logger) (*etcddb, error) {
+func NewEtcddb(service string, containerId string, client etcdutil.EtcdWrapper) (*etcddb, error) {
 	db := &etcddb{
 		service:     service,
 		containerId: containerId,
-		lg:          lg,
 
 		client: client,
 	}
@@ -62,7 +61,7 @@ func (db *etcddb) Add(shard *ShardSpec) error {
 		return err
 	}
 	if gresp.Count > 0 {
-		db.lg.Warn(
+		logutil.Warn(
 			"etcd already has value",
 			zap.String("service", db.service),
 			zap.String("shard-path", shardPath),
@@ -71,7 +70,7 @@ func (db *etcddb) Add(shard *ShardSpec) error {
 	}
 
 	if err := db.client.UpdateKV(context.TODO(), shardPath, value.String()); err != nil {
-		db.lg.Error(
+		logutil.Error(
 			"UpdateKV err",
 			zap.String("service", db.service),
 			zap.String("shard-path", shardPath),
@@ -79,7 +78,7 @@ func (db *etcddb) Add(shard *ShardSpec) error {
 		)
 		return err
 	}
-	db.lg.Info(
+	logutil.Info(
 		"add shard success",
 		zap.String("service", db.service),
 		zap.String("shard-path", shardPath),
@@ -95,7 +94,7 @@ func (db *etcddb) Add(shard *ShardSpec) error {
 
 func (db *etcddb) Drop(ids []string) error {
 	if len(ids) == 0 {
-		db.lg.Warn(
+		logutil.Warn(
 			"empty ids",
 			zap.String("service", db.service),
 		)
@@ -116,7 +115,7 @@ func (db *etcddb) Drop(ids []string) error {
 			dv.Disp = false
 			dv.Drop = true
 
-			db.lg.Info(
+			logutil.Info(
 				"drop shard success",
 				zap.String("shard-id", shardID),
 			)
@@ -152,7 +151,7 @@ func (db *etcddb) MigrateLease(from, to clientv3.LeaseID) error {
 				return err
 			}
 		}
-		db.lg.Info(
+		logutil.Info(
 			"SoftMigrate success",
 			zap.String("service", db.service),
 			zap.String("shard-id", dv.Spec.Id),
@@ -179,7 +178,7 @@ func (db *etcddb) DropByLease(exclude bool, leaseID clientv3.LeaseID) error {
 		if dv.NeedDrop(exclude, leaseID) {
 			dv.Disp = false
 			dv.Drop = true
-			db.lg.Info(
+			logutil.Info(
 				"DropByLease success",
 				zap.String("service", db.service),
 				zap.String("shard-id", dv.Spec.Id),
@@ -190,7 +189,7 @@ func (db *etcddb) DropByLease(exclude bool, leaseID clientv3.LeaseID) error {
 			dropCnt++
 		}
 	}
-	db.lg.Info(
+	logutil.Info(
 		"drop by lease",
 		zap.String("service", db.service),
 		zap.Int("drop-cnt", dropCnt),

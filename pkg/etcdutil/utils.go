@@ -4,12 +4,13 @@ import (
 	"context"
 	"time"
 
+	"github.com/entertainment-venue/sm/pkg/logutil"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
-func WatchLoop(ctx context.Context, lg *zap.Logger, client EtcdWrapper, key string, rev int64, fn func(ctx context.Context, ev *clientv3.Event) error) {
+func WatchLoop(ctx context.Context, client EtcdWrapper, key string, rev int64, fn func(ctx context.Context, ev *clientv3.Event) error) {
 	var (
 		startRev int64
 		opts     []clientv3.OpOption
@@ -18,7 +19,7 @@ func WatchLoop(ctx context.Context, lg *zap.Logger, client EtcdWrapper, key stri
 	startRev = rev
 
 loop:
-	lg.Info(
+	logutil.Info(
 		"WatchLoop start",
 		zap.String("key", key),
 		zap.Int64("startRev", startRev),
@@ -39,7 +40,7 @@ loop:
 		select {
 		case wr = <-wch:
 		case <-ctx.Done():
-			lg.Info(
+			logutil.Info(
 				"WatchLoop exit",
 				zap.String("key", key),
 				zap.Int64("startRev", startRev),
@@ -47,7 +48,7 @@ loop:
 			return
 		}
 		if err := wr.Err(); err != nil {
-			lg.Error(
+			logutil.Error(
 				"WatchLoop error",
 				zap.String("key", key),
 				zap.Int64("startRev", startRev),
@@ -59,14 +60,14 @@ loop:
 				// 需要重新当前key的最新revision，修正startRev
 				resp, err := client.Get(context.Background(), key, clientv3.WithPrefix())
 				if err != nil {
-					lg.Error(
+					logutil.Error(
 						"WatchLoop try to get newest revision failed",
 						zap.String("key", key),
 						zap.Int64("startRev", startRev),
 						zap.Error(err),
 					)
 				} else {
-					lg.Info(
+					logutil.Info(
 						"WatchLoop correct startRev",
 						zap.String("key", key),
 						zap.Int64("oldStartRev", startRev),
@@ -81,7 +82,7 @@ loop:
 
 		for _, ev := range wr.Events {
 			if err := fn(ctx, ev); err != nil {
-				lg.Error(
+				logutil.Error(
 					"WatchLoop error when call fn",
 					zap.String("key", key),
 					zap.Int64("startRev", startRev),
