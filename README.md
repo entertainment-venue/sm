@@ -3,6 +3,8 @@
 Inspire by
 
 * [scaling-services-with-shard-manager](https://engineering.fb.com/2020/08/24/production-engineering/scaling-services-with-shard-manager/)
+* [Shard Manager: A Generic Shard Management Framework for Geo-distributed Applications](https://research.facebook.com/publications/shard-manager-a-generic-shard-management-framework-for-geo-distributed-applications/)
+* [Slicer: Auto-Sharding for Datacenter Applications](https://research.google/pubs/pub46921/)
 * [MirrorMaker 2.0](https://cwiki.apache.org/confluence/display/KAFKA/KIP-382%3A+MirrorMaker+2.0)
 * [The Chubby lock service for loosely-coupled distributed systems](https://static.googleusercontent.com/media/research.google.com/en//archive/chubby-osdi06.pdf)
 
