@@ -56,14 +56,14 @@ for the management of keys in etcd, management meaning that:
 `Container` also define common protocol which need sharded application who want to integrate with sm:
 
 ```
-type ShardInterface interface {
+type ShardPrimitives interface {
 	Add(id string, spec *ShardSpec) error
 	Drop(id string) error
 }
 ```
 
-You can implement the `ShardInterface` and inject the implementation into the `Container`
-with `WithShardImplementation`, and also wrap common http api to interact with the sm server. The keep http path:
+You can implement the `ShardPrimitives` and inject the implementation into the `Container`
+with `WithShardPrimitives`, and also wrap common http api to interact with the sm server. The keep http path:
 
 * /sm/admin/add-shard
 * /sm/admin/drop-shard
