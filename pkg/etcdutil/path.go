@@ -1,6 +1,8 @@
 package etcdutil
 
-import "path"
+import (
+	"path"
+)
 
 var (
 	pfx string

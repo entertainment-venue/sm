@@ -78,7 +78,6 @@ func StartSM() error {
 	defer lg.Sync()
 
 	srv, err := smserver.NewServer(
-		smserver.WithLogger(lg),
 		smserver.WithId(addr),
 		smserver.WithService(srvCfg.Service),
 		smserver.WithAddr(fmt.Sprintf(":%s", srvCfg.Port)),

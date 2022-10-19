@@ -20,12 +20,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"go.uber.org/zap"
-)
-
-var (
-	ttLogger, _ = zap.NewProduction()
 )
 
 func Test_tickerLoop(t *testing.T) {
@@ -37,9 +31,8 @@ func Test_tickerLoop(t *testing.T) {
 	wg.Add(1)
 	go TickerLoop(
 		ctx,
-		ttLogger,
+		LogErrFunc,
 		time.Second,
-		"test loop exit",
 		func(ctx context.Context) error {
 			fmt.Println("test fn " + time.Now().String())
 			return nil

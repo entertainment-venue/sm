@@ -7,6 +7,7 @@ import (
 	"github.com/entertainment-venue/sm/pkg/apputil/core"
 	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"github.com/entertainment-venue/sm/pkg/commonutil"
+	"github.com/entertainment-venue/sm/pkg/logutil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -15,7 +16,6 @@ import (
 var _ Receiver = new(httpReceiver)
 
 type httpReceiver struct {
-	lg          *zap.Logger
 	addr        string
 	containerId string
 	shardKeeper core.ShardPrimitives
@@ -29,9 +29,8 @@ type HttpReceiverRequest struct {
 	Spec *storage.ShardSpec `json:"spec"`
 }
 
-func NewHttpServer(lg *zap.Logger, addr string, containerId string) *httpReceiver {
+func NewHttpServer(addr string, containerId string) *httpReceiver {
 	svr := httpReceiver{
-		lg:          lg,
 		addr:        addr,
 		containerId: containerId,
 
@@ -52,14 +51,14 @@ func (r *httpReceiver) Start() error {
 	}
 	go func() {
 		if err := r.svr.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			r.lg.Panic(
+			logutil.Panic(
 				"ListenAndServe err",
 				zap.String("addr", r.addr),
 				zap.Error(err),
 			)
 			return
 		}
-		r.lg.Info(
+		logutil.Info(
 			"ListenAndServe exit",
 			zap.String("addr", r.addr),
 		)
@@ -69,14 +68,14 @@ func (r *httpReceiver) Start() error {
 
 func (r *httpReceiver) Shutdown() error {
 	if err := r.svr.Shutdown(context.TODO()); err != nil {
-		r.lg.Error(
+		logutil.Error(
 			"Shutdown error",
 			zap.String("addr", r.addr),
 			zap.Error(err),
 		)
 		return errors.Wrap(err, "")
 	}
-	r.lg.Info(
+	logutil.Info(
 		"Shutdown success",
 		zap.String("addr", r.addr),
 	)
@@ -94,14 +93,14 @@ func (r *httpReceiver) SetShardPrimitives(sp core.ShardPrimitives) {
 func (r *httpReceiver) AddShard(c *gin.Context) {
 	var req HttpReceiverRequest
 	if err := c.ShouldBind(&req); err != nil {
-		r.lg.Error("ShouldBind err", zap.Error(err))
+		logutil.Error("ShouldBind err", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	// shard属性校验
 	if err := req.Spec.Validate(); err != nil {
-		r.lg.Error(
+		logutil.Error(
 			"Validate err",
 			zap.Reflect("req", req),
 			zap.Error(err),
@@ -112,7 +111,7 @@ func (r *httpReceiver) AddShard(c *gin.Context) {
 
 	// container校验
 	if req.Spec.ManualContainerId != "" && req.Spec.ManualContainerId != r.containerId {
-		r.lg.Error(
+		logutil.Error(
 			"ManualContainerId not match",
 			zap.Reflect("req", req),
 			zap.String("server-container-id", r.containerId),
@@ -123,7 +122,7 @@ func (r *httpReceiver) AddShard(c *gin.Context) {
 
 	req.Spec.Id = req.Id
 	if err := r.shardKeeper.Add(req.Id, req.Spec); err != nil {
-		r.lg.Error(
+		logutil.Error(
 			"shardKeeper Add err",
 			zap.Reflect("req", req),
 			zap.Error(err),
@@ -132,7 +131,7 @@ func (r *httpReceiver) AddShard(c *gin.Context) {
 		return
 	}
 
-	r.lg.Info(
+	logutil.Info(
 		"add shard success",
 		zap.Reflect("req", req),
 	)
@@ -143,7 +142,7 @@ func (r *httpReceiver) AddShard(c *gin.Context) {
 func (r *httpReceiver) DropShard(c *gin.Context) {
 	var req HttpReceiverRequest
 	if err := c.ShouldBind(&req); err != nil {
-		r.lg.Error(
+		logutil.Error(
 			"ShouldBind err",
 			zap.Error(err),
 		)
@@ -152,7 +151,7 @@ func (r *httpReceiver) DropShard(c *gin.Context) {
 	}
 
 	if err := r.shardKeeper.Drop(req.Id); err != nil && err != commonutil.ErrNotExist {
-		r.lg.Error(
+		logutil.Error(
 			"Drop err",
 			zap.Error(err),
 			zap.String("id", req.Id),
@@ -161,7 +160,7 @@ func (r *httpReceiver) DropShard(c *gin.Context) {
 		return
 	}
 
-	r.lg.Info(
+	logutil.Info(
 		"drop shard success",
 		zap.Reflect("req", req),
 	)

@@ -24,7 +24,6 @@ func Test_Container_NewContainer_ParamErr(t *testing.T) {
 			opts: []ContainerOption{
 				WithService("service"),
 				WithEndpoints([]string{"127.0.0.1:8888"}),
-				WithLogger(ttLogger),
 			},
 			hasErr: true,
 		},
@@ -32,7 +31,6 @@ func Test_Container_NewContainer_ParamErr(t *testing.T) {
 			opts: []ContainerOption{
 				WithId("id"),
 				WithEndpoints([]string{"127.0.0.1:8888"}),
-				WithLogger(ttLogger),
 			},
 			hasErr: true,
 		},
@@ -40,7 +38,6 @@ func Test_Container_NewContainer_ParamErr(t *testing.T) {
 			opts: []ContainerOption{
 				WithId("id"),
 				WithService("service"),
-				WithLogger(ttLogger),
 			},
 			hasErr: true,
 		},
@@ -57,7 +54,6 @@ func Test_Container_NewContainer_ParamErr(t *testing.T) {
 				WithId("id"),
 				WithService("service"),
 				WithEndpoints([]string{"127.0.0.1:8888"}),
-				WithLogger(ttLogger),
 			},
 			hasErr: true,
 		},
@@ -123,7 +119,6 @@ func newTestContainerOptions(ctx context.Context) []ContainerOption {
 		WithId("127.0.0.1:8888"),
 		WithService("foo.bar"),
 		WithEndpoints([]string{"127.0.0.1:8888"}),
-		WithLogger(ttLogger),
 		WithShardPrimitives(&core.ShardKeeper{}),
 	}
 }

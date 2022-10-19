@@ -70,15 +70,9 @@ type EtcdWrapper interface {
 
 type EtcdClient struct {
 	*clientv3.Client
-
-	lg logutil.Logger
 }
 
-func NewEtcdClient(endpoints []string, lg *zap.Logger) (*EtcdClient, error) {
-	return NewEtcdClientWithCustomLogger(endpoints, logutil.NewZapLogger(lg))
-}
-
-func NewEtcdClientWithCustomLogger(endpoints []string, lg logutil.Logger) (*EtcdClient, error) {
+func NewEtcdClient(endpoints []string) (*EtcdClient, error) {
 	if len(endpoints) < 1 {
 		return nil, errors.New("You must provide at least one etcd address")
 	}
@@ -86,11 +80,11 @@ func NewEtcdClientWithCustomLogger(endpoints []string, lg logutil.Logger) (*Etcd
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
-	return &EtcdClient{Client: client, lg: lg}, nil
+	return &EtcdClient{Client: client}, nil
 }
 
-func NewEtcdClientWithClient(client *clientv3.Client, lg *zap.Logger) *EtcdClient {
-	return &EtcdClient{Client: client, lg: logutil.NewZapLogger(lg)}
+func NewEtcdClientWithClient(client *clientv3.Client) *EtcdClient {
+	return &EtcdClient{Client: client}
 }
 
 func (w *EtcdClient) Get(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error) {
@@ -189,7 +183,7 @@ func (w *EtcdClient) DelKV(ctx context.Context, prefix string) error {
 		return errors.Wrap(err, "")
 	}
 	if resp.Deleted == 0 {
-		w.lg.Warn("no kv exist", zap.String("prefix", prefix))
+		logutil.Warn("no kv exist", zap.String("prefix", prefix))
 	}
 	return nil
 }
@@ -209,7 +203,7 @@ func (w *EtcdClient) DelKVs(ctx context.Context, prefixes []string) error {
 		return errors.Wrap(err, "")
 	}
 	if resp.Succeeded {
-		w.lg.Info("del nodes success",
+		logutil.Info("del nodes success",
 			zap.Strings("prefixes", prefixes),
 		)
 		return nil
@@ -260,7 +254,7 @@ func (w *EtcdClient) CreateAndGet(ctx context.Context, nodes []string, values []
 		return errors.Wrap(err, "")
 	}
 	if resp.Succeeded {
-		w.lg.Info("create node success",
+		logutil.Info("create node success",
 			zap.Strings("nodes", nodes),
 			zap.Strings("values", values),
 		)
@@ -295,7 +289,7 @@ func (w *EtcdClient) CompareAndSwap(ctx context.Context, node string, curValue s
 		return "", errors.Wrapf(err, "FAILED to swap node %s from %s to %s", node, curValue, newValue)
 	}
 	if resp.Succeeded {
-		w.lg.Debug("swap node success",
+		logutil.Debug("swap node success",
 			zap.String("node", node),
 			zap.String("curValue", curValue),
 			zap.String("newValue", newValue),
@@ -307,7 +301,7 @@ func (w *EtcdClient) CompareAndSwap(ctx context.Context, node string, curValue s
 	}
 	realValue := string(resp.Responses[0].GetResponseRange().Kvs[0].Value)
 	if realValue == newValue {
-		w.lg.Error("failed to swap node",
+		logutil.Error("failed to swap node",
 			zap.String("node", node),
 			zap.String("realValue", realValue),
 			zap.String("newValue", newValue),
@@ -315,7 +309,7 @@ func (w *EtcdClient) CompareAndSwap(ctx context.Context, node string, curValue s
 		)
 		return realValue, ErrEtcdValueExist
 	}
-	w.lg.Warn("failed to swap node",
+	logutil.Warn("failed to swap node",
 		zap.String("node", node),
 		zap.String("etcd-value", realValue),
 		zap.String("expect-value", curValue),

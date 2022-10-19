@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
 )
 
 func TestApi(t *testing.T) {
@@ -35,7 +34,6 @@ func (suite *ApiTestSuite) SetupTest() {
 	suite.testRouter = gin.Default()
 	suite.testServer = &Server{}
 
-	lg, _ := zap.NewDevelopment()
 	suite.container = &smContainer{
 		lg:        lg,
 		Container: &apputil.Container{},

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 
+	"github.com/entertainment-venue/sm/pkg/logutil"
 	"github.com/pkg/errors"
 	bolt "go.etcd.io/bbolt"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -14,12 +15,11 @@ var _ Storage = new(boltdb)
 
 type boltdb struct {
 	service string
-	lg      *zap.Logger
 
 	db *bolt.DB
 }
 
-func NewBoltdb(dir string, service string, lg *zap.Logger) (*boltdb, error) {
+func NewBoltdb(dir string, service string) (*boltdb, error) {
 	db, err := bolt.Open(filepath.Join(dir, "shard.db"), 0600, nil)
 	if err != nil {
 		return nil, err
@@ -33,7 +33,7 @@ func NewBoltdb(dir string, service string, lg *zap.Logger) (*boltdb, error) {
 		return nil, errors.Wrap(err, "")
 	}
 
-	return &boltdb{service: service, db: db, lg: lg}, nil
+	return &boltdb{service: service, db: db}, nil
 }
 
 func (db *boltdb) Close() error {
@@ -57,7 +57,7 @@ func (db *boltdb) Add(shard *ShardSpec) error {
 		v := b.Get(k)
 		if v != nil {
 			// id已经存在，不需要写入boltdb
-			db.lg.Info(
+			logutil.Info(
 				"shard already exist",
 				zap.String("service", db.service),
 				zap.String("id", shard.Id),
@@ -65,7 +65,7 @@ func (db *boltdb) Add(shard *ShardSpec) error {
 			return nil
 		}
 
-		db.lg.Info(
+		logutil.Info(
 			"shard added to boltdb",
 			zap.String("service", db.service),
 			zap.String("id", shard.Id),
@@ -76,7 +76,7 @@ func (db *boltdb) Add(shard *ShardSpec) error {
 
 func (db *boltdb) Drop(ids []string) error {
 	if len(ids) == 0 {
-		db.lg.Warn(
+		logutil.Warn(
 			"empty ids",
 			zap.String("service", db.service),
 		)
@@ -93,7 +93,7 @@ func (db *boltdb) Drop(ids []string) error {
 			key := []byte(shardID)
 			raw := b.Get(key)
 			if raw == nil {
-				db.lg.Warn(
+				logutil.Warn(
 					"shard not exist when try to drop",
 					zap.String("service", db.service),
 					zap.String("shard-id", shardID),
@@ -107,7 +107,7 @@ func (db *boltdb) Drop(ids []string) error {
 				if err := b.Delete(key); err != nil {
 					return errors.Wrap(err, "")
 				}
-				db.lg.Warn(
+				logutil.Warn(
 					"shard deleted directly because format error",
 					zap.String("service", db.service),
 					zap.String("shard-id", shardID),
@@ -120,7 +120,7 @@ func (db *boltdb) Drop(ids []string) error {
 				return errors.Wrap(err, "")
 			}
 
-			db.lg.Info(
+			logutil.Info(
 				"drop shard success",
 				zap.String("shard-id", shardID),
 				zap.Int64("cur-lease", int64(dv.Spec.Lease.ID)),
@@ -147,7 +147,7 @@ func (db *boltdb) ForEach(visitor func(shardID string, dv *ShardKeeperDbValue) e
 	)
 	if len(dropShardIDs) > 0 {
 		if err := db.Drop(dropShardIDs); err != nil {
-			db.lg.Error(
+			logutil.Error(
 				"Drop error",
 				zap.String("service", db.service),
 				zap.Strings("shard-id", dropShardIDs),
@@ -167,7 +167,7 @@ func (db *boltdb) MigrateLease(from, to clientv3.LeaseID) error {
 			}
 
 			dv.SoftMigrate(from, to)
-			db.lg.Info(
+			logutil.Info(
 				"SoftMigrate success",
 				zap.String("service", db.service),
 				zap.String("shard-id", dv.Spec.Id),
@@ -197,7 +197,7 @@ func (db *boltdb) DropByLease(exclude bool, leaseID clientv3.LeaseID) error {
 			if dv.NeedDrop(exclude, leaseID) {
 				dv.Disp = false
 				dv.Drop = true
-				db.lg.Info(
+				logutil.Info(
 					"drop shard",
 					zap.String("service", db.service),
 					zap.String("shard-id", dv.Spec.Id),
@@ -214,7 +214,7 @@ func (db *boltdb) DropByLease(exclude bool, leaseID clientv3.LeaseID) error {
 		}); err != nil {
 			return errors.Wrap(err, "")
 		}
-		db.lg.Info(
+		logutil.Info(
 			"drop by lease",
 			zap.String("service", db.service),
 			zap.Int("drop-cnt", dropCnt),

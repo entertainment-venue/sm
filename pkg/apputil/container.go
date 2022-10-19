@@ -26,6 +26,7 @@ import (
 	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"github.com/entertainment-venue/sm/pkg/commonutil"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
+	"github.com/entertainment-venue/sm/pkg/logutil"
 	"github.com/pkg/errors"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
@@ -66,7 +67,6 @@ type containerOptions struct {
 	// 数据传递
 	id      string
 	service string
-	lg      *zap.Logger
 
 	appShardImpl core.ShardPrimitives
 
@@ -106,12 +106,6 @@ func WithService(v string) ContainerOption {
 func WithEndpoints(v []string) ContainerOption {
 	return func(co *containerOptions) {
 		co.endpoints = v
-	}
-}
-
-func WithLogger(lg *zap.Logger) ContainerOption {
-	return func(co *containerOptions) {
-		co.lg = lg
 	}
 }
 
@@ -172,9 +166,6 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	if len(ops.endpoints) == 0 && ops.client == nil {
 		return nil, errors.New("endpoints or client must be init")
 	}
-	if ops.lg == nil {
-		return nil, errors.New("lg err")
-	}
 	if ops.appShardImpl == nil {
 		return nil, errors.New("impl err")
 	}
@@ -186,19 +177,19 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	var client *etcdutil.EtcdClient
 	if ops.client == nil {
 		var err error
-		client, err = etcdutil.NewEtcdClient(ops.endpoints, ops.lg)
+		client, err = etcdutil.NewEtcdClient(ops.endpoints)
 		if err != nil {
 			return nil, errors.Wrap(err, "")
 		}
 	} else {
-		client = etcdutil.NewEtcdClientWithClient(ops.client, ops.lg)
+		client = etcdutil.NewEtcdClientWithClient(ops.client)
 	}
 	session, err := concurrency.NewSession(client.Client, concurrency.WithTTL(5))
 	if err != nil {
 		return nil, errors.Wrap(err, "")
 	}
 
-	ops.lg.Info("session opened",
+	logutil.Info("session opened",
 		zap.String("id", ops.id),
 		zap.String("service", ops.service),
 	)
@@ -216,7 +207,7 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 	if ops.receiver == nil {
 		if ops.addr == "" {
 			err := errors.Errorf("Empty addr")
-			ops.lg.Error(
+			logutil.Error(
 				"Param err",
 				zap.String("id", ops.id),
 				zap.String("service", ops.service),
@@ -225,7 +216,7 @@ func NewContainer(opts ...ContainerOption) (*Container, error) {
 			return nil, errors.Wrap(err, "")
 		} else {
 			// TODO opts中的receiver在Close时用到
-			c.opts.receiver = receiver.NewHttpServer(ops.lg, ops.addr, ops.id)
+			c.opts.receiver = receiver.NewHttpServer(ops.addr, ops.id)
 		}
 	}
 	return &c, nil
@@ -239,9 +230,9 @@ func (ctr *Container) Run() error {
 	)
 	switch ctr.opts.storageType {
 	case storage.Boltdb:
-		st, err = storage.NewBoltdb(ctr.opts.shardDir, ctr.opts.service, ctr.opts.lg)
+		st, err = storage.NewBoltdb(ctr.opts.shardDir, ctr.opts.service)
 	default:
-		st, err = storage.NewEtcddb(ctr.opts.service, ctr.opts.id, ctr.Client, ctr.opts.lg)
+		st, err = storage.NewEtcddb(ctr.opts.service, ctr.opts.id, ctr.Client)
 	}
 	if err != nil {
 		return errors.Wrap(err, "")
@@ -255,7 +246,7 @@ func (ctr *Container) Run() error {
 		ShardDir:         ctr.opts.shardDir,
 		AppShardImpl:     ctr.opts.appShardImpl,
 	}
-	ctr.shardKeeper, err = core.NewShardKeeper(ctr.opts.lg, &skOpts, st)
+	ctr.shardKeeper, err = core.NewShardKeeper(&skOpts, st)
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
@@ -267,7 +258,7 @@ func (ctr *Container) Run() error {
 	// 在container的shard的状态上报ok的情况，shardkeeper的逻辑更容易推算
 	if err := ctr.heartbeat(context.TODO()); err != nil {
 		// 报错，但不停止
-		ctr.opts.lg.Error(
+		logutil.Error(
 			"heartbeat error",
 			zap.String("service", ctr.opts.service),
 			zap.Error(err),
@@ -281,7 +272,8 @@ func (ctr *Container) Run() error {
 	// 通过heartbeat上报数据
 	ctr.stopper.Wrap(
 		func(ctx context.Context) {
-			commonutil.TickerLoop(ctx, ctr.opts.lg, 3*time.Second, "container stop upload load", ctr.heartbeat)
+			commonutil.TickerLoop(ctx, commonutil.LogErrFunc, 3*time.Second, ctr.heartbeat)
+			logutil.SInfo("container stop upload load")
 		},
 	)
 
@@ -291,7 +283,7 @@ func (ctr *Container) Run() error {
 		select {
 		case <-ctr.donec:
 			// 被动关闭
-			ctr.opts.lg.Info("container: stopper closed",
+			logutil.Info("container: stopper closed",
 				zap.String("id", ctr.Id()),
 				zap.String("service", ctr.Service()),
 			)
@@ -299,7 +291,7 @@ func (ctr *Container) Run() error {
 			// 主动关闭
 			ctr.close()
 
-			ctr.opts.lg.Info("container: session closed",
+			logutil.Info("container: session closed",
 				zap.String("id", ctr.Id()),
 				zap.String("service", ctr.Service()),
 			)
@@ -308,7 +300,7 @@ func (ctr *Container) Run() error {
 
 	ctr.opts.receiver.SetShardPrimitives(ctr.shardKeeper)
 	if err := ctr.opts.receiver.Start(); err != nil {
-		ctr.opts.lg.Error(
+		logutil.Error(
 			"Start receiver err",
 			zap.String("id", ctr.Id()),
 			zap.String("service", ctr.Service()),
@@ -322,7 +314,7 @@ func (ctr *Container) Run() error {
 func (ctr *Container) Close() {
 	ctr.close()
 
-	ctr.opts.lg.Info("container: closed",
+	logutil.Info("container: closed",
 		zap.String("id", ctr.Id()),
 		zap.String("service", ctr.Service()),
 	)
@@ -338,13 +330,13 @@ func (ctr *Container) close() {
 	// 先干掉srv，停止接受协议请求
 	if ctr.opts.receiver != nil {
 		if err := ctr.opts.receiver.Shutdown(); err != nil {
-			ctr.opts.lg.Error(
+			logutil.Error(
 				"Shutdown error",
 				zap.Error(err),
 				zap.String("service", ctr.Service()),
 			)
 		} else {
-			ctr.opts.lg.Info(
+			logutil.Info(
 				"Shutdown success",
 				zap.String("service", ctr.Service()),
 			)
@@ -361,7 +353,7 @@ func (ctr *Container) close() {
 		return err
 	}
 	if err := ctr.shardKeeper.Storage().ForEach(dropFn); err != nil {
-		ctr.opts.lg.Error(
+		logutil.Error(
 			"Drop error",
 			zap.String("service", ctr.Service()),
 			zap.Error(err),

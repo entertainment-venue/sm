@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/suite"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
 )
 
 const (
@@ -31,12 +30,10 @@ type ShardKeeperTestSuite struct {
 }
 
 func (suite *ShardKeeperTestSuite) SetupTest() {
-	lg, _ := zap.NewDevelopment()
 	service := "foo"
 	defaultLease := storage.Lease{ID: 100, Expire: 100}
 
 	suite.shardKeeper = &ShardKeeper{
-		lg:          lg,
 		bridgeLease: storage.NoLease,
 		guardLease:  &defaultLease,
 
