@@ -3,6 +3,8 @@
 Inspire by
 
 * [scaling-services-with-shard-manager](https://engineering.fb.com/2020/08/24/production-engineering/scaling-services-with-shard-manager/)
+* [Shard Manager: A Generic Shard Management Framework for Geo-distributed Applications](https://research.facebook.com/publications/shard-manager-a-generic-shard-management-framework-for-geo-distributed-applications/)
+* [Slicer: Auto-Sharding for Datacenter Applications](https://research.google/pubs/pub46921/)
 * [MirrorMaker 2.0](https://cwiki.apache.org/confluence/display/KAFKA/KIP-382%3A+MirrorMaker+2.0)
 * [The Chubby lock service for loosely-coupled distributed systems](https://static.googleusercontent.com/media/research.google.com/en//archive/chubby-osdi06.pdf)
 
@@ -54,14 +56,14 @@ for the management of keys in etcd, management meaning that:
 `Container` also define common protocol which need sharded application who want to integrate with sm:
 
 ```
-type ShardInterface interface {
+type ShardPrimitives interface {
 	Add(id string, spec *ShardSpec) error
 	Drop(id string) error
 }
 ```
 
-You can implement the `ShardInterface` and inject the implementation into the `Container`
-with `WithShardImplementation`, and also wrap common http api to interact with the sm server. The keep http path:
+You can implement the `ShardPrimitives` and inject the implementation into the `Container`
+with `WithShardPrimitives`, and also wrap common http api to interact with the sm server. The keep http path:
 
 * /sm/admin/add-shard
 * /sm/admin/drop-shard

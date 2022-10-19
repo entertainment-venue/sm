@@ -24,16 +24,8 @@ type defaultAppMixer struct {
 	port string
 }
 
-func (r *defaultAppMixer) Addr() string {
+func (r defaultAppMixer) Addr() string {
 	return fmt.Sprintf("%s:%s", smserver.GetLocalIP(), r.port)
-}
-
-type serverOptions struct {
-	// appMixer 提取应用信息，目前只有k8s场景下的Addr需要应用提供出来
-	appMixer AppMixer
-
-	// cfgPath 外部传入yaml格式的配置文件
-	cfgPath string
 }
 
 type serverConfig struct {
@@ -58,36 +50,10 @@ func (cfg *serverConfig) validate() {
 	}
 }
 
-type ServerOption func(options *serverOptions)
-
-func WithAppMixer(v AppMixer) ServerOption {
-	return func(options *serverOptions) {
-		options.appMixer = v
-	}
-}
-
-func WithCfgPath(v string) ServerOption {
-	return func(options *serverOptions) {
-		options.cfgPath = v
-	}
-}
-
-func StartSM(opts ...ServerOption) error {
-	ops := &serverOptions{}
-	for _, opt := range opts {
-		if opt != nil {
-			opt(ops)
-		}
-	}
-
+func StartSM() error {
 	// 配置加载
-	var cfgPath string
-	if ops.cfgPath == "" {
-		flag.Parse()
-		cfgPath = flagCfg.ConfigFile
-	} else {
-		cfgPath = ops.cfgPath
-	}
+	flag.Parse()
+	var cfgPath = flagCfg.ConfigFile
 	if cfgPath == "" {
 		panic("no config file")
 	}
@@ -95,15 +61,15 @@ func StartSM(opts ...ServerOption) error {
 	if err != nil {
 		return errors.Wrap(err, "")
 	}
+
 	srvCfg := &serverConfig{}
 	if err := yaml.Unmarshal(data, &srvCfg); err != nil {
 		return errors.Wrap(err, "")
 	}
 	srvCfg.validate()
 
-	if ops.appMixer == nil {
-		ops.appMixer = &defaultAppMixer{port: srvCfg.Port}
-	}
+	addr := defaultAppMixer{port: srvCfg.Port}.Addr()
+
 	lg, zapError := logutil.NewLogger(logutil.WithStdout(false))
 	if zapError != nil {
 		fmt.Printf("error creating zap logger %v", zapError)
@@ -112,7 +78,7 @@ func StartSM(opts ...ServerOption) error {
 	defer lg.Sync()
 
 	srv, err := smserver.NewServer(
-		smserver.WithId(ops.appMixer.Addr()),
+		smserver.WithId(addr),
 		smserver.WithService(srvCfg.Service),
 		smserver.WithAddr(fmt.Sprintf(":%s", srvCfg.Port)),
 		smserver.WithEndpoints(srvCfg.Endpoints),
@@ -147,7 +113,7 @@ func StartSM(opts ...ServerOption) error {
 	}()
 
 	<-srv.Done()
-	lg.Info("ShardManager exit", zap.String("addr", ops.appMixer.Addr()))
+	lg.Info("ShardManager exit", zap.String("addr", addr))
 
 	return nil
 }
