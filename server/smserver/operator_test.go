@@ -67,7 +67,7 @@ func Test_operator_moveActionList_sort(t *testing.T) {
 }
 
 func Test_operator_move(t *testing.T) {
-	o := operator{lg: ttLogger, service: "foo.bar"}
+	o := operator{service: "foo.bar"}
 	o.httpClient = newHttpClient()
 
 	time.Sleep(3 * time.Second)
@@ -83,7 +83,7 @@ func Test_operator_move(t *testing.T) {
 }
 
 func Test_operator_dropOrAdd(t *testing.T) {
-	o := operator{lg: ttLogger}
+	o := operator{}
 	o.httpClient = newHttpClient()
 
 	ma := moveAction{
@@ -98,7 +98,7 @@ func Test_operator_dropOrAdd(t *testing.T) {
 }
 
 func Test_operator_send(t *testing.T) {
-	o := operator{lg: ttLogger}
+	o := operator{}
 	o.httpClient = newHttpClient()
 
 	if err := o.send("1", &storage.ShardSpec{}, "127.0.0.1:8889", "add"); err != nil {

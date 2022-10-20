@@ -25,6 +25,7 @@ import (
 	"github.com/entertainment-venue/sm/pkg/apputil/storage"
 	"github.com/entertainment-venue/sm/pkg/commonutil"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
+	"github.com/entertainment-venue/sm/pkg/logutil"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 	swaggerfiles "github.com/swaggo/files"
@@ -203,7 +204,7 @@ func (c *smContainer) Close() error {
 		c.stopper.Close()
 	}
 
-	c.lg.Info(
+	logutil.Info(
 		"smContainer closing",
 		zap.String("id", c.Id()),
 		zap.String("service", c.Service()),
@@ -216,7 +217,7 @@ func (c *smContainer) Add(id string, spec *storage.ShardSpec) error {
 	defer c.mu.Unlock()
 
 	if c.closing {
-		c.lg.Info("container closing, give up add",
+		logutil.Info("container closing, give up add",
 			zap.String("id", id),
 			zap.Reflect("spec", spec),
 		)
@@ -228,7 +229,7 @@ func (c *smContainer) Add(id string, spec *storage.ShardSpec) error {
 	sd, ok := c.shards[id]
 	if ok {
 		if sd.Spec().Task == spec.Task {
-			c.lg.Info("shard existed and task not changed",
+			logutil.Info("shard existed and task not changed",
 				zap.String("id", id),
 				zap.Reflect("spec", spec),
 			)
@@ -239,7 +240,7 @@ func (c *smContainer) Add(id string, spec *storage.ShardSpec) error {
 		// 判断是否需要更新shard的工作内容，task有变更停掉当前shard，重新启动
 		if sd.Spec().Task != spec.Task {
 			sd.Close()
-			c.lg.Info("shard task changed, current shard closed",
+			logutil.Info("shard task changed, current shard closed",
 				zap.String("id", id),
 				zap.String("cur", sd.Spec().Task),
 				zap.String("new", spec.Task),
@@ -253,7 +254,7 @@ func (c *smContainer) Add(id string, spec *storage.ShardSpec) error {
 		return errors.Wrap(err, "")
 	}
 	c.shards[id] = shard
-	c.lg.Info("shard added",
+	logutil.Info("shard added",
 		zap.String("id", id),
 		zap.Reflect("spec", *spec),
 	)
@@ -265,7 +266,7 @@ func (c *smContainer) Drop(id string) error {
 	defer c.mu.Unlock()
 
 	if c.closing {
-		c.lg.Info("container closing, give up drop",
+		logutil.Info("container closing, give up drop",
 			zap.String("id", id),
 			zap.String("service", c.Service()),
 		)
@@ -274,7 +275,7 @@ func (c *smContainer) Drop(id string) error {
 
 	sd, ok := c.shards[id]
 	if !ok {
-		c.lg.Info(
+		logutil.Info(
 			"shard not existed",
 			zap.String("id", id),
 			zap.String("service", c.Service()),
@@ -283,7 +284,7 @@ func (c *smContainer) Drop(id string) error {
 	}
 	sd.Close()
 	delete(c.shards, id)
-	c.lg.Info(
+	logutil.Info(
 		"shard dropped",
 		zap.String("id", id),
 		zap.String("service", c.Service()),
@@ -306,7 +307,7 @@ func (c *smContainer) campaign(ctx context.Context) {
 	loop:
 		select {
 		case <-ctx.Done():
-			c.lg.Info("leader exit campaign", zap.String("service", c.Service()))
+			logutil.Info("leader exit campaign", zap.String("service", c.Service()))
 			return
 		default:
 		}
@@ -315,7 +316,7 @@ func (c *smContainer) campaign(ctx context.Context) {
 		lvalue := leaderEtcdValue{ContainerId: c.Id(), CreateTime: time.Now().Unix()}
 		election := concurrency.NewElection(c.Session, leaderNodePrefix)
 		if err := election.Campaign(ctx, lvalue.String()); err != nil {
-			c.lg.Error(
+			logutil.Error(
 				"Campaign error",
 				zap.String("service", c.Service()),
 				zap.Error(err),
@@ -323,7 +324,7 @@ func (c *smContainer) campaign(ctx context.Context) {
 			time.Sleep(defaultSleepTimeout)
 			goto loop
 		}
-		c.lg.Info("campaign leader success",
+		logutil.Info("campaign leader success",
 			zap.String("pfx", leaderNodePrefix),
 			zap.Int64("lease", int64(c.Session.Lease())),
 		)
@@ -345,7 +346,7 @@ func (c *smContainer) campaign(ctx context.Context) {
 		var err error
 		c.leaderShard, err = newSMShard(c, &spec)
 		if err != nil {
-			c.lg.Error(
+			logutil.Error(
 				"newSMShard error",
 				zap.String("service", c.Service()),
 				zap.Error(err),
@@ -354,10 +355,10 @@ func (c *smContainer) campaign(ctx context.Context) {
 		}
 
 		// block until出现需要放弃leader职权的事件
-		c.lg.Info("leader completed op", zap.String("service", c.Service()))
+		logutil.Info("leader completed op", zap.String("service", c.Service()))
 
 		<-ctx.Done()
-		c.lg.Info("leader exit", zap.String("service", c.Service()))
+		logutil.Info("leader exit", zap.String("service", c.Service()))
 		c.leaderShard = nil
 		return
 	}

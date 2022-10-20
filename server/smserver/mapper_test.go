@@ -11,10 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
-	"github.com/zd3tl/evtrigger"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
 )
 
 func TestMapperState(t *testing.T) {
@@ -75,10 +73,7 @@ type MapperTestSuite struct {
 }
 
 func (suite *MapperTestSuite) SetupTest() {
-	lg, _ := zap.NewDevelopment()
-
 	mpr := mapper{
-		lg:      lg,
 		appSpec: &smAppSpec{Service: "test"},
 
 		containerState: newMapperState(),
@@ -88,9 +83,8 @@ func (suite *MapperTestSuite) SetupTest() {
 			guardLeaseID: 1,
 		},
 	}
-	trigger, _ := evtrigger.NewTrigger(
-		evtrigger.WithLogger(mpr.lg),
-		evtrigger.WithWorkerSize(triggerWorkerSize),
+	trigger, _ := commonutil.NewTrigger(
+		commonutil.WithWorkerSize(triggerWorkerSize),
 	)
 	mpr.trigger = trigger
 

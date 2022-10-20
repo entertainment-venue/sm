@@ -10,8 +10,8 @@ import (
 	"github.com/entertainment-venue/sm/pkg/apputil"
 	"github.com/entertainment-venue/sm/pkg/commonutil"
 	"github.com/entertainment-venue/sm/pkg/etcdutil"
+	"github.com/entertainment-venue/sm/pkg/logutil"
 	"github.com/pkg/errors"
-	"github.com/zd3tl/evtrigger"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -36,7 +36,6 @@ const (
 // 3. 代理mw对etcd的访问，分摊部分mw的逻辑
 type mapper struct {
 	container *smContainer
-	lg        *zap.Logger
 	shard     *smShard
 
 	// appSpec 配置中有container单节点恢复阈值，影响当前service事件处理的方式
@@ -51,7 +50,7 @@ type mapper struct {
 	shardState *mapperState
 
 	// trigger 事件存储在内存中的队列里，逐一执行，尽量不卡在etcd，因为事件丢失是可恢复的
-	trigger evtrigger.Trigger
+	trigger commonutil.Trigger
 
 	// stopper 管理watch goroutine
 	stopper *commonutil.GoroutineStopper
@@ -60,7 +59,6 @@ type mapper struct {
 func newMapper(container *smContainer, appSpec *smAppSpec, shard *smShard) (*mapper, error) {
 	mpr := mapper{
 		container: container,
-		lg:        container.lg,
 		appSpec:   appSpec,
 		stopper:   &commonutil.GoroutineStopper{},
 		shard:     shard,
@@ -69,9 +67,8 @@ func newMapper(container *smContainer, appSpec *smAppSpec, shard *smShard) (*map
 		shardState:     newMapperState(),
 	}
 
-	trigger, _ := evtrigger.NewTrigger(
-		evtrigger.WithLogger(mpr.lg),
-		evtrigger.WithWorkerSize(triggerWorkerSize),
+	trigger, _ := commonutil.NewTrigger(
+		commonutil.WithWorkerSize(triggerWorkerSize),
 	)
 	mpr.trigger = trigger
 	_ = mpr.trigger.Register(containerTrigger, mpr.UpdateState)
@@ -86,7 +83,7 @@ func newMapper(container *smContainer, appSpec *smAppSpec, shard *smShard) (*map
 		return nil, errors.Wrap(err, "")
 	}
 
-	mpr.lg.Info(
+	logutil.Info(
 		"mapper started",
 		zap.String("service", mpr.appSpec.Service),
 	)
@@ -100,7 +97,7 @@ func (mpr *mapper) extractId(key string) string {
 	arr := strings.Split(key, "/")
 	str := arr[len(arr)-2]
 	if str == "" {
-		mpr.lg.Panic(
+		logutil.Panic(
 			"key error",
 			zap.String("key", key),
 		)
@@ -121,7 +118,6 @@ func (mpr *mapper) initAndWatch() error {
 		func(ctx context.Context) {
 			etcdutil.WatchLoop(
 				ctx,
-				mpr.lg,
 				mpr.container.Client,
 				pfx,
 				startRev,
@@ -132,7 +128,7 @@ func (mpr *mapper) initAndWatch() error {
 					}
 
 					// 事件写入evtrigger，理论上不会漏事件，除非event不合法
-					if err := mpr.trigger.Put(&evtrigger.TriggerEvent{Key: containerTrigger, Value: ev}); err != nil {
+					if err := mpr.trigger.Put(&commonutil.TriggerEvent{Key: containerTrigger, Value: ev}); err != nil {
 						return errors.Wrap(err, "")
 					}
 					return nil
@@ -140,7 +136,7 @@ func (mpr *mapper) initAndWatch() error {
 			)
 		},
 	)
-	mpr.lg.Info(
+	logutil.Info(
 		"watch hb",
 		zap.String("pfx", pfx),
 		zap.String("service", mpr.appSpec.Service),
@@ -206,7 +202,7 @@ func (mpr *mapper) UpdateState(_ string, value interface{}) error {
 	// 这里不做最终是否删除判断，等最后一个删除事件自己删除即可
 	var hasCreate bool
 	findCreate := func(it interface{}) error {
-		triggerEvent := it.(*evtrigger.TriggerEvent)
+		triggerEvent := it.(*commonutil.TriggerEvent)
 		ev := triggerEvent.Value.(*clientv3.Event)
 		if mpr.extractId(string(ev.Kv.Key)) == containerId && ev.IsCreate() {
 			hasCreate = true
@@ -215,7 +211,7 @@ func (mpr *mapper) UpdateState(_ string, value interface{}) error {
 	}
 	_ = mpr.trigger.ForEach(findCreate)
 	if hasCreate {
-		mpr.lg.Info(
+		logutil.Info(
 			"container recovery",
 			zap.String("service", mpr.appSpec.Service),
 			zap.String("containerId", containerId),
@@ -239,7 +235,7 @@ func (mpr *mapper) create(containerId string, value []byte) error {
 		mpr.shardState.alive[shard.Spec.Id].curContainerId = containerId
 	}
 
-	mpr.lg.Info(
+	logutil.Info(
 		"state created",
 		zap.String("service", mpr.appSpec.Service),
 		zap.String("containerId", containerId),
@@ -264,7 +260,7 @@ func (mpr *mapper) Delete(containerId string) error {
 		}
 	}
 
-	mpr.lg.Info(
+	logutil.Info(
 		"state deleted",
 		zap.String("service", mpr.appSpec.Service),
 		zap.String("containerId", containerId),
@@ -278,7 +274,7 @@ func (mpr *mapper) Refresh(containerId string, event *clientv3.Event) error {
 	defer mpr.mu.Unlock()
 
 	if event.Kv.Value == nil {
-		mpr.lg.Warn(
+		logutil.Warn(
 			"empty value",
 			zap.ByteString("key", event.Kv.Key),
 			zap.Reflect("type", event.Type),
@@ -306,7 +302,7 @@ func (mpr *mapper) Refresh(containerId string, event *clientv3.Event) error {
 			t.leaseID = shard.Spec.Lease.ID
 			mpr.shardState.alive[shard.Spec.Id] = t
 
-			mpr.lg.Info(
+			logutil.Info(
 				"state shard refreshed",
 				zap.String("service", mpr.appSpec.Service),
 				zap.String("containerID", containerId),
@@ -314,7 +310,7 @@ func (mpr *mapper) Refresh(containerId string, event *clientv3.Event) error {
 				zap.Int64("shardLeaseID", int64(shard.Spec.Lease.ID)),
 			)
 		} else {
-			mpr.lg.Info(
+			logutil.Info(
 				"found shard with invalid lease from container",
 				zap.String("service", mpr.appSpec.Service),
 				zap.String("containerID", containerId),
@@ -336,7 +332,7 @@ func (mpr *mapper) Refresh(containerId string, event *clientv3.Event) error {
 		}
 	}
 	if len(dropShardIds) != 0 {
-		mpr.lg.Info(
+		logutil.Info(
 			"state shard refreshed, already be removed",
 			zap.String("service", mpr.appSpec.Service),
 			zap.String("containerID", containerId),
@@ -344,7 +340,7 @@ func (mpr *mapper) Refresh(containerId string, event *clientv3.Event) error {
 		)
 	}
 
-	mpr.lg.Debug(
+	logutil.Debug(
 		"state refreshed",
 		zap.String("service", mpr.appSpec.Service),
 		zap.String("containerId", containerId),
@@ -360,7 +356,7 @@ func (mpr *mapper) Wait(containerId string) error {
 
 	cur, ok := mpr.containerState.alive[containerId]
 	if !ok {
-		mpr.lg.Info(
+		logutil.Info(
 			"not found in alive container",
 			zap.String("service", mpr.appSpec.Service),
 			zap.String("containerId", containerId),
@@ -372,7 +368,7 @@ func (mpr *mapper) Wait(containerId string) error {
 	timeElapsed := time.Since(cur.lastHeartbeatTime)
 	waitTime := mpr.maxRecoveryTime - timeElapsed
 	if waitTime > 0 {
-		mpr.lg.Info(
+		logutil.Info(
 			"wait until timeout",
 			zap.String("service", mpr.appSpec.Service),
 			zap.String("containerId", containerId),
@@ -381,7 +377,7 @@ func (mpr *mapper) Wait(containerId string) error {
 			zap.Duration("timeElapsed", timeElapsed),
 		)
 		time.Sleep(waitTime)
-		mpr.lg.Info(
+		logutil.Info(
 			"wait completed",
 			zap.String("service", mpr.appSpec.Service),
 			zap.String("containerId", containerId),
