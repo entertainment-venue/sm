@@ -20,7 +20,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
-	"go.uber.org/zap"
 )
 
 func Test_shardTask(t *testing.T) {
@@ -42,11 +41,7 @@ type ShardTestSuite struct {
 }
 
 func (suite *ShardTestSuite) SetupTest() {
-	lg, _ := zap.NewDevelopment()
-
 	shard := &smShard{
-		lg: lg,
-
 		service: mock.Anything,
 	}
 	suite.shard = shard

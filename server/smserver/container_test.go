@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
-	"go.uber.org/zap"
 )
 
 func TestContainer(t *testing.T) {
@@ -59,9 +58,7 @@ type ContainerTestSuite struct {
 }
 
 func (suite *ContainerTestSuite) SetupTest() {
-	lg, _ := zap.NewDevelopment()
 	suite.container = &smContainer{
-		lg:        lg,
 		Container: &apputil.Container{},
 		stopper:   &commonutil.GoroutineStopper{},
 		shards:    make(map[string]Shard),

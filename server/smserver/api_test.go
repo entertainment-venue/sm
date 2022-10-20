@@ -35,7 +35,6 @@ func (suite *ApiTestSuite) SetupTest() {
 	suite.testServer = &Server{}
 
 	suite.container = &smContainer{
-		lg:        lg,
 		Container: &apputil.Container{},
 		stopper:   &commonutil.GoroutineStopper{},
 		shards:    make(map[string]Shard),
